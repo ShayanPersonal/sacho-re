@@ -19,13 +19,34 @@
     toggleVideoDevice,
     setVideoDeviceCodec
   } from '$lib/stores/devices';
-  import type { VideoCodec } from '$lib/api';
+  import { settings } from '$lib/stores/settings';
+  import type { VideoCodec, VideoEncodingMode } from '$lib/api';
+  
+  function getEncodingLabel(mode: VideoEncodingMode | undefined): string {
+    switch (mode) {
+      case 'av1_hardware': return 'AV1';
+      case 'vp9_software': return 'VP9';
+      default: return 'AV1';
+    }
+  }
+  
+  function getCodecDisplayName(codec: VideoCodec, encodingMode: VideoEncodingMode | undefined): string {
+    switch (codec) {
+      case 'mjpeg': return 'MJPEG';
+      case 'h264': return 'H.264';
+      case 'h265': return 'H.265';
+      case 'av1': return 'AV1';
+      case 'raw': return `Raw`;
+      default: return codec.toUpperCase();
+    }
+  }
   
   let expandedSections = $state<Set<string>>(new Set(['audio', 'midi']));
   let isSaving = $state(false);
   let saveError = $state<string | null>(null);
   let filterQuery = $state('');
   let showMidiHelp = $state(false);
+  let showFormatHelp = $state(false);
   
   function toggleSection(section: string) {
     expandedSections = new Set(expandedSections);
@@ -221,17 +242,31 @@
       
       {#if expandedSections.has('video')}
         <div class="section-content">
-          <div class="midi-header">
-            <span class="midi-col-device">Device</span>
-            <span class="midi-col-trigger"></span>
-            <span class="midi-col-record">Record</span>
+          <div class="video-header">
+            <span class="video-col-device">Device</span>
+            <div class="video-col-format">
+              <span>Format</span>
+              <button 
+                class="help-btn" 
+                onclick={(e) => { e.stopPropagation(); showFormatHelp = !showFormatHelp; }}
+                onblur={() => showFormatHelp = false}
+              >
+                ?
+              </button>
+              {#if showFormatHelp}
+                <div class="help-tooltip format-tooltip">
+                  Video sources may provide pre-encoded streams (like MJPEG) which use less system resources. Raw streams need to be encoded by your system (configured in <b>Settings</b>).
+                </div>
+              {/if}
+            </div>
+            <span class="video-col-record">Record</span>
           </div>
           <div class="device-list">
             {#each filterDevices($videoDevices) as device}
               {@const isSupported = device.supported_codecs.length > 0}
               {@const selectedCodec = $videoDeviceCodecs[device.id]}
               {@const effectiveCodec = selectedCodec ?? device.supported_codecs[0]}
-              <div class="device-row midi-row" class:device-unsupported={!isSupported}>
+              <div class="device-row video-row" class:device-unsupported={!isSupported}>
                 <div class="device-info">
                   <span class="device-name">{device.name}</span>
                   <div class="device-meta">
@@ -241,45 +276,24 @@
                         {device.resolutions[0].width}x{device.resolutions[0].height}
                       </span>
                     {/if}
-                    {#each device.all_formats as format}
-                      {@const matchingCodec = ((): VideoCodec | null => {
-                        if (format === 'MJPEG' && device.supported_codecs.includes('mjpeg')) return 'mjpeg';
-                        if (format === 'H.264' && device.supported_codecs.includes('h264')) return 'h264';
-                        if (format === 'H.265' && device.supported_codecs.includes('h265')) return 'h265';
-                        if (format === 'AV1' && device.supported_codecs.includes('av1')) return 'av1';
-                        if (format === 'RAW' && device.supported_codecs.includes('raw')) return 'raw';
-                        return null;
-                      })()}
-                      {@const isSelected = matchingCodec !== null && matchingCodec === effectiveCodec}
-                      {@const isRaw = matchingCodec === 'raw'}
-                      {#if matchingCodec}
-                        <button 
-                          class="meta-tag codec-btn" 
-                          class:codec-selected={isSelected}
-                          class:codec-unselected={!isSelected}
-                          class:codec-raw={isRaw}
-                          onclick={() => { setVideoDeviceCodec(device.id, matchingCodec); }}
-                          title={isRaw 
-                            ? "Use RAW format (requires GPU encoding)" 
-                            : `Click to use ${format} for recording`}
-                        >
-                          {format}
-                          {#if isRaw && isSelected}
-                            <span class="raw-indicator">⚡</span>
-                          {/if}
-                        </button>
-                      {:else}
-                        <span class="meta-tag format-unsupported">
-                          {format}
-                        </span>
-                      {/if}
-                    {/each}
-                    {#if !isSupported && device.all_formats.length === 0}
-                      <span class="meta-tag unsupported">No formats detected</span>
-                    {/if}
                   </div>
                 </div>
-                <span class="placeholder-cell"></span>
+                <div class="codec-tags-cell">
+                  {#if isSupported}
+                    {#each device.supported_codecs as codec}
+                      {@const isSelected = codec === effectiveCodec}
+                      <button 
+                        class="codec-tag" 
+                        class:codec-selected={isSelected}
+                        onclick={() => setVideoDeviceCodec(device.id, codec)}
+                      >
+                        {getCodecDisplayName(codec, $settings?.video_encoding_mode)}
+                      </button>
+                    {/each}
+                  {:else}
+                    <span class="meta-tag unsupported">No formats</span>
+                  {/if}
+                </div>
                 <label class="checkbox-cell">
                   <input 
                     type="checkbox"
@@ -558,48 +572,6 @@
     color: #71717a;
   }
   
-  .codec-btn {
-    cursor: pointer;
-    border: 1px solid transparent;
-    transition: all 0.15s ease;
-  }
-  
-  .codec-btn:hover {
-    border-color: #3b82f6;
-    transform: translateY(-1px);
-  }
-  
-  .codec-btn.codec-selected {
-    background: rgba(34, 197, 94, 0.2);
-    color: #22c55e;
-    border-color: #22c55e;
-  }
-  
-  .codec-btn.codec-unselected {
-    background: rgba(59, 130, 246, 0.1);
-    color: #60a5fa;
-    opacity: 0.7;
-  }
-  
-  .codec-btn.codec-unselected:hover {
-    opacity: 1;
-  }
-  
-  .codec-btn.codec-raw {
-    background: rgba(234, 179, 8, 0.1);
-    color: #facc15;
-  }
-  
-  .codec-btn.codec-raw.codec-selected {
-    background: rgba(234, 179, 8, 0.2);
-    color: #facc15;
-    border-color: #facc15;
-  }
-  
-  .raw-indicator {
-    margin-left: 2px;
-    font-size: 0.625rem;
-  }
   
   .device-unsupported {
     opacity: 0.5;
@@ -636,6 +608,84 @@
   
   .midi-col-record {
     text-align: center;
+  }
+  
+  /* Video device section */
+  .video-header {
+    display: grid;
+    grid-template-columns: 1fr auto 70px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #52525b;
+    align-items: center;
+    scrollbar-gutter: stable;
+  }
+  
+  .video-col-device {
+    /* left aligned by default */
+  }
+  
+  .video-col-format {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.25rem;
+    position: relative;
+    padding-right: 0.5rem;
+  }
+  
+  .format-tooltip {
+    right: 0;
+    left: auto;
+    transform: none;
+  }
+  
+  .video-col-record {
+    text-align: center;
+  }
+  
+  .video-row {
+    display: grid;
+    grid-template-columns: 1fr auto 70px;
+  }
+  
+  .codec-tags-cell {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.25rem;
+    padding-right: 0.5rem;
+  }
+  
+  .codec-tag {
+    padding: 0.125rem 0.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 0.25rem;
+    color: #71717a;
+    font-family: inherit;
+    font-size: 0.6875rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  
+  .codec-tag:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.25);
+    color: #a1a1aa;
+  }
+  
+  .codec-tag.codec-selected {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #ef4444;
+  }
+  
+  .codec-tag.codec-selected:hover {
+    background: rgba(239, 68, 68, 0.25);
   }
   
   .help-btn {

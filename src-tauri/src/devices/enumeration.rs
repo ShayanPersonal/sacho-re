@@ -365,10 +365,12 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
         // Some devices (like capture cards) expose H.264 through DirectShow but not DeviceMonitor
         #[cfg(target_os = "windows")]
         {
-            let only_raw = supported_codecs.is_empty() && 
-                detected_formats.iter().all(|f| f == "RAW" || f == "DV");
+            // Check if we only have Raw codec (or nothing except Raw/DV formats)
+            // We need to probe even if Raw was added, since hardware-encoded formats might be available
+            let has_only_raw_codec = supported_codecs.iter().all(|c| *c == VideoCodec::Raw);
+            let only_raw_formats = detected_formats.iter().all(|f| f == "RAW" || f == "DV");
             
-            if only_raw {
+            if has_only_raw_codec && only_raw_formats {
                 println!("[Sacho]   Only RAW detected, probing for compressed formats...");
                 probe_compressed_formats(&name, &mut detected_formats, &mut supported_codecs);
             }
