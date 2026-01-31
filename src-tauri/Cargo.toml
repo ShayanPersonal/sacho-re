@@ -1,0 +1,84 @@
+[package]
+name = "sacho"
+version = "0.1.0"
+description = "Automatic recording companion for musicians - captures MIDI, audio, and video"
+authors = ["Sacho Team"]
+edition = "2021"
+
+[lib]
+name = "sacho_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri core
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Audio capture (cross-platform: WASAPI/CoreAudio/ALSA)
+cpal = "0.15"
+
+# MIDI input (cross-platform)
+midir = "0.10"
+
+# MIDI file writing and parsing
+midly = "0.5"
+
+# Audio file writing
+hound = "3.5"
+flacenc = "0.5.1"
+
+# Video capture with GStreamer
+gstreamer = "0.24"
+gstreamer-video = "0.24"
+gstreamer-app = "0.24"
+
+# SQLite for session indexing
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Numerical computation for similarity analysis
+ndarray = "0.16"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Time and date handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Unique identifiers
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Cross-platform directories
+dirs = "5"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Thread-safe state
+parking_lot = "0.12"
+
+# Ring buffer for audio
+ringbuf = "0.4"
+
+# Base64 encoding for video frame transfer
+base64 = "0.22"
+
+[features]
+default = []

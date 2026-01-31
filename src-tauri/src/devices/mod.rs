@@ -1,0 +1,121 @@
+// Device discovery and enumeration
+
+pub mod enumeration;
+
+pub use enumeration::*;
+
+use crate::encoding::VideoCodec;
+use serde::{Deserialize, Serialize};
+
+/// Manages all device discovery and monitoring
+pub struct DeviceManager {
+    /// Cached audio devices
+    pub audio_devices: Vec<AudioDevice>,
+    /// Cached MIDI devices
+    pub midi_devices: Vec<MidiDevice>,
+    /// Cached video devices
+    pub video_devices: Vec<VideoDevice>,
+}
+
+impl DeviceManager {
+    pub fn new() -> Self {
+        let mut manager = Self {
+            audio_devices: Vec::new(),
+            midi_devices: Vec::new(),
+            video_devices: Vec::new(),
+        };
+        manager.refresh_all();
+        manager
+    }
+    
+    /// Refresh all device lists
+    pub fn refresh_all(&mut self) {
+        self.audio_devices = enumeration::enumerate_audio_devices();
+        self.midi_devices = enumeration::enumerate_midi_devices();
+        self.video_devices = enumeration::enumerate_video_devices();
+    }
+}
+
+impl Default for DeviceManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Represents an audio input device
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioDevice {
+    pub id: String,
+    pub name: String,
+    pub channels: u16,
+    pub sample_rate: u32,
+    pub is_default: bool,
+}
+
+/// Represents a MIDI input device
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MidiDevice {
+    pub id: String,
+    pub name: String,
+    pub port_index: usize,
+}
+
+/// Represents a video capture device
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VideoDevice {
+    pub id: String,
+    pub name: String,
+    pub device_type: VideoDeviceType,
+    pub resolutions: Vec<Resolution>,
+    /// Supported video codecs for this device (can be recorded)
+    pub supported_codecs: Vec<VideoCodec>,
+    /// All formats detected from the device (for display)
+    pub all_formats: Vec<String>,
+}
+
+impl VideoDevice {
+    /// Check if this device supports any recording codec
+    pub fn is_supported(&self) -> bool {
+        !self.supported_codecs.is_empty()
+    }
+    
+    /// Get the preferred codec for recording
+    /// 
+    /// Priority order (best first):
+    /// 1. H.264 - widely supported, good compression, native player works
+    /// 2. H.265 - better compression, native player works
+    /// 3. AV1 - best compression, native player works
+    /// 4. MJPEG - fallback, requires custom player
+    pub fn preferred_codec(&self) -> Option<VideoCodec> {
+        // Prefer codecs that work with native player
+        const PRIORITY: &[VideoCodec] = &[
+            VideoCodec::H264,
+            VideoCodec::H265,
+            VideoCodec::Av1,
+            VideoCodec::Mjpeg,
+        ];
+        
+        for codec in PRIORITY {
+            if self.supported_codecs.contains(codec) {
+                return Some(*codec);
+            }
+        }
+        
+        // Fall back to first available if none in priority list
+        self.supported_codecs.first().copied()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum VideoDeviceType {
+    Webcam,
+    Screen,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Resolution {
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+}
