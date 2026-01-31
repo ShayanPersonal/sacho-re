@@ -237,11 +237,6 @@ impl VideoWriter {
             .is_live(true)
             .build();
         
-        // Create parser for the codec
-        let parser = gst::ElementFactory::make(codec.gst_parser())
-            .build()
-            .map_err(|e| VideoError::Pipeline(format!("Failed to create {}: {}", codec.gst_parser(), e)))?;
-        
         // Create muxer for the container
         let muxer = gst::ElementFactory::make(container.gst_muxer())
             .build()
@@ -269,15 +264,41 @@ impl VideoWriter {
         
         println!("[Video]   Elements created, adding to pipeline...");
         
-        // Add elements to pipeline
-        pipeline.add_many([appsrc.upcast_ref(), &parser, &muxer, &filesink])
-            .map_err(|e| VideoError::Pipeline(format!("Failed to add elements: {}", e)))?;
+        // For MJPEG, skip the parser and link directly to muxer.
+        // jpegparse extracts dimensions from JPEG SOF markers, which can override
+        // the dimensions we set in appsrc caps. Some capture devices output JPEG
+        // frames with swapped width/height in the JPEG headers, causing container
+        // metadata to show incorrect dimensions (e.g., 640x720 instead of 720x640).
+        // By skipping jpegparse for MJPEG, we let matroskamux use the appsrc caps
+        // which contain the correct dimensions from the capture pipeline.
+        let use_parser = !matches!(codec, crate::encoding::VideoCodec::Mjpeg);
         
-        println!("[Video]   Elements added, linking...");
-        
-        // Link elements
-        gst::Element::link_many([appsrc.upcast_ref(), &parser, &muxer, &filesink])
-            .map_err(|e| VideoError::Pipeline(format!("Failed to link elements: {}", e)))?;
+        if use_parser {
+            // Create parser for the codec
+            let parser = gst::ElementFactory::make(codec.gst_parser())
+                .build()
+                .map_err(|e| VideoError::Pipeline(format!("Failed to create {}: {}", codec.gst_parser(), e)))?;
+            
+            // Add elements to pipeline
+            pipeline.add_many([appsrc.upcast_ref(), &parser, &muxer, &filesink])
+                .map_err(|e| VideoError::Pipeline(format!("Failed to add elements: {}", e)))?;
+            
+            println!("[Video]   Elements added, linking with parser...");
+            
+            // Link elements
+            gst::Element::link_many([appsrc.upcast_ref(), &parser, &muxer, &filesink])
+                .map_err(|e| VideoError::Pipeline(format!("Failed to link elements: {}", e)))?;
+        } else {
+            // MJPEG: skip parser, link appsrc directly to muxer
+            pipeline.add_many([appsrc.upcast_ref(), &muxer, &filesink])
+                .map_err(|e| VideoError::Pipeline(format!("Failed to add elements: {}", e)))?;
+            
+            println!("[Video]   Elements added, linking directly (no parser)...");
+            
+            // Link elements
+            gst::Element::link_many([appsrc.upcast_ref(), &muxer, &filesink])
+                .map_err(|e| VideoError::Pipeline(format!("Failed to link elements: {}", e)))?;
+        }
         
         println!("[Video]   Elements linked, starting pipeline...");
         
@@ -441,32 +462,6 @@ impl VideoCapturePipeline {
             .build()
             .map_err(|e| VideoError::Pipeline(format!("Failed to create capsfilter: {}", e)))?;
         
-        // Parser for the codec to ensure proper frame boundaries
-        let parser = gst::ElementFactory::make(codec.gst_parser())
-            .build()
-            .map_err(|e| VideoError::Pipeline(format!("Failed to create {}: {}", codec.gst_parser(), e)))?;
-        
-        // Force byte-stream output for H.264/H.265 so we can re-parse in the writer
-        let output_caps = match codec {
-            crate::encoding::VideoCodec::H264 => {
-                gst::Caps::builder("video/x-h264")
-                    .field("stream-format", "byte-stream")
-                    .field("alignment", "au")
-                    .build()
-            }
-            crate::encoding::VideoCodec::H265 => {
-                gst::Caps::builder("video/x-h265")
-                    .field("stream-format", "byte-stream")
-                    .field("alignment", "au")
-                    .build()
-            }
-            _ => gst::Caps::new_any(),
-        };
-        let output_capsfilter = gst::ElementFactory::make("capsfilter")
-            .property("caps", output_caps)
-            .build()
-            .map_err(|e| VideoError::Pipeline(format!("Failed to create output capsfilter: {}", e)))?;
-        
         // Queue for buffering
         let queue = gst::ElementFactory::make("queue")
             .property("max-size-buffers", 60u32)
@@ -482,13 +477,52 @@ impl VideoCapturePipeline {
             .sync(false)
             .build();
         
-        // Add elements to pipeline
-        pipeline.add_many([&source, &capsfilter, &parser, &output_capsfilter, &queue, appsink.upcast_ref()])
-            .map_err(|e| VideoError::Pipeline(format!("Failed to add elements: {}", e)))?;
+        // For MJPEG, skip the parser. jpegparse extracts dimensions from JPEG SOF markers,
+        // which some capture devices report with swapped width/height. By skipping it,
+        // we use the camera's advertised dimensions directly.
+        // For H.264/H.265, we need the parser to ensure proper frame boundaries and
+        // convert to byte-stream format.
+        let use_parser = !matches!(codec, crate::encoding::VideoCodec::Mjpeg);
         
-        // Link all elements
-        gst::Element::link_many([&source, &capsfilter, &parser, &output_capsfilter, &queue, appsink.upcast_ref()])
-            .map_err(|e| VideoError::Pipeline(format!("Failed to link pipeline: {}", e)))?;
+        if use_parser {
+            let parser = gst::ElementFactory::make(codec.gst_parser())
+                .build()
+                .map_err(|e| VideoError::Pipeline(format!("Failed to create {}: {}", codec.gst_parser(), e)))?;
+            
+            // Force byte-stream output for H.264/H.265
+            let output_caps = match codec {
+                crate::encoding::VideoCodec::H264 => {
+                    gst::Caps::builder("video/x-h264")
+                        .field("stream-format", "byte-stream")
+                        .field("alignment", "au")
+                        .build()
+                }
+                crate::encoding::VideoCodec::H265 => {
+                    gst::Caps::builder("video/x-h265")
+                        .field("stream-format", "byte-stream")
+                        .field("alignment", "au")
+                        .build()
+                }
+                _ => gst::Caps::new_any(),
+            };
+            let output_capsfilter = gst::ElementFactory::make("capsfilter")
+                .property("caps", output_caps)
+                .build()
+                .map_err(|e| VideoError::Pipeline(format!("Failed to create output capsfilter: {}", e)))?;
+            
+            pipeline.add_many([&source, &capsfilter, &parser, &output_capsfilter, &queue, appsink.upcast_ref()])
+                .map_err(|e| VideoError::Pipeline(format!("Failed to add elements: {}", e)))?;
+            
+            gst::Element::link_many([&source, &capsfilter, &parser, &output_capsfilter, &queue, appsink.upcast_ref()])
+                .map_err(|e| VideoError::Pipeline(format!("Failed to link pipeline: {}", e)))?;
+        } else {
+            // MJPEG: skip parser, link capsfilter directly to queue
+            pipeline.add_many([&source, &capsfilter, &queue, appsink.upcast_ref()])
+                .map_err(|e| VideoError::Pipeline(format!("Failed to add elements: {}", e)))?;
+            
+            gst::Element::link_many([&source, &capsfilter, &queue, appsink.upcast_ref()])
+                .map_err(|e| VideoError::Pipeline(format!("Failed to link pipeline: {}", e)))?;
+        }
         
         // Debug: Print the caps being used
         println!("[Video] {} passthrough pipeline created for {} (device {})", 
