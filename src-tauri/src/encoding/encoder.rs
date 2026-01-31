@@ -465,10 +465,20 @@ impl AsyncVideoEncoder {
         // Give filesystem time to sync
         std::thread::sleep(std::time::Duration::from_millis(100));
         
-        // Get final file size
-        let bytes_written = std::fs::metadata(&output_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        // Remux the file to add proper duration header
+        let bytes_written = match Self::remux_with_duration(&output_path) {
+            Ok(size) => {
+                println!("[Encoder] Remuxed with duration header, size: {} bytes", size);
+                size
+            }
+            Err(e) => {
+                println!("[Encoder] Warning: Failed to remux with duration: {}", e);
+                // Fall back to original file size
+                std::fs::metadata(&output_path)
+                    .map(|m| m.len())
+                    .unwrap_or(0)
+            }
+        };
         
         let encoding_duration = start_time.elapsed();
         let average_fps = if encoding_duration.as_secs_f64() > 0.0 {
@@ -494,6 +504,116 @@ impl AsyncVideoEncoder {
             encoding_duration,
             average_fps,
         })
+    }
+    
+    /// Remux a WebM file to add proper duration header
+    /// 
+    /// WebM files created in streaming mode don't have duration in the header.
+    /// This function remuxes the file to add it.
+    fn remux_with_duration(file_path: &PathBuf) -> Result<u64> {
+        println!("[Encoder] Remuxing to add duration header...");
+        
+        // Create temp file path
+        let temp_path = file_path.with_extension("webm.tmp");
+        
+        // Build remux pipeline: filesrc ! matroskademux ! webmmux ! filesink
+        let pipeline = gst::Pipeline::new();
+        
+        let filesrc = gst::ElementFactory::make("filesrc")
+            .property("location", file_path.to_string_lossy().to_string())
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesrc: {}", e)))?;
+        
+        let demux = gst::ElementFactory::make("matroskademux")
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskademux: {}", e)))?;
+        
+        let mux = gst::ElementFactory::make("webmmux")
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create webmmux: {}", e)))?;
+        
+        let filesink = gst::ElementFactory::make("filesink")
+            .property("location", temp_path.to_string_lossy().to_string())
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
+        
+        pipeline.add_many([&filesrc, &demux, &mux, &filesink])
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
+        
+        // Link filesrc to demuxer
+        filesrc.link(&demux)
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to link filesrc to demux: {}", e)))?;
+        
+        // Link muxer to filesink
+        mux.link(&filesink)
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to link mux to filesink: {}", e)))?;
+        
+        // Handle dynamic pads from demuxer
+        let mux_weak = mux.downgrade();
+        demux.connect_pad_added(move |_demux, src_pad| {
+            let Some(mux) = mux_weak.upgrade() else { return };
+            
+            // Get the pad name to determine the stream type
+            let pad_name = src_pad.name();
+            println!("[Encoder] Demux pad added: {}", pad_name);
+            
+            // Request appropriate pad from muxer
+            let sink_pad = if pad_name.starts_with("video") {
+                mux.request_pad_simple("video_%u")
+            } else if pad_name.starts_with("audio") {
+                mux.request_pad_simple("audio_%u")
+            } else {
+                None
+            };
+            
+            if let Some(sink_pad) = sink_pad {
+                if let Err(e) = src_pad.link(&sink_pad) {
+                    println!("[Encoder] Warning: Failed to link pad {}: {:?}", pad_name, e);
+                }
+            }
+        });
+        
+        // Run the pipeline
+        pipeline.set_state(gst::State::Playing)
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to start remux pipeline: {:?}", e)))?;
+        
+        // Wait for EOS or error
+        let bus = pipeline.bus().ok_or_else(|| EncoderError::Pipeline("No bus".into()))?;
+        for msg in bus.iter_timed(gst::ClockTime::from_seconds(60)) {
+            match msg.view() {
+                gst::MessageView::Eos(..) => {
+                    println!("[Encoder] Remux complete");
+                    break;
+                }
+                gst::MessageView::Error(err) => {
+                    pipeline.set_state(gst::State::Null).ok();
+                    return Err(EncoderError::Pipeline(format!(
+                        "Remux error: {} ({:?})", err.error(), err.debug()
+                    )));
+                }
+                _ => {}
+            }
+        }
+        
+        pipeline.set_state(gst::State::Null).ok();
+        
+        // Get the new file size
+        let new_size = std::fs::metadata(&temp_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        
+        if new_size > 0 {
+            // Replace original with remuxed version
+            std::fs::remove_file(file_path)
+                .map_err(|e| EncoderError::Io(e))?;
+            std::fs::rename(&temp_path, file_path)
+                .map_err(|e| EncoderError::Io(e))?;
+            Ok(new_size)
+        } else {
+            // Keep original if remux produced empty file
+            let _ = std::fs::remove_file(&temp_path);
+            Err(EncoderError::Pipeline("Remux produced empty file".into()))
+        }
     }
     
     /// Create the GStreamer encoding pipeline
@@ -547,7 +667,6 @@ impl AsyncVideoEncoder {
         
         // WebM muxer for AV1
         let muxer = gst::ElementFactory::make("webmmux")
-            .property("streamable", true) // Allow streaming output
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create webmmux: {}", e)))?;
         
