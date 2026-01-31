@@ -12,6 +12,7 @@ fn process_caps(
     detected_formats: &mut Vec<String>,
     supported_codecs: &mut Vec<VideoCodec>,
     resolutions: &mut Vec<Resolution>,
+    hw_encoder_available: bool,
 ) {
     for i in 0..caps.size() {
         if let Some(structure) = caps.structure(i) {
@@ -24,7 +25,12 @@ fn process_caps(
                 
                 // Try to match to a supported codec
                 if let Some(codec) = VideoCodec::from_gst_caps_name(format_name) {
-                    if !supported_codecs.contains(&codec) {
+                    // For Raw codec, only add if hardware encoder is available
+                    if codec == VideoCodec::Raw {
+                        if hw_encoder_available && !supported_codecs.contains(&codec) {
+                            supported_codecs.push(codec);
+                        }
+                    } else if !supported_codecs.contains(&codec) {
                         supported_codecs.push(codec);
                     }
                 }
@@ -183,6 +189,27 @@ fn format_display_name(gst_name: &str) -> String {
     }
 }
 
+/// Check if any hardware AV1 encoder is available
+pub fn is_hardware_av1_encoder_available() -> bool {
+    // Check NVIDIA NVENC
+    if gst::ElementFactory::find("nvav1enc").is_some() {
+        return true;
+    }
+    // Check AMD AMF
+    if gst::ElementFactory::find("amfav1enc").is_some() {
+        return true;
+    }
+    // Check Intel QuickSync
+    if gst::ElementFactory::find("qsvav1enc").is_some() {
+        return true;
+    }
+    // Check VA-API
+    if gst::ElementFactory::find("vaav1enc").is_some() {
+        return true;
+    }
+    false
+}
+
 /// Enumerate all available audio input devices
 pub fn enumerate_audio_devices() -> Vec<AudioDevice> {
     let mut devices = Vec::new();
@@ -249,6 +276,14 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
     if let Err(e) = gstreamer::init() {
         println!("[Sacho] Failed to initialize GStreamer: {}", e);
         return Vec::new();
+    }
+    
+    // Check if hardware AV1 encoder is available for raw video support
+    let hw_encoder_available = is_hardware_av1_encoder_available();
+    if hw_encoder_available {
+        println!("[Sacho] Hardware AV1 encoder available - Raw video format will be supported");
+    } else {
+        println!("[Sacho] No hardware AV1 encoder found - Raw video format will not be available");
     }
     
     // Create device monitor for video sources
@@ -323,7 +358,7 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
         
         // First, process DeviceMonitor caps (these are accurate for what the device reports)
         for caps in &info.all_caps {
-            process_caps(caps, &mut detected_formats, &mut supported_codecs, &mut resolutions);
+            process_caps(caps, &mut detected_formats, &mut supported_codecs, &mut resolutions, hw_encoder_available);
         }
         
         // On Windows, if we only found RAW format, probe more aggressively

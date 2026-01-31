@@ -8,6 +8,13 @@
 // 4. Add file extension in container's extension()
 // 5. Update recording pipeline in recording/video.rs
 
+pub mod encoder;
+
+pub use encoder::{
+    AsyncVideoEncoder, EncoderConfig, EncoderError, EncoderStats,
+    HardwareEncoderType, RawVideoFrame, detect_best_encoder, has_hardware_encoder,
+};
+
 use serde::{Deserialize, Serialize};
 
 /// Supported video codecs for recording
@@ -22,6 +29,8 @@ pub enum VideoCodec {
     H265,
     /// AV1 - royalty-free, excellent compression
     Av1,
+    /// Raw uncompressed video - requires encoding by the application
+    Raw,
 }
 
 impl VideoCodec {
@@ -31,6 +40,7 @@ impl VideoCodec {
         VideoCodec::H264,
         VideoCodec::H265,
         VideoCodec::Av1,
+        VideoCodec::Raw,
     ];
     
     /// Try to parse codec from GStreamer caps structure name
@@ -52,6 +62,9 @@ impl VideoCodec {
             "video/x-av1" => Some(VideoCodec::Av1),
             "video/av1" => Some(VideoCodec::Av1),
             
+            // Raw uncompressed video
+            "video/x-raw" => Some(VideoCodec::Raw),
+            
             _ => None,
         }
     }
@@ -63,26 +76,31 @@ impl VideoCodec {
             VideoCodec::H264 => "video/x-h264",
             VideoCodec::H265 => "video/x-h265",
             VideoCodec::Av1 => "video/x-av1",
+            VideoCodec::Raw => "video/x-raw",
         }
     }
     
     /// Get the appropriate container format for this codec
+    /// Note: Raw codec will be encoded before muxing, so this returns the target container
     pub fn container(&self) -> ContainerFormat {
         match self {
             VideoCodec::Mjpeg => ContainerFormat::Mkv,
             VideoCodec::H264 => ContainerFormat::Mp4,
             VideoCodec::H265 => ContainerFormat::Mp4,
             VideoCodec::Av1 => ContainerFormat::WebM,
+            VideoCodec::Raw => ContainerFormat::WebM, // Will be encoded to AV1 -> WebM
         }
     }
     
     /// Get the GStreamer parser element name for this codec
+    /// Returns None for Raw since it doesn't have a parser
     pub fn gst_parser(&self) -> &'static str {
         match self {
             VideoCodec::Mjpeg => "jpegparse",
             VideoCodec::H264 => "h264parse",
             VideoCodec::H265 => "h265parse",
             VideoCodec::Av1 => "av1parse",
+            VideoCodec::Raw => "identity", // No parsing needed, use identity element
         }
     }
     
@@ -93,6 +111,7 @@ impl VideoCodec {
             VideoCodec::H264 => "H.264",
             VideoCodec::H265 => "H.265",
             VideoCodec::Av1 => "AV1",
+            VideoCodec::Raw => "RAW",
         }
     }
     
@@ -103,7 +122,18 @@ impl VideoCodec {
             VideoCodec::H264 => true,
             VideoCodec::H265 => true,  // Most browsers support HEVC now
             VideoCodec::Av1 => true,
+            VideoCodec::Raw => true, // Will be encoded to AV1, which is supported
         }
+    }
+    
+    /// Check if this codec requires encoding by the application
+    pub fn requires_encoding(&self) -> bool {
+        matches!(self, VideoCodec::Raw)
+    }
+    
+    /// Check if this is a pre-encoded codec (passthrough)
+    pub fn is_preencoded(&self) -> bool {
+        !self.requires_encoding()
     }
 }
 

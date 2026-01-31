@@ -17,6 +17,8 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 
+use crate::config::VideoEncodingMode;
+use crate::encoding::{AsyncVideoEncoder, EncoderConfig, RawVideoFrame};
 use crate::session::VideoFileInfo;
 
 /// Error type for video capture operations
@@ -51,6 +53,8 @@ pub struct BufferedFrame {
     pub duration: u64,
     /// Wall-clock time when frame was captured
     pub wall_time: Instant,
+    /// Pixel format for raw video (e.g., "NV12", "I420"), None for encoded
+    pub pixel_format: Option<String>,
 }
 
 /// Pre-roll buffer for video frames
@@ -140,7 +144,7 @@ pub struct VideoCapturePipeline {
     pub device_id: String,
     /// Human-readable device name
     pub device_name: String,
-    /// Video codec being captured
+    /// Video codec being captured (Raw means we need to encode)
     pub codec: crate::encoding::VideoCodec,
     /// GStreamer pipeline
     pipeline: gst::Pipeline,
@@ -164,8 +168,14 @@ pub struct VideoCapturePipeline {
     pub fps: u32,
     /// Is currently recording
     is_recording: bool,
-    /// File handle for recording
+    /// File handle for recording (for pre-encoded video)
     file_writer: Option<VideoWriter>,
+    /// Async encoder for raw video
+    raw_encoder: Option<AsyncVideoEncoder>,
+    /// Encoding mode for raw video
+    encoding_mode: VideoEncodingMode,
+    /// Pixel format for raw video capture
+    pixel_format: Option<String>,
 }
 
 /// Generic video file writer that handles different codecs and containers
@@ -516,6 +526,7 @@ impl VideoCapturePipeline {
                                         pts,
                                         duration,
                                         wall_time: Instant::now(),
+                                        pixel_format: None, // Pre-encoded, no pixel format
                                     };
                                     preroll_clone.lock().push(frame);
                                 }
@@ -547,6 +558,193 @@ impl VideoCapturePipeline {
             fps: 30,
             is_recording: false,
             file_writer: None,
+            raw_encoder: None,
+            encoding_mode: VideoEncodingMode::Av1Hardware,
+            pixel_format: None,
+        })
+    }
+    
+    /// Create a new capture pipeline for raw video from a webcam device
+    /// 
+    /// This pipeline captures raw video and encodes it using hardware acceleration.
+    /// 
+    /// - `device_index`: Device index (used on Linux/macOS)
+    /// - `device_name`: Device name (used on Windows with DirectShow)
+    /// - `pre_roll_secs`: Pre-roll buffer duration
+    /// - `encoding_mode`: How to encode the raw video
+    pub fn new_webcam_raw(
+        device_index: u32, 
+        device_name_hint: &str, 
+        pre_roll_secs: u32,
+        encoding_mode: VideoEncodingMode,
+    ) -> Result<Self> {
+        // Initialize GStreamer if not already done
+        gst::init().map_err(|e| VideoError::Gst(e))?;
+        
+        let pipeline = gst::Pipeline::new();
+        
+        // Create source element based on platform
+        #[cfg(target_os = "windows")]
+        let (source, device_name) = {
+            let src = gst::ElementFactory::make("dshowvideosrc")
+                .property("device-name", device_name_hint)
+                .build()
+                .map_err(|e| VideoError::Pipeline(format!("Failed to create dshowvideosrc: {}", e)))?;
+            (src, device_name_hint.to_string())
+        };
+        
+        #[cfg(target_os = "linux")]
+        let (source, device_name) = {
+            let src = gst::ElementFactory::make("v4l2src")
+                .property("device", format!("/dev/video{}", device_index))
+                .build()
+                .map_err(|e| VideoError::Pipeline(format!("Failed to create v4l2src: {}", e)))?;
+            let name = src.property::<Option<String>>("device-name")
+                .unwrap_or_else(|| format!("Webcam {}", device_index));
+            (src, name)
+        };
+        
+        #[cfg(target_os = "macos")]
+        let (source, device_name) = {
+            let src = gst::ElementFactory::make("avfvideosrc")
+                .property("device-index", device_index as i32)
+                .build()
+                .map_err(|e| VideoError::Pipeline(format!("Failed to create avfvideosrc: {}", e)))?;
+            let name = src.property::<Option<String>>("device-name")
+                .unwrap_or_else(|| format!("Webcam {}", device_index));
+            (src, name)
+        };
+        
+        println!("[Video] Creating RAW capture pipeline for {} (device {})", device_name, device_index);
+        println!("[Video]   Encoding mode: {:?}", encoding_mode);
+        
+        // Raw video pipeline: source -> capsfilter(raw) -> videoconvert -> queue -> appsink
+        // We prefer NV12 format as it's efficient for hardware encoders
+        let input_caps = gst::Caps::builder("video/x-raw")
+            .field("width", gst::IntRange::new(640, 1920))
+            .field("height", gst::IntRange::new(480, 1080))
+            .field("framerate", gst::FractionRange::new(
+                gst::Fraction::new(15, 1),
+                gst::Fraction::new(60, 1)
+            ))
+            .build();
+        
+        let capsfilter = gst::ElementFactory::make("capsfilter")
+            .property("caps", input_caps)
+            .build()
+            .map_err(|e| VideoError::Pipeline(format!("Failed to create capsfilter: {}", e)))?;
+        
+        // Video converter to normalize format
+        let videoconvert = gst::ElementFactory::make("videoconvert")
+            .build()
+            .map_err(|e| VideoError::Pipeline(format!("Failed to create videoconvert: {}", e)))?;
+        
+        // Force output to a format suitable for encoding
+        let output_caps = gst::Caps::builder("video/x-raw")
+            .field("format", "NV12") // NV12 is efficient for most hardware encoders
+            .build();
+        
+        let output_capsfilter = gst::ElementFactory::make("capsfilter")
+            .property("caps", output_caps)
+            .build()
+            .map_err(|e| VideoError::Pipeline(format!("Failed to create output capsfilter: {}", e)))?;
+        
+        // Queue for buffering with larger size for raw video
+        let queue = gst::ElementFactory::make("queue")
+            .property("max-size-buffers", 30u32)
+            .property("max-size-bytes", 100_000_000u32) // 100MB
+            .property_from_str("leaky", "downstream")
+            .build()
+            .map_err(|e| VideoError::Pipeline(format!("Failed to create queue: {}", e)))?;
+        
+        // App sink to pull frames
+        let appsink = gst_app::AppSink::builder()
+            .name("sink")
+            .max_buffers(2)
+            .drop(true)
+            .sync(false)
+            .build();
+        
+        // Add elements to pipeline
+        pipeline.add_many([&source, &capsfilter, &videoconvert, &output_capsfilter, &queue, appsink.upcast_ref()])
+            .map_err(|e| VideoError::Pipeline(format!("Failed to add elements: {}", e)))?;
+        
+        // Link all elements
+        gst::Element::link_many([&source, &capsfilter, &videoconvert, &output_capsfilter, &queue, appsink.upcast_ref()])
+            .map_err(|e| VideoError::Pipeline(format!("Failed to link pipeline: {}", e)))?;
+        
+        println!("[Video] RAW capture pipeline created for {} (device {})", device_name, device_index);
+        
+        // Create pre-roll buffer (larger for raw video)
+        let preroll_buffer = Arc::new(Mutex::new(VideoPrerollBuffer::new(pre_roll_secs)));
+        
+        // Set up appsink callback to fill pre-roll buffer
+        let preroll_clone = preroll_buffer.clone();
+        let frame_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let frame_counter_clone = frame_counter.clone();
+        
+        appsink.set_callbacks(
+            gst_app::AppSinkCallbacks::builder()
+                .new_sample(move |sink| {
+                    match sink.pull_sample() {
+                        Ok(sample) => {
+                            if let Some(buffer) = sample.buffer() {
+                                let pts = buffer.pts().map(|t| t.nseconds()).unwrap_or(0);
+                                let duration = buffer.duration().map(|t| t.nseconds()).unwrap_or(33_333_333);
+                                
+                                // Get pixel format from caps
+                                let pixel_format = sample.caps()
+                                    .and_then(|caps| caps.structure(0))
+                                    .and_then(|s| s.get::<String>("format").ok());
+                                
+                                if let Ok(map) = buffer.map_readable() {
+                                    let data = map.as_slice().to_vec();
+                                    let frame_num = frame_counter_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    
+                                    if frame_num == 0 {
+                                        println!("[Video] First RAW frame: {} bytes, pts={}, format={:?}", 
+                                            data.len(), pts, pixel_format);
+                                    }
+                                    
+                                    let frame = BufferedFrame {
+                                        data,
+                                        pts,
+                                        duration,
+                                        wall_time: Instant::now(),
+                                        pixel_format: pixel_format.clone(),
+                                    };
+                                    preroll_clone.lock().push(frame);
+                                }
+                            }
+                            Ok(gst::FlowSuccess::Ok)
+                        }
+                        Err(_) => Err(gst::FlowError::Error),
+                    }
+                })
+                .build()
+        );
+        
+        let _ = frame_counter;
+        
+        Ok(Self {
+            device_id: format!("webcam-{}", device_index),
+            device_name,
+            codec: crate::encoding::VideoCodec::Raw,
+            pipeline,
+            appsink,
+            preroll_buffer,
+            recording_path: None,
+            recording_start: None,
+            pts_offset: 0,
+            frames_written: 0,
+            width: 1280,
+            height: 720,
+            fps: 30,
+            is_recording: false,
+            file_writer: None,
+            raw_encoder: None,
+            encoding_mode,
+            pixel_format: Some("NV12".to_string()),
         })
     }
     
@@ -596,10 +794,7 @@ impl VideoCapturePipeline {
         
         println!("[Video] Starting recording to {:?} (codec: {})", output_path, self.codec.display_name());
         
-        // Create video writer for this codec
-        let writer = VideoWriter::new(&output_path, self.codec, self.width, self.height, self.fps)?;
-        
-        // Drain pre-roll buffer and write frames
+        // Drain pre-roll buffer
         let preroll_frames = self.preroll_buffer.lock().drain();
         println!("[Video] Pre-roll buffer has {} frames", preroll_frames.len());
         
@@ -610,24 +805,69 @@ impl VideoCapturePipeline {
                 .duration_since(preroll_frames.first().unwrap().wall_time)
         };
         
-        // Write pre-roll frames
-        // Store pts_offset so all subsequent frames use the same offset
         self.pts_offset = preroll_frames.first().map(|f| f.pts).unwrap_or(0);
-        for frame in &preroll_frames {
-            writer.write_frame(frame, self.pts_offset)?;
+        
+        // Handle raw vs pre-encoded video differently
+        if self.codec == crate::encoding::VideoCodec::Raw {
+            // Raw video - use async encoder
+            let encoder_config = EncoderConfig {
+                bitrate: 0, // Auto
+                keyframe_interval: self.fps * 2, // Keyframe every 2 seconds
+                preset: "p4".to_string(), // Balanced preset
+                target_codec: crate::encoding::VideoCodec::Av1,
+            };
+            
+            // Create encoder with buffer size of ~2 seconds of frames for backpressure
+            let buffer_size = (self.fps * 2) as usize;
+            let encoder = AsyncVideoEncoder::new(
+                output_path.clone(),
+                self.width,
+                self.height,
+                self.fps,
+                encoder_config,
+                buffer_size,
+            ).map_err(|e| VideoError::Pipeline(format!("Failed to create encoder: {}", e)))?;
+            
+            // Send pre-roll frames to encoder
+            let pixel_format = self.pixel_format.clone().unwrap_or_else(|| "NV12".to_string());
+            for frame in &preroll_frames {
+                let raw_frame = RawVideoFrame {
+                    data: frame.data.clone(),
+                    pts: frame.pts,
+                    duration: frame.duration,
+                    width: self.width,
+                    height: self.height,
+                    format: frame.pixel_format.clone().unwrap_or_else(|| pixel_format.clone()),
+                    capture_time: frame.wall_time,
+                };
+                
+                // Use blocking send for pre-roll since we need all frames
+                if let Err(e) = encoder.send_frame(raw_frame) {
+                    println!("[Video] Warning: Failed to send pre-roll frame: {}", e);
+                }
+            }
+            
+            self.raw_encoder = Some(encoder);
+            self.file_writer = None;
+        } else {
+            // Pre-encoded video - use passthrough writer
+            let writer = VideoWriter::new(&output_path, self.codec, self.width, self.height, self.fps)?;
+            
+            // Write pre-roll frames
+            for frame in &preroll_frames {
+                writer.write_frame(frame, self.pts_offset)?;
+            }
+            
+            self.file_writer = Some(writer);
+            self.raw_encoder = None;
         }
         
-        self.file_writer = Some(writer);
         self.recording_path = Some(output_path);
         self.recording_start = Some(Instant::now());
         self.frames_written = preroll_frames.len() as u64;
         self.is_recording = true;
         
-        // Note: The appsink callback continues to push frames to the preroll buffer.
-        // During recording, the poll() function drains the buffer and writes to file.
-        
-        println!("[Video] Started recording to {:?}, pre-roll: {:?}", 
-            self.recording_path, preroll_duration);
+        println!("[Video] Started recording, pre-roll: {:?}", preroll_duration);
         
         Ok(preroll_duration)
     }
@@ -638,45 +878,72 @@ impl VideoCapturePipeline {
             return Err(VideoError::Pipeline("Not recording".to_string()));
         }
         
-        // Drain any remaining frames from pre-roll buffer (which now holds recording frames)
+        // Drain any remaining frames from pre-roll buffer
         let remaining_frames = self.preroll_buffer.lock().drain();
         
-        if let Some(writer) = self.file_writer.take() {
-            // Write remaining frames with the same pts_offset for continuity
+        let (duration, file_size) = if let Some(encoder) = self.raw_encoder.take() {
+            // Raw video with encoding
+            let pixel_format = self.pixel_format.clone().unwrap_or_else(|| "NV12".to_string());
+            
+            // Send remaining frames to encoder
+            for frame in &remaining_frames {
+                let raw_frame = RawVideoFrame {
+                    data: frame.data.clone(),
+                    pts: frame.pts,
+                    duration: frame.duration,
+                    width: self.width,
+                    height: self.height,
+                    format: frame.pixel_format.clone().unwrap_or_else(|| pixel_format.clone()),
+                    capture_time: frame.wall_time,
+                };
+                
+                // Use non-blocking send, drop frames if encoder can't keep up
+                if let Ok(false) = encoder.try_send_frame(raw_frame) {
+                    println!("[Video] Warning: Dropped frame during stop (encoder backpressure)");
+                }
+            }
+            self.frames_written += remaining_frames.len() as u64;
+            
+            // Finish encoding
+            let stats = encoder.finish()
+                .map_err(|e| VideoError::Pipeline(format!("Failed to finish encoding: {}", e)))?;
+            
+            (stats.encoding_duration, stats.bytes_written)
+        } else if let Some(writer) = self.file_writer.take() {
+            // Pre-encoded video
             for frame in &remaining_frames {
                 let _ = writer.write_frame(frame, self.pts_offset);
             }
             self.frames_written += remaining_frames.len() as u64;
             
-            // Finalize the file
-            let (duration, file_size) = writer.finish()?;
-            
-            let filename = self.recording_path
-                .as_ref()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .unwrap_or("video.mkv")
-                .to_string();
-            
-            self.is_recording = false;
-            self.recording_path = None;
-            self.recording_start = None;
-            
-            println!("[Video] Stopped recording {}, duration: {:?}, size: {} bytes", 
-                filename, duration, file_size);
-            
-            Ok(VideoFileInfo {
-                filename,
-                device_name: self.device_name.clone(),
-                width: self.width,
-                height: self.height,
-                fps: self.fps,
-                duration_secs: duration.as_secs_f64(),
-                size_bytes: file_size,
-            })
+            writer.finish()?
         } else {
-            Err(VideoError::Pipeline("No active writer".to_string()))
-        }
+            return Err(VideoError::Pipeline("No active writer or encoder".to_string()));
+        };
+        
+        let filename = self.recording_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("video.webm")
+            .to_string();
+        
+        self.is_recording = false;
+        self.recording_path = None;
+        self.recording_start = None;
+        
+        println!("[Video] Stopped recording {}, duration: {:?}, size: {} bytes", 
+            filename, duration, file_size);
+        
+        Ok(VideoFileInfo {
+            filename,
+            device_name: self.device_name.clone(),
+            width: self.width,
+            height: self.height,
+            fps: self.fps,
+            duration_secs: duration.as_secs_f64(),
+            size_bytes: file_size,
+        })
     }
     
     /// Check if currently recording
@@ -701,11 +968,45 @@ impl VideoCapturePipeline {
             return Ok(());
         }
         
-        // Drain accumulated frames and write to file
+        // Drain accumulated frames
         let frames = self.preroll_buffer.lock().drain();
-        if let Some(ref writer) = self.file_writer {
+        
+        if let Some(ref encoder) = self.raw_encoder {
+            // Raw video - send to encoder (non-blocking)
+            let pixel_format = self.pixel_format.clone().unwrap_or_else(|| "NV12".to_string());
+            let mut frames_sent = 0u64;
+            let mut frames_dropped = 0u64;
+            
             for frame in &frames {
-                // Use the same pts_offset as the pre-roll frames for continuity
+                let raw_frame = RawVideoFrame {
+                    data: frame.data.clone(),
+                    pts: frame.pts,
+                    duration: frame.duration,
+                    width: self.width,
+                    height: self.height,
+                    format: frame.pixel_format.clone().unwrap_or_else(|| pixel_format.clone()),
+                    capture_time: frame.wall_time,
+                };
+                
+                // Use non-blocking send to avoid blocking capture
+                match encoder.try_send_frame(raw_frame) {
+                    Ok(true) => frames_sent += 1,
+                    Ok(false) => frames_dropped += 1, // Buffer full, frame dropped
+                    Err(e) => {
+                        println!("[Video] Encoder error: {}", e);
+                        return Err(VideoError::Pipeline(format!("Encoder error: {}", e)));
+                    }
+                }
+            }
+            
+            self.frames_written += frames_sent;
+            
+            if frames_dropped > 0 {
+                println!("[Video] Warning: Dropped {} frames due to encoder backpressure", frames_dropped);
+            }
+        } else if let Some(ref writer) = self.file_writer {
+            // Pre-encoded video - write directly
+            for frame in &frames {
                 writer.write_frame(frame, self.pts_offset)?;
             }
             self.frames_written += frames.len() as u64;
@@ -729,6 +1030,8 @@ pub struct VideoCaptureManager {
     pre_roll_secs: u32,
     /// Is currently recording
     is_recording: bool,
+    /// Encoding mode for raw video
+    encoding_mode: VideoEncodingMode,
 }
 
 impl VideoCaptureManager {
@@ -743,7 +1046,13 @@ impl VideoCaptureManager {
             pipelines: HashMap::new(),
             pre_roll_secs,
             is_recording: false,
+            encoding_mode: VideoEncodingMode::Av1Hardware,
         }
+    }
+    
+    /// Set the encoding mode for raw video
+    pub fn set_encoding_mode(&mut self, mode: VideoEncodingMode) {
+        self.encoding_mode = mode;
     }
     
     /// Start capturing from specified devices with their codecs
@@ -761,7 +1070,21 @@ impl VideoCaptureManager {
                 .and_then(|s| s.parse::<u32>().ok())
                 .unwrap_or(0);
             
-            match VideoCapturePipeline::new_webcam(index, device_name, *codec, self.pre_roll_secs) {
+            // Create appropriate pipeline based on codec
+            let pipeline_result = if codec.requires_encoding() {
+                // Raw video - use encoding pipeline
+                VideoCapturePipeline::new_webcam_raw(
+                    index, 
+                    device_name, 
+                    self.pre_roll_secs,
+                    self.encoding_mode.clone(),
+                )
+            } else {
+                // Pre-encoded video - use passthrough pipeline
+                VideoCapturePipeline::new_webcam(index, device_name, *codec, self.pre_roll_secs)
+            };
+            
+            match pipeline_result {
                 Ok(mut pipeline) => {
                     if let Err(e) = pipeline.start() {
                         println!("[Video] Failed to start pipeline for {}: {}", device_id, e);

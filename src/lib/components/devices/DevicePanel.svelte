@@ -247,18 +247,26 @@
                         if (format === 'H.264' && device.supported_codecs.includes('h264')) return 'h264';
                         if (format === 'H.265' && device.supported_codecs.includes('h265')) return 'h265';
                         if (format === 'AV1' && device.supported_codecs.includes('av1')) return 'av1';
+                        if (format === 'RAW' && device.supported_codecs.includes('raw')) return 'raw';
                         return null;
                       })()}
                       {@const isSelected = matchingCodec !== null && matchingCodec === effectiveCodec}
+                      {@const isRaw = matchingCodec === 'raw'}
                       {#if matchingCodec}
                         <button 
                           class="meta-tag codec-btn" 
                           class:codec-selected={isSelected}
                           class:codec-unselected={!isSelected}
+                          class:codec-raw={isRaw}
                           onclick={() => { setVideoDeviceCodec(device.id, matchingCodec); }}
-                          title="Click to use {format} for recording"
+                          title={isRaw 
+                            ? "Use RAW format (requires GPU encoding)" 
+                            : `Click to use ${format} for recording`}
                         >
                           {format}
+                          {#if isRaw && isSelected}
+                            <span class="raw-indicator">⚡</span>
+                          {/if}
                         </button>
                       {:else}
                         <span class="meta-tag format-unsupported">
@@ -575,6 +583,22 @@
   
   .codec-btn.codec-unselected:hover {
     opacity: 1;
+  }
+  
+  .codec-btn.codec-raw {
+    background: rgba(234, 179, 8, 0.1);
+    color: #facc15;
+  }
+  
+  .codec-btn.codec-raw.codec-selected {
+    background: rgba(234, 179, 8, 0.2);
+    color: #facc15;
+    border-color: #facc15;
+  }
+  
+  .raw-indicator {
+    margin-left: 2px;
+    font-size: 0.625rem;
   }
   
   .device-unsupported {

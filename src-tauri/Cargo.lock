@@ -4027,6 +4027,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "cpal",
+ "crossbeam-channel",
  "dirs 5.0.1",
  "env_logger",
  "flacenc",

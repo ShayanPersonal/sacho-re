@@ -441,11 +441,15 @@ impl MidiMonitor {
                 })
                 .collect();
             
+            // Get encoding mode for raw video
+            let encoding_mode = config_read.video_encoding_mode.clone();
+            
             drop(config_read);
             drop(devices); // Release device manager lock
             
             let mut video_mgr = self.video_manager.lock();
             video_mgr.set_preroll_duration(pre_roll);
+            video_mgr.set_encoding_mode(encoding_mode);
             
             if !video_with_info.is_empty() {
                 if let Err(e) = video_mgr.start(&video_with_info) {

@@ -74,6 +74,9 @@ env_logger = "0.11"
 # Thread-safe state
 parking_lot = "0.12"
 
+# Concurrent channels for encoder pipeline
+crossbeam-channel = "0.5"
+
 # Ring buffer for audio
 ringbuf = "0.4"
 

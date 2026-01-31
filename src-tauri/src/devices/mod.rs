@@ -86,8 +86,11 @@ impl VideoDevice {
     /// 2. H.265 - better compression, native player works
     /// 3. AV1 - best compression, native player works
     /// 4. MJPEG - fallback, requires custom player
+    /// 
+    /// Note: Raw is not included in preferred codecs as it requires explicit selection
     pub fn preferred_codec(&self) -> Option<VideoCodec> {
-        // Prefer codecs that work with native player
+        // Prefer pre-encoded codecs that work with native player
+        // Raw is deliberately not in this list - users must explicitly select it
         const PRIORITY: &[VideoCodec] = &[
             VideoCodec::H264,
             VideoCodec::H265,
@@ -101,8 +104,16 @@ impl VideoDevice {
             }
         }
         
-        // Fall back to first available if none in priority list
-        self.supported_codecs.first().copied()
+        // Fall back to first non-raw codec, or Raw if that's all we have
+        self.supported_codecs.iter()
+            .find(|c| **c != VideoCodec::Raw)
+            .copied()
+            .or_else(|| self.supported_codecs.first().copied())
+    }
+    
+    /// Check if this device supports raw video (requires encoding)
+    pub fn supports_raw(&self) -> bool {
+        self.supported_codecs.contains(&VideoCodec::Raw)
     }
 }
 

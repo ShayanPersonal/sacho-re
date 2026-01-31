@@ -22,7 +22,7 @@ export interface MidiDevice {
 }
 
 /** Supported video codecs */
-export type VideoCodec = 'mjpeg' | 'h264' | 'h265' | 'av1';
+export type VideoCodec = 'mjpeg' | 'h264' | 'h265' | 'av1' | 'raw';
 
 export interface VideoDevice {
   id: string;
@@ -47,6 +47,7 @@ export function getCodecDisplayName(codec: VideoCodec): string {
     case 'h264': return 'H.264';
     case 'h265': return 'H.265';
     case 'av1': return 'AV1';
+    case 'raw': return 'RAW';
   }
 }
 
