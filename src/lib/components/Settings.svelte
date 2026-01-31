@@ -116,8 +116,6 @@
           </div>
           <select bind:value={localSettings.video_encoding_mode} onchange={autoSave}>
             <option value="av1_hardware">AV1 Hardware (uses less system resources)</option>
-            <option value="vp8_software">VP8 Software (uses more system resources)</option>
-            <option value="raw">Raw/Lossless (huge files!)</option>
           </select>
         </div>
       </section>
