@@ -4,6 +4,7 @@
 pub mod config;
 pub mod devices;
 pub mod encoding;
+pub mod gstreamer_init;
 pub mod recording;
 pub mod session;
 pub mod similarity;
@@ -20,6 +21,10 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
+    
+    // Initialize GStreamer environment before anything else
+    // This sets up paths for private GStreamer deployment on Windows
+    gstreamer_init::init_gstreamer_env();
     
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

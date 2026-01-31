@@ -42,7 +42,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": [
+    "externalBin": [],
+    "resources": [
+      "installers/*.msi"
     ],
     "windows": {
       "certificateThumbprint": null,
@@ -54,7 +56,8 @@
         "sidebarImage": null,
         "installMode": "currentUser",
         "languages": ["English"],
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "installerHooks": "./windows/hooks.nsi"
       }
     },
     "shortDescription": "Automatic recording companion for musicians",
