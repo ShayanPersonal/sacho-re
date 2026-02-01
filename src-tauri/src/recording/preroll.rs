@@ -18,7 +18,10 @@ pub const MAX_PRE_ROLL_SECS: u32 = 5;
 pub struct BufferedMidiEvent {
     pub device_name: String,
     pub event: TimestampedMidiEvent,
+    /// Wall clock time when event was processed (used for buffer trimming)
     pub wall_time: Instant,
+    /// Driver timestamp in microseconds (preserves accurate timing between events)
+    pub driver_timestamp_us: u64,
 }
 
 /// Rolling buffer for MIDI events
@@ -40,15 +43,16 @@ impl MidiPrerollBuffer {
         self.trim();
     }
     
-    pub fn push(&mut self, device_name: String, event: TimestampedMidiEvent) {
+    pub fn push(&mut self, device_name: String, event: TimestampedMidiEvent, driver_timestamp_us: u64) {
         self.events.push_back(BufferedMidiEvent {
             device_name: device_name.clone(),
             event,
             wall_time: Instant::now(),
+            driver_timestamp_us,
         });
         self.trim();
-        println!("[Sacho PreRoll] Buffered MIDI event from {}, buffer size: {}, max_duration: {:?}", 
-            device_name, self.events.len(), self.max_duration);
+        println!("[Sacho PreRoll] Buffered MIDI event from {}, buffer size: {}, driver_ts: {}us", 
+            device_name, self.events.len(), driver_timestamp_us);
     }
     
     fn trim(&mut self) {
@@ -86,30 +90,48 @@ impl MidiPrerollBuffer {
         let span_ms = last_time.duration_since(first_time).as_millis();
         
         if let Some(audio_duration) = audio_preroll_duration {
-            // Sync with audio: calculate timestamps relative to audio pre-roll start
-            // Audio pre-roll starts at (now - audio_duration)
-            // Each MIDI event's timestamp = audio_duration - time_before_now
+            // Sync with audio using DRIVER timestamps for accurate relative timing
+            // 
+            // The problem: wall_time is set when the callback acquires the lock, not when
+            // the MIDI event actually arrived. If the lock is held (e.g., during start_recording),
+            // multiple events can have nearly identical wall_times, destroying their relative timing.
+            //
+            // The solution: Use driver_timestamp_us which preserves accurate timing from the hardware.
+            // We anchor the LAST event to the current moment, then calculate all other events'
+            // timestamps relative to it using their driver timestamp differences.
+            
             println!("[Sacho PreRoll] Pre-roll span: {}ms, syncing to audio pre-roll: {}ms", 
                 span_ms, audio_duration.as_millis());
             
-            events.into_iter()
-                .filter_map(|e| {
-                    // How long ago did this event occur?
-                    let time_before_now = now.duration_since(e.wall_time);
+            // First, filter to events within the pre-roll window (using wall_time for this check)
+            let filtered_events: Vec<_> = events.into_iter()
+                .filter(|e| now.duration_since(e.wall_time) <= audio_duration)
+                .collect();
+            
+            if filtered_events.is_empty() {
+                return Vec::new();
+            }
+            
+            // Get the last event's driver timestamp as our anchor point
+            let last_event = filtered_events.last().unwrap();
+            let last_driver_ts = last_event.driver_timestamp_us;
+            let last_wall_ago = now.duration_since(last_event.wall_time);
+            
+            // The last event's timestamp in the output = audio_duration - time_since_last_event
+            let last_output_ts_us = (audio_duration - last_wall_ago).as_micros() as u64;
+            
+            // Calculate each event's timestamp relative to the last event using driver timestamps
+            filtered_events.into_iter()
+                .map(|e| {
+                    // How many microseconds before the last event did this event occur?
+                    let driver_delta_us = last_driver_ts.saturating_sub(e.driver_timestamp_us);
                     
-                    // Event timestamp relative to audio pre-roll start
-                    // If audio pre-roll is 2s and event was 0.5s ago, timestamp = 2.0 - 0.5 = 1.5s
-                    if time_before_now <= audio_duration {
-                        let timestamp_us = (audio_duration - time_before_now).as_micros() as u64;
-                        let mut adjusted_event = e.event;
-                        adjusted_event.timestamp_us = timestamp_us;
-                        Some((e.device_name, adjusted_event))
-                    } else {
-                        // Event is older than audio pre-roll window, skip it
-                        // (shouldn't happen if both buffers use same max duration)
-                        println!("[Sacho PreRoll] Dropping MIDI event older than audio pre-roll");
-                        None
-                    }
+                    // This event's output timestamp = last_output_ts - driver_delta
+                    let timestamp_us = last_output_ts_us.saturating_sub(driver_delta_us);
+                    
+                    let mut adjusted_event = e.event;
+                    adjusted_event.timestamp_us = timestamp_us;
+                    (e.device_name, adjusted_event)
                 })
                 .collect()
         } else {
@@ -186,6 +208,23 @@ impl AudioPrerollBuffer {
     /// Drain all buffered samples
     pub fn drain(&mut self) -> Vec<f32> {
         self.samples.drain(..).collect()
+    }
+    
+    /// Drain samples for a specific duration (from the end of the buffer)
+    /// This allows syncing audio pre-roll to a shorter video pre-roll duration
+    pub fn drain_duration(&mut self, duration: Duration) -> Vec<f32> {
+        let samples_for_duration = (duration.as_secs_f64() * self.sample_rate as f64 * self.channels as f64) as usize;
+        
+        if samples_for_duration >= self.samples.len() {
+            // Requested duration covers all samples, drain everything
+            self.samples.drain(..).collect()
+        } else {
+            // Only take the last N samples (most recent audio)
+            let skip_count = self.samples.len() - samples_for_duration;
+            let result: Vec<f32> = self.samples.iter().skip(skip_count).cloned().collect();
+            self.samples.clear();
+            result
+        }
     }
     
     pub fn clear(&mut self) {

@@ -786,12 +786,13 @@ impl VideoCapturePipeline {
         let preroll_frames = self.preroll_buffer.lock().drain();
         println!("[Video] Pre-roll buffer has {} frames", preroll_frames.len());
         
-        let preroll_duration = if preroll_frames.is_empty() {
-            Duration::ZERO
-        } else {
-            preroll_frames.last().unwrap().wall_time
-                .duration_since(preroll_frames.first().unwrap().wall_time)
-        };
+        // Calculate pre-roll duration as time from FIRST frame capture to NOW
+        // This is the correct reference for syncing with audio/MIDI
+        // (Previously we used last-first span, but that doesn't account for 
+        // the delay between video processing and audio processing)
+        let preroll_duration = preroll_frames.first()
+            .map(|f| f.wall_time.elapsed())
+            .unwrap_or(Duration::ZERO);
         
         self.pts_offset = preroll_frames.first().map(|f| f.pts).unwrap_or(0);
         

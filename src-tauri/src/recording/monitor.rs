@@ -194,19 +194,19 @@ impl MidiMonitor {
                     match midi_in.connect(
                         port,
                         "sacho-trigger",
-                        move |_timestamp_us, message, _| {
+                        move |timestamp_us, message, _| {
                             // Store event (to pre-roll buffer if not fully recording, to main buffer otherwise)
                             {
                                 let mut state = capture_state.lock();
                                 
                                 // Use pre-roll if not recording OR if recording is starting (video init)
                                 if state.should_use_preroll() {
-                                    // Store in pre-roll buffer
+                                    // Store in pre-roll buffer with driver timestamp for accurate timing
                                     let event = TimestampedMidiEvent {
                                         timestamp_us: 0,
                                         data: message.to_vec(),
                                     };
-                                    state.midi_preroll.push(port_name_clone.clone(), event);
+                                    state.midi_preroll.push(port_name_clone.clone(), event, timestamp_us);
                                 } else {
                                     // Recording is active, store with proper timestamp
                                     let rel_time = state.start_time
@@ -269,7 +269,7 @@ impl MidiMonitor {
                     match midi_in.connect(
                         port,
                         "sacho-record",
-                        move |_timestamp_us, message, _| {
+                        move |timestamp_us, message, _| {
                             let mut state = capture_state.lock();
                             
                             // Update last event time for idle detection (even during pre-roll)
@@ -282,13 +282,14 @@ impl MidiMonitor {
                             
                             // Use pre-roll if not recording OR if recording is starting (video init)
                             if state.should_use_preroll() {
-                                // Store in pre-roll buffer
+                                // Store in pre-roll buffer with driver timestamp for accurate timing
                                 state.midi_preroll.push(
                                     port_name_clone.clone(),
                                     TimestampedMidiEvent {
                                         timestamp_us: 0,
                                         data: message.to_vec(),
-                                    }
+                                    },
+                                    timestamp_us,
                                 );
                             } else {
                                 // Recording is active, store with proper timestamp
@@ -681,8 +682,12 @@ fn start_recording(
         return;
     }
     
+    // Capture the instant BEFORE video starts - this is our sync reference point
+    // The video pre-roll duration is relative to this instant
+    let video_start_instant = Instant::now();
+    
     // Start video recording (this captures pre-roll and begins file writing)
-    let _video_preroll_duration = {
+    let video_preroll_duration = {
         let mut mgr = video_manager.lock();
         match mgr.start_recording(&session_path) {
             Ok(duration) => {
@@ -705,21 +710,43 @@ fn start_recording(
         
         // Calculate the actual audio pre-roll duration from the first audio buffer
         // This tells us how much audio we captured before the trigger
-        let audio_preroll_duration = state.audio_prerolls.first().map(|preroll| {
-            let samples = preroll.sample_rate() as usize * preroll.channels() as usize;
-            if samples > 0 {
-                // Calculate duration from sample count in the pre-roll buffer
-                // Note: We use the configured pre-roll duration since we don't have 
-                // direct access to current buffer length, but it's capped to max_duration
-                Duration::from_secs(state.pre_roll_secs as u64)
-            } else {
-                Duration::from_secs(state.pre_roll_secs as u64)
-            }
+        let configured_preroll = Duration::from_secs(state.pre_roll_secs as u64);
+        let audio_preroll_duration = state.audio_prerolls.first().map(|_preroll| {
+            configured_preroll
         });
         
-        // Drain pre-roll MIDI buffer with audio sync
-        // This ensures MIDI timestamps align with audio pre-roll start
-        let preroll_events = state.midi_preroll.drain_with_audio_sync(audio_preroll_duration);
+        // SYNC FIX: Calculate the correct audio pre-roll to align with video
+        // 
+        // video_preroll_duration = time from first video frame capture to when video.rs STARTED
+        // (measured using first_frame.wall_time.elapsed() at the moment video processing began)
+        // 
+        // delay_since_video_start = time elapsed from when video started to NOW
+        // This includes the time video took to process AND any time to reach this point
+        //
+        // Total audio pre-roll = video_preroll + delay_since_video_start
+        // This ensures the first video frame and first audio sample represent the same moment
+        let delay_since_video_start = video_start_instant.elapsed();
+        
+        let sync_preroll_duration = match (audio_preroll_duration, video_preroll_duration) {
+            (Some(audio_dur), Some(video_dur)) => {
+                // Add the delay since video STARTED to get the correct audio pre-roll
+                // This accounts for the ~340ms that video processing takes
+                let adjusted_video_dur = video_dur + delay_since_video_start;
+                // Use the minimum to avoid requesting more audio than we have
+                let sync_dur = audio_dur.min(adjusted_video_dur);
+                
+                println!("[Sacho] SYNC: video_preroll={:?}, delay={:?}, adjusted={:?}, audio={:?}, using={:?}", 
+                    video_dur, delay_since_video_start, adjusted_video_dur, audio_dur, sync_dur);
+                Some(sync_dur)
+            }
+            (Some(audio_dur), None) => Some(audio_dur), // No video, use audio
+            (None, Some(video_dur)) => Some(video_dur + delay_since_video_start), // No audio, use adjusted video
+            (None, None) => None,
+        };
+        
+        // Drain pre-roll MIDI buffer with sync duration
+        // This ensures MIDI timestamps align with the synchronized pre-roll start
+        let preroll_events = state.midi_preroll.drain_with_audio_sync(sync_preroll_duration);
         let midi_preroll_count = preroll_events.len();
         
         // Add pre-roll MIDI events first
@@ -731,9 +758,15 @@ fn start_recording(
         // Drain audio pre-roll buffers into main buffers
         // Pre-roll audio goes BEFORE any new samples
         // Note: Audio samples collected after trigger_instant will be added during recording
+        // SYNC FIX: Only drain samples matching the sync duration (not full audio buffer)
         let mut audio_preroll_samples = 0;
         for i in 0..state.audio_prerolls.len() {
-            let preroll_samples = state.audio_prerolls[i].drain();
+            let preroll_samples = if let Some(sync_dur) = sync_preroll_duration {
+                // Drain only the samples that match the sync duration
+                state.audio_prerolls[i].drain_duration(sync_dur)
+            } else {
+                state.audio_prerolls[i].drain()
+            };
             audio_preroll_samples += preroll_samples.len();
             
             if let Some(buffer) = state.audio_buffers.get_mut(i) {
@@ -751,8 +784,8 @@ fn start_recording(
         state.is_starting = false;
         state.is_recording = true;
         
-        println!("[Sacho] Recording started with {} pre-roll MIDI events, {} pre-roll audio samples (audio pre-roll: {:?})", 
-            midi_preroll_count, audio_preroll_samples, audio_preroll_duration);
+        println!("[Sacho] Recording started with {} pre-roll MIDI events, {} pre-roll audio samples (sync pre-roll: {:?})", 
+            midi_preroll_count, audio_preroll_samples, sync_preroll_duration);
     }
     
     // Update recording state
