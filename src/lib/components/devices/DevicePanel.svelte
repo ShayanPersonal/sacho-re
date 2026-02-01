@@ -396,9 +396,11 @@
   }
   
   .panel-header h2 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #fff;
+    font-family: 'Bebas Neue', Impact, 'Arial Narrow', sans-serif;
+    font-size: 1.375rem;
+    font-weight: 400;
+    color: #e8e6e3;
+    letter-spacing: 0.06em;
   }
   
   .header-actions {
@@ -407,30 +409,32 @@
   }
   
   .action-btn {
-    padding: 0.5rem 0.875rem;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.5rem;
-    color: #a1a1aa;
+    padding: 0.5rem 0.75rem;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.25rem;
+    color: #6b6b6b;
     font-family: inherit;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.2s ease;
   }
   
   .action-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.08);
-    color: #e4e4e7;
+    color: #a8a8a8;
+    border-color: rgba(255, 255, 255, 0.1);
   }
   
   .action-btn.primary {
-    background: rgba(239, 68, 68, 0.15);
-    border-color: rgba(239, 68, 68, 0.3);
-    color: #ef4444;
+    border-color: rgba(201, 169, 98, 0.3);
+    color: #c9a962;
   }
   
   .action-btn.primary:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.25);
+    background: rgba(201, 169, 98, 0.1);
+    border-color: rgba(201, 169, 98, 0.4);
   }
   
   .action-btn:disabled {
@@ -441,22 +445,22 @@
   .search-bar input {
     width: 100%;
     max-width: 400px;
-    padding: 0.625rem 0.875rem;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.5rem;
-    color: #fff;
+    padding: 0.5rem 0.75rem;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.25rem;
+    color: #e8e6e3;
     font-family: inherit;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
   }
   
   .search-bar input::placeholder {
-    color: #52525b;
+    color: #4a4a4a;
   }
   
   .search-bar input:focus {
     outline: none;
-    border-color: rgba(239, 68, 68, 0.4);
+    border-color: rgba(201, 169, 98, 0.4);
   }
   
   .device-sections {
@@ -465,14 +469,14 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    min-height: 0; /* Important for nested flex scroll */
+    min-height: 0;
     padding-bottom: 1rem;
   }
   
   .device-section {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.75rem;
+    background: rgba(255, 255, 255, 0.015);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 0.25rem;
     overflow: hidden;
     flex-shrink: 0;
   }
@@ -482,15 +486,15 @@
     align-items: center;
     gap: 0.75rem;
     width: 100%;
-    padding: 0.875rem 1rem;
+    padding: 0.75rem 1rem;
     background: transparent;
     border: none;
-    color: #e4e4e7;
+    color: #a8a8a8;
     font-family: inherit;
-    font-size: 0.9375rem;
+    font-size: 0.875rem;
     text-align: left;
     cursor: pointer;
-    transition: background 0.1s ease;
+    transition: background 0.15s ease;
     position: sticky;
     top: 0;
     z-index: 1;
@@ -501,22 +505,23 @@
   }
   
   .section-arrow {
-    font-size: 0.625rem;
-    color: #52525b;
+    font-size: 0.5rem;
+    color: #4a4a4a;
     transition: transform 0.15s ease;
   }
   
   .section-icon {
-    font-size: 1.25rem;
+    font-size: 1.125rem;
+    opacity: 0.6;
   }
   
   .section-title {
-    font-weight: 500;
+    font-weight: 400;
   }
   
   .section-count {
-    color: #71717a;
-    font-size: 0.8125rem;
+    color: #5a5a5a;
+    font-size: 0.75rem;
     margin-left: auto;
   }
   
@@ -559,69 +564,70 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.75rem;
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 0.5rem;
+    padding: 0.625rem 0.75rem;
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 0.25rem;
   }
   
   
   .device-name {
-    font-size: 0.875rem;
-    color: #e4e4e7;
+    font-size: 0.8125rem;
+    color: #a8a8a8;
   }
   
   .device-meta {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.375rem;
   }
   
   .meta-tag {
-    padding: 0.25rem 0.5rem;
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 0.25rem;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.6875rem;
-    color: #71717a;
+    padding: 0.1875rem 0.4375rem;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 0.125rem;
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
+    font-size: 0.625rem;
+    color: #5a5a5a;
+    letter-spacing: 0.02em;
   }
   
   .meta-tag.default {
-    background: rgba(34, 197, 94, 0.15);
-    color: #22c55e;
+    background: rgba(201, 169, 98, 0.15);
+    color: #c9a962;
   }
   
   .meta-tag.unsupported {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
+    background: rgba(180, 60, 60, 0.15);
+    color: #a65d5d;
   }
   
   .meta-tag.codec {
-    background: rgba(59, 130, 246, 0.15);
-    color: #3b82f6;
+    background: rgba(120, 140, 180, 0.15);
+    color: #8a9cc0;
   }
   
   .meta-tag.format-unsupported {
-    background: rgba(113, 113, 122, 0.15);
-    color: #71717a;
+    background: rgba(100, 100, 100, 0.1);
+    color: #5a5a5a;
   }
   
   
   .device-unsupported {
-    opacity: 0.5;
+    opacity: 0.45;
   }
   
   .device-unsupported .device-name {
-    color: #71717a;
+    color: #5a5a5a;
   }
   
   .midi-header {
     display: grid;
     grid-template-columns: 1fr 70px 70px;
     padding: 0.5rem 0.75rem;
-    font-size: 0.6875rem;
-    font-weight: 600;
+    font-size: 0.625rem;
+    font-weight: 400;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #52525b;
+    letter-spacing: 0.08em;
+    color: #4a4a4a;
     align-items: center;
     scrollbar-gutter: stable;
   }
@@ -647,11 +653,11 @@
     display: grid;
     grid-template-columns: 1fr auto 70px;
     padding: 0.5rem 0.75rem;
-    font-size: 0.6875rem;
-    font-weight: 600;
+    font-size: 0.625rem;
+    font-weight: 400;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #52525b;
+    letter-spacing: 0.08em;
+    color: #4a4a4a;
     align-items: center;
     scrollbar-gutter: stable;
   }
@@ -693,48 +699,49 @@
   }
   
   .codec-tag {
-    padding: 0.125rem 0.5rem;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 0.25rem;
-    color: #71717a;
+    padding: 0.125rem 0.4375rem;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.125rem;
+    color: #5a5a5a;
     font-family: inherit;
-    font-size: 0.6875rem;
+    font-size: 0.625rem;
+    letter-spacing: 0.02em;
     cursor: pointer;
     transition: all 0.15s ease;
   }
   
   .codec-tag:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.25);
-    color: #a1a1aa;
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.15);
+    color: #8a8a8a;
   }
   
   .codec-tag.codec-selected {
-    background: rgba(239, 68, 68, 0.15);
-    border-color: rgba(239, 68, 68, 0.4);
-    color: #ef4444;
+    background: rgba(201, 169, 98, 0.12);
+    border-color: rgba(201, 169, 98, 0.35);
+    color: #c9a962;
   }
   
   .codec-tag.codec-selected:hover {
-    background: rgba(239, 68, 68, 0.25);
+    background: rgba(201, 169, 98, 0.18);
   }
   
   .help-btn {
-    width: 14px;
-    height: 14px;
+    width: 13px;
+    height: 13px;
     padding: 0;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.06);
     border: none;
     border-radius: 50%;
-    color: #71717a;
-    font-size: 0.625rem;
-    font-weight: 600;
+    color: #5a5a5a;
+    font-size: 0.5625rem;
+    font-weight: 500;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.1s ease;
+    transition: all 0.15s ease;
   }
   
   .help-btn:hover {

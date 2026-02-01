@@ -77,7 +77,9 @@
         bind:value={searchQuery}
         onkeydown={(e) => e.key === 'Enter' && handleSearch()}
       />
-      <button class="search-btn" onclick={handleSearch}>🔍</button>
+      <button class="search-btn" onclick={handleSearch}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      </button>
     </div>
     
     <div class="filter-menu-container">
@@ -186,13 +188,13 @@
                     </div>
                     <div class="session-meta">
                       {#if session.has_midi}
-                        <span class="meta-icon" title="MIDI">🎹</span>
+                        <svg class="meta-icon" title="MIDI" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="6" width="20" height="12" rx="1"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><line x1="14" y1="10" x2="14" y2="14"/><line x1="18" y1="10" x2="18" y2="14"/></svg>
                       {/if}
                       {#if session.has_audio}
-                        <span class="meta-icon" title="Audio">🎤</span>
+                        <svg class="meta-icon" title="Audio" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
                       {/if}
                       {#if session.has_video}
-                        <span class="meta-icon" title="Video">🎥</span>
+                        <svg class="meta-icon" title="Video" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="5" width="14" height="14" rx="2"/><path d="M16 10l6-4v12l-6-4"/></svg>
                       {/if}
                       <span class="session-duration">{formatDuration(session.duration_secs)}</span>
                     </div>
@@ -220,8 +222,12 @@
       />
     {:else}
       <div class="no-selection">
-        <div class="no-selection-icon">📁</div>
-        <p>Select a session to view details</p>
+        <svg class="no-selection-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+          <circle cx="12" cy="12" r="10"/>
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+        </svg>
+        <p>Select a recording to view</p>
       </div>
     {/if}
   </div>
@@ -235,13 +241,13 @@
   }
   
   .sidebar {
-    width: 320px;
+    width: 300px;
     display: flex;
     flex-direction: column;
-    gap: 1rem;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.75rem;
+    gap: 0.875rem;
+    background: rgba(255, 255, 255, 0.015);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 0.25rem;
     padding: 1rem;
   }
   
@@ -252,30 +258,43 @@
   
   .search-bar input {
     flex: 1;
-    padding: 0.625rem 0.875rem;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.5rem;
-    color: #fff;
+    padding: 0.5rem 0.75rem;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.25rem;
+    color: #e8e6e3;
     font-family: inherit;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
+    letter-spacing: 0.01em;
   }
   
   .search-bar input::placeholder {
-    color: #52525b;
+    color: #4a4a4a;
   }
   
   .search-bar input:focus {
     outline: none;
-    border-color: rgba(239, 68, 68, 0.4);
+    border-color: rgba(201, 169, 98, 0.4);
   }
   
   .search-btn {
-    padding: 0.625rem 0.75rem;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.5rem;
+    padding: 0.5rem 0.625rem;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.25rem;
     cursor: pointer;
+    color: #6b6b6b;
+    transition: all 0.2s ease;
+  }
+  
+  .search-btn:hover {
+    color: #a8a8a8;
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+  
+  .search-btn svg {
+    width: 16px;
+    height: 16px;
   }
   
   .filter-menu-container {
@@ -286,37 +305,38 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.5rem;
-    color: #a1a1aa;
+    padding: 0.4375rem 0.625rem;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 0.25rem;
+    color: #6b6b6b;
     font-family: inherit;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
     cursor: pointer;
-    transition: all 0.1s ease;
+    transition: all 0.2s ease;
   }
   
   .filter-btn:hover {
-    background: rgba(255, 255, 255, 0.06);
-    color: #e4e4e7;
+    color: #a8a8a8;
+    border-color: rgba(255, 255, 255, 0.08);
   }
   
   .filter-btn.active {
-    background: rgba(239, 68, 68, 0.1);
-    border-color: rgba(239, 68, 68, 0.2);
-    color: #e4e4e7;
+    border-color: rgba(201, 169, 98, 0.3);
+    color: #c9a962;
   }
   
   .filter-badge {
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
-    background: #ef4444;
-    border-radius: 9px;
-    font-size: 0.6875rem;
-    font-weight: 600;
-    color: white;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    background: #c9a962;
+    border-radius: 8px;
+    font-size: 0.625rem;
+    font-weight: 500;
+    color: #141414;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -324,8 +344,8 @@
   
   .filter-arrow {
     margin-left: auto;
-    font-size: 0.625rem;
-    opacity: 0.5;
+    font-size: 0.5rem;
+    opacity: 0.4;
   }
   
   .filter-menu {
@@ -333,11 +353,11 @@
     top: 100%;
     left: 0;
     margin-top: 0.25rem;
-    min-width: 150px;
-    background: #1c1c1e;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.5rem;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    min-width: 160px;
+    background: #1a1a1a;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.25rem;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
     z-index: 100;
     overflow: hidden;
   }
@@ -346,30 +366,31 @@
     display: flex;
     align-items: center;
     gap: 0.625rem;
-    padding: 0.625rem 0.75rem;
+    padding: 0.5rem 0.75rem;
     font-size: 0.8125rem;
-    color: #e4e4e7;
+    color: #a8a8a8;
     cursor: pointer;
-    transition: background 0.1s ease;
+    transition: background 0.15s ease;
   }
   
   .filter-option:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.04);
   }
   
   .filter-option input[type="checkbox"] {
-    width: 14px;
-    height: 14px;
+    width: 13px;
+    height: 13px;
     margin: 0;
-    accent-color: #ef4444;
+    accent-color: #c9a962;
     flex-shrink: 0;
   }
   
   .filter-option .filter-icon {
-    font-size: 0.875rem;
-    width: 1.25rem;
+    font-size: 0.8125rem;
+    width: 1.125rem;
     text-align: center;
     flex-shrink: 0;
+    opacity: 0.6;
   }
   
   .filter-option .filter-label {
@@ -378,7 +399,7 @@
   
   .filter-divider {
     height: 1px;
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.04);
     margin: 0.25rem 0;
   }
   
@@ -388,13 +409,14 @@
     overflow-x: hidden;
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 0.375rem;
   }
   
   .loading, .empty {
     padding: 2rem;
     text-align: center;
-    color: #52525b;
+    color: #4a4a4a;
+    font-size: 0.8125rem;
   }
   
   .session-group {
@@ -406,57 +428,62 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.5rem;
+    padding: 0.5rem 0.25rem;
     background: transparent;
     border: none;
-    color: #a1a1aa;
+    color: #6b6b6b;
     font-family: inherit;
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: 0.6875rem;
+    font-weight: 400;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.08em;
     cursor: pointer;
+    transition: color 0.2s ease;
+  }
+  
+  .group-header:hover {
+    color: #8a8a8a;
   }
   
   .group-arrow {
-    font-size: 0.625rem;
-    color: #52525b;
+    font-size: 0.5rem;
+    color: #4a4a4a;
   }
   
   .group-count {
-    color: #52525b;
+    color: #4a4a4a;
     font-weight: 400;
   }
   
   .group-sessions {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    padding-left: 1rem;
+    gap: 0.125rem;
+    padding-left: 0.75rem;
   }
   
   .session-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.625rem 0.75rem;
+    padding: 0.5rem 0.625rem;
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 0.5rem;
+    border-radius: 0.25rem;
     font-family: inherit;
     text-align: left;
     cursor: pointer;
-    transition: all 0.1s ease;
+    transition: all 0.15s ease;
     min-width: 0;
   }
   
   .session-item:hover {
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(255, 255, 255, 0.02);
   }
   
   .session-item.selected {
-    background: rgba(239, 68, 68, 0.1);
-    border-color: rgba(239, 68, 68, 0.2);
+    background: rgba(201, 169, 98, 0.08);
+    border-color: rgba(201, 169, 98, 0.15);
   }
   
   .session-header {
@@ -468,17 +495,17 @@
   }
   
   .favorite {
-    color: #eab308;
-    font-size: 0.75rem;
+    color: #c9a962;
+    font-size: 0.6875rem;
   }
   
   .session-time {
-    color: #e4e4e7;
-    font-size: 0.875rem;
+    color: #e8e6e3;
+    font-size: 0.8125rem;
   }
   
   .session-title {
-    color: #e4e4e7;
+    color: #e8e6e3;
     font-size: 0.8125rem;
     flex: 1;
     white-space: nowrap;
@@ -487,9 +514,10 @@
   }
   
   .session-duration {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.75rem;
-    color: #71717a;
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
+    font-size: 0.6875rem;
+    color: #5a5a5a;
+    letter-spacing: 0.02em;
   }
   
   .session-meta {
@@ -500,38 +528,43 @@
   }
   
   .meta-icon {
-    font-size: 0.625rem;
-    opacity: 0.4;
+    width: 14px;
+    height: 14px;
+    opacity: 0.7;
+    stroke-width: 1.5;
+    color: #8a8a8a;
   }
   
   .sidebar-actions {
-    padding-top: 0.5rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding-top: 0.625rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
   }
   
   .refresh-btn {
     width: 100%;
-    padding: 0.625rem;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.5rem;
-    color: #a1a1aa;
+    padding: 0.5rem;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.25rem;
+    color: #6b6b6b;
     font-family: inherit;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.2s ease;
   }
   
   .refresh-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #e4e4e7;
+    color: #a8a8a8;
+    border-color: rgba(255, 255, 255, 0.1);
   }
   
   .detail-panel {
     flex: 1;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.75rem;
+    background: rgba(255, 255, 255, 0.015);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 0.25rem;
     overflow: hidden;
   }
   
@@ -541,12 +574,18 @@
     align-items: center;
     justify-content: center;
     height: 100%;
-    gap: 1rem;
-    color: #52525b;
+    gap: 1.25rem;
+    color: #4a4a4a;
   }
   
   .no-selection-icon {
-    font-size: 3rem;
-    opacity: 0.5;
+    width: 48px;
+    height: 48px;
+    opacity: 0.3;
+  }
+  
+  .no-selection p {
+    font-size: 0.8125rem;
+    letter-spacing: 0.02em;
   }
 </style>

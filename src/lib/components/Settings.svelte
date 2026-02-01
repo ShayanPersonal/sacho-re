@@ -247,9 +247,11 @@
   }
   
   .settings-header h2 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #fff;
+    font-family: 'Bebas Neue', Impact, 'Arial Narrow', sans-serif;
+    font-size: 1.375rem;
+    font-weight: 400;
+    color: #e8e6e3;
+    letter-spacing: 0.06em;
   }
   
   .save-status {
@@ -257,21 +259,22 @@
     align-items: center;
     gap: 0.375rem;
     padding: 0.375rem 0.75rem;
-    border-radius: 9999px;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 400;
+    letter-spacing: 0.02em;
     transition: all 0.2s ease;
   }
   
   .save-status .icon {
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
     flex-shrink: 0;
   }
   
   .save-status.saving {
-    background: rgba(113, 113, 122, 0.15);
-    color: #a1a1aa;
+    background: rgba(113, 113, 122, 0.1);
+    color: #8a8a8a;
   }
   
   .save-status.saving .spinner {
@@ -279,8 +282,8 @@
   }
   
   .save-status.saved {
-    background: rgba(34, 197, 94, 0.15);
-    color: #22c55e;
+    background: rgba(201, 169, 98, 0.15);
+    color: #c9a962;
     animation: fadeOut 2s ease forwards;
     animation-delay: 1s;
   }
@@ -306,27 +309,28 @@
     flex: 1;
     overflow-y: auto;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-    gap: 2rem;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 1.5rem;
     align-content: start;
   }
   
   .settings-section {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.75rem;
+    background: rgba(255, 255, 255, 0.015);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 0.25rem;
     padding: 1.25rem;
   }
   
   .settings-section h3 {
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-family: 'Bebas Neue', Impact, 'Arial Narrow', sans-serif;
+    font-size: 0.6875rem;
+    font-weight: 400;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #71717a;
+    letter-spacing: 0.1em;
+    color: #5a5a5a;
     margin-bottom: 1.25rem;
     padding-bottom: 0.75rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   }
   
   .setting-row {
@@ -347,56 +351,56 @@
   }
   
   .setting-label {
-    font-size: 0.9375rem;
-    color: #e4e4e7;
+    font-size: 0.875rem;
+    color: #a8a8a8;
   }
   
   .setting-description {
-    font-size: 0.8125rem;
-    color: #52525b;
+    font-size: 0.75rem;
+    color: #4a4a4a;
   }
   
   .setting-row input[type="number"],
   .setting-row input[type="text"],
   .setting-row select {
     width: 100%;
-    padding: 0.625rem 0.875rem;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.5rem;
-    color: #fff;
+    padding: 0.5rem 0.75rem;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.25rem;
+    color: #e8e6e3;
     font-family: inherit;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
   }
   
   .setting-row input[type="number"] {
-    max-width: 120px;
+    max-width: 100px;
   }
   
   .setting-row input:focus,
   .setting-row select:focus {
     outline: none;
-    border-color: rgba(239, 68, 68, 0.4);
+    border-color: rgba(201, 169, 98, 0.4);
   }
   
   .setting-row select option {
-    background: #27272a;
-    color: #e4e4e7;
+    background: #1a1a1a;
+    color: #e8e6e3;
     padding: 0.5rem;
   }
   
   .setting-row select option:hover {
-    background: #3f3f46;
+    background: #252525;
   }
   
   .encoder-warning {
     margin-top: 0.5rem;
     padding: 0.5rem 0.75rem;
-    background: rgba(234, 179, 8, 0.1);
-    border: 1px solid rgba(234, 179, 8, 0.3);
-    border-radius: 0.375rem;
-    color: #facc15;
-    font-size: 0.8125rem;
+    background: rgba(201, 169, 98, 0.08);
+    border: 1px solid rgba(201, 169, 98, 0.2);
+    border-radius: 0.25rem;
+    color: #c9a962;
+    font-size: 0.75rem;
   }
   
   .path-input {
@@ -411,20 +415,23 @@
   }
   
   .browse-btn {
-    padding: 0.625rem 0.875rem;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.5rem;
-    color: #a1a1aa;
+    padding: 0.5rem 0.75rem;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.25rem;
+    color: #6b6b6b;
     font-family: inherit;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
     cursor: pointer;
     white-space: nowrap;
+    transition: all 0.2s ease;
   }
   
   .browse-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #e4e4e7;
+    color: #a8a8a8;
+    border-color: rgba(255, 255, 255, 0.1);
   }
   
   .checkbox-row {
@@ -435,15 +442,16 @@
   }
   
   .checkbox-row input {
-    accent-color: #ef4444;
-    width: 18px;
-    height: 18px;
+    accent-color: #c9a962;
+    width: 16px;
+    height: 16px;
   }
   
   .loading {
     padding: 2rem;
     text-align: center;
-    color: #52525b;
+    color: #4a4a4a;
+    font-size: 0.8125rem;
   }
   
   .setting-label-group {
@@ -460,30 +468,30 @@
   }
   
   .setting-label-with-help > span:first-child {
-    font-size: 0.9375rem;
-    color: #e4e4e7;
+    font-size: 0.875rem;
+    color: #a8a8a8;
   }
   
   .help-btn {
-    width: 14px;
-    height: 14px;
+    width: 13px;
+    height: 13px;
     padding: 0;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.06);
     border: none;
     border-radius: 50%;
-    color: #71717a;
-    font-size: 0.625rem;
-    font-weight: 600;
+    color: #5a5a5a;
+    font-size: 0.5625rem;
+    font-weight: 500;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.1s ease;
+    transition: all 0.15s ease;
   }
   
   .help-btn:hover {
-    background: rgba(255, 255, 255, 0.2);
-    color: #a1a1aa;
+    background: rgba(255, 255, 255, 0.1);
+    color: #8a8a8a;
   }
   
   .help-tooltip {
@@ -492,20 +500,20 @@
     left: 0;
     margin-top: 0.5rem;
     padding: 0.625rem 0.75rem;
-    background: #27272a;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.5rem;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    background: #1a1a1a;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.25rem;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
     font-size: 0.75rem;
     font-weight: 400;
-    color: #a1a1aa;
+    color: #8a8a8a;
     white-space: normal;
     width: 280px;
-    line-height: 1.4;
+    line-height: 1.5;
     z-index: 100;
   }
   
   .help-tooltip strong {
-    color: #e4e4e7;
+    color: #c9a962;
   }
 </style>

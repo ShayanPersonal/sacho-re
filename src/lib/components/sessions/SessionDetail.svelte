@@ -738,7 +738,7 @@
   .favorite-btn {
     width: 36px;
     height: 36px;
-    border-radius: 0.5rem;
+    border-radius: 0.25rem;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
     color: #52525b;
@@ -772,11 +772,11 @@
   
   /* Player Section */
   .player-section {
-    background: rgba(0, 0, 0, 0.3);
+    background: #0a0a0a;
     border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.75rem;
+    border-radius: 0.25rem;
     padding: 1rem;
-    flex-shrink: 0; /* Don't shrink the player section */
+    flex-shrink: 0;
   }
   
   .video-container {
@@ -784,9 +784,10 @@
     width: 100%;
     max-width: 400px;
     margin: 0 auto 0.5rem;
-    border-radius: 0.5rem;
+    border-radius: 0.25rem;
     overflow: hidden;
-    background: #000;
+    background: #0a0a0a;
+    border: 2px solid rgba(255, 255, 255, 0.08);
   }
   
   .video-container video {
@@ -807,7 +808,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.85);
+    background: rgba(10, 10, 10, 0.95);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -824,24 +825,24 @@
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    color: #71717a;
+    color: #5a5a5a;
     min-height: 200px;
     width: 100%;
     aspect-ratio: 16 / 9;
   }
   
   .video-unsupported-overlay {
-    background: rgba(39, 39, 42, 0.95);
+    background: #0a0a0a;
   }
   
   .video-loading-overlay {
-    background: rgba(39, 39, 42, 0.8);
+    background: #0a0a0a;
   }
   
   .loading-text {
-    font-size: 0.875rem;
-    color: #a1a1aa;
-    animation: pulse 1.5s ease-in-out infinite;
+    font-size: 0.8125rem;
+    color: #6b6b6b;
+    animation: pulse 2s ease-in-out infinite;
   }
   
   @keyframes pulse {
@@ -850,24 +851,26 @@
   }
   
   .error-icon {
-    font-size: 2rem;
-    opacity: 0.5;
+    font-size: 1.5rem;
+    opacity: 0.4;
   }
   
   .error-text {
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     text-align: center;
+    color: #6b6b6b;
   }
   
   .error-hint {
-    font-size: 0.75rem;
-    opacity: 0.6;
+    font-size: 0.6875rem;
+    color: #4a4a4a;
   }
   
   .source-label {
     text-align: center;
-    font-size: 0.75rem;
-    color: #52525b;
+    font-size: 0.6875rem;
+    color: #4a4a4a;
+    letter-spacing: 0.02em;
     margin-bottom: 1rem;
   }
   
@@ -877,7 +880,7 @@
     margin: 0 auto 1rem;
     aspect-ratio: 16/9;
     background: rgba(0, 0, 0, 0.5);
-    border-radius: 0.5rem;
+    border-radius: 0.25rem;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -918,7 +921,7 @@
   }
   
   .time-display {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
     font-size: 0.75rem;
     color: #71717a;
     min-width: 40px;
@@ -973,7 +976,7 @@
     padding: 0.75rem;
     background: rgba(0, 0, 0, 0.3);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.5rem;
+    border-radius: 0.25rem;
     color: #e4e4e7;
     font-family: inherit;
     font-size: 0.875rem;
@@ -1058,7 +1061,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 0.25rem;
     color: #a1a1aa;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
     font-size: 0.6875rem;
     cursor: pointer;
     transition: all 0.15s ease;
@@ -1104,7 +1107,7 @@
   .notes {
     padding: 0.75rem;
     background: rgba(0, 0, 0, 0.2);
-    border-radius: 0.5rem;
+    border-radius: 0.25rem;
     font-size: 0.875rem;
     color: #a1a1aa;
     line-height: 1.5;
@@ -1126,7 +1129,7 @@
     padding: 0.625rem 0.875rem;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.5rem;
+    border-radius: 0.25rem;
     color: #a1a1aa;
     font-family: inherit;
     font-size: 0.8125rem;
@@ -1151,7 +1154,7 @@
     min-width: 160px;
     background: #1c1c1e;
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.5rem;
+    border-radius: 0.25rem;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     z-index: 100;
     overflow: hidden;

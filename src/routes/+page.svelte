@@ -24,7 +24,10 @@
       class:active={activeTab === 'sessions'}
       onclick={() => activeTab = 'sessions'}
     >
-      <span class="tab-icon">💿</span>
+      <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="12" r="10"/>
+        <circle cx="12" cy="12" r="3"/>
+      </svg>
       Recordings
     </button>
 
@@ -33,7 +36,10 @@
       class:active={activeTab === 'similarity'}
       onclick={() => activeTab = 'similarity'}
     >
-      <span class="tab-icon">𖡎</span>
+      <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M3 3v18h18"/>
+        <path d="M7 16l4-4 4 4 6-6"/>
+      </svg>
       Visualize
     </button>
     <button 
@@ -41,7 +47,13 @@
       class:active={activeTab === 'devices'}
       onclick={() => activeTab = 'devices'}
     >
-      <span class="tab-icon">🎛️</span>
+      <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="4" y="4" width="16" height="16" rx="2"/>
+        <circle cx="9" cy="9" r="1.5" fill="currentColor"/>
+        <circle cx="15" cy="9" r="1.5" fill="currentColor"/>
+        <circle cx="9" cy="15" r="1.5" fill="currentColor"/>
+        <circle cx="15" cy="15" r="1.5" fill="currentColor"/>
+      </svg>
       Devices
     </button>
     <button 
@@ -49,7 +61,10 @@
       class:active={activeTab === 'settings'}
       onclick={() => activeTab = 'settings'}
     >
-      <span class="tab-icon">⚙️</span>
+      <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+      </svg>
       Settings
     </button>
     <div class="spacer"></div>
@@ -77,10 +92,20 @@
   }
   
   :global(body) {
-    font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: linear-gradient(135deg, #0f0f14 0%, #1a1a24 50%, #0d0d12 100%);
-    color: #e4e4e7;
+    font-family: 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #141414;
+    color: #e8e6e3;
     min-height: 100vh;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  :global(h1, h2, h3, h4, h5, h6) {
+    font-family: 'Bebas Neue', Impact, 'Arial Narrow', sans-serif;
+    font-weight: 400;
+    letter-spacing: 0.05em;
   }
   
   .app {
@@ -89,60 +114,16 @@
     height: 100vh;
     overflow: hidden;
     position: relative;
-  }
-  
-  /* Subtle diagonal sheen effect mimicking light across a screen surface */
-  .app::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    pointer-events: none;
-    z-index: 9999;
-    background: linear-gradient(
-      125deg,
-      transparent 0%,
-      transparent 40%,
-      rgba(255, 255, 255, 0.015) 45%,
-      rgba(255, 255, 255, 0.03) 50%,
-      rgba(255, 255, 255, 0.015) 55%,
-      transparent 60%,
-      transparent 100%
-    );
-  }
-  
-  /* Secondary softer highlight for depth */
-  .app::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    pointer-events: none;
-    z-index: 9998;
-    background: 
-      radial-gradient(
-        ellipse 80% 50% at 20% 10%,
-        rgba(255, 255, 255, 0.02) 0%,
-        transparent 50%
-      ),
-      radial-gradient(
-        ellipse 60% 40% at 85% 90%,
-        rgba(200, 180, 255, 0.015) 0%,
-        transparent 50%
-      );
+    background: linear-gradient(180deg, #141414 0%, #1a1917 100%);
   }
   
   .tabs {
     display: flex;
     align-items: center;
-    gap: 0.25rem;
-    padding: 0.5rem 1.5rem;
-    background: rgba(0, 0, 0, 0.3);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    gap: 0.125rem;
+    padding: 0.625rem 1.5rem;
+    background: rgba(0, 0, 0, 0.4);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   }
   
   .spacer {
@@ -153,30 +134,32 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.625rem 1rem;
+    padding: 0.625rem 1.125rem;
     background: transparent;
     border: none;
-    border-radius: 0.5rem;
-    color: #71717a;
+    border-radius: 0.25rem;
+    color: #6b6b6b;
     font-family: inherit;
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: 0.8125rem;
+    font-weight: 400;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.2s ease;
   }
   
   .tab:hover {
-    background: rgba(255, 255, 255, 0.04);
-    color: #a1a1aa;
+    color: #a8a8a8;
   }
   
   .tab.active {
-    background: rgba(239, 68, 68, 0.1);
-    color: #ef4444;
+    color: #c9a962;
   }
   
   .tab-icon {
-    font-size: 1rem;
+    width: 16px;
+    height: 16px;
+    stroke-width: 1.5;
   }
   
   .content {

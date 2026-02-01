@@ -280,8 +280,8 @@
   .video-player {
     position: relative;
     width: 100%;
-    background: #000;
-    border-radius: 0.5rem;
+    background: #0a0a0a;
+    border-radius: 0.25rem;
     overflow: hidden;
     aspect-ratio: 16/9;
   }
@@ -306,15 +306,15 @@
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    color: #71717a;
-    font-size: 0.875rem;
+    color: #5a5a5a;
+    font-size: 0.8125rem;
   }
   
   .spinner {
-    width: 24px;
-    height: 24px;
-    border: 2px solid rgba(255, 255, 255, 0.1);
-    border-top-color: #ef4444;
+    width: 20px;
+    height: 20px;
+    border: 1.5px solid rgba(255, 255, 255, 0.08);
+    border-top-color: #c9a962;
     border-radius: 50%;
     animation: spin 1s linear infinite;
   }
@@ -325,8 +325,8 @@
   }
   
   .error-icon {
-    font-size: 2rem;
-    opacity: 0.5;
+    font-size: 1.5rem;
+    opacity: 0.4;
   }
   
   .error-text {
@@ -338,12 +338,13 @@
     position: absolute;
     top: 0.5rem;
     left: 0.5rem;
-    padding: 0.25rem 0.5rem;
-    background: rgba(0, 0, 0, 0.7);
-    border-radius: 0.25rem;
-    font-size: 0.6875rem;
-    font-family: 'JetBrains Mono', monospace;
-    color: #a1a1aa;
+    padding: 0.1875rem 0.4375rem;
+    background: rgba(0, 0, 0, 0.75);
+    border-radius: 0.125rem;
+    font-size: 0.625rem;
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
+    color: #8a8a8a;
+    letter-spacing: 0.02em;
   }
   
   .buffering-indicator {
@@ -351,15 +352,15 @@
     top: 0.5rem;
     right: 0.5rem;
     padding: 0.25rem;
-    background: rgba(0, 0, 0, 0.7);
-    border-radius: 0.25rem;
+    background: rgba(0, 0, 0, 0.75);
+    border-radius: 0.125rem;
   }
   
   .mini-spinner {
-    width: 14px;
-    height: 14px;
-    border: 2px solid rgba(255, 255, 255, 0.2);
-    border-top-color: #ef4444;
+    width: 12px;
+    height: 12px;
+    border: 1.5px solid rgba(255, 255, 255, 0.15);
+    border-top-color: #c9a962;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }

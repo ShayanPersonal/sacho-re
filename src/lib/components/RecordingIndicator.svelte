@@ -44,29 +44,38 @@
     {#if $isRecording}
       <div class="status">
         <div class="status-dot active"></div>
-        <span class="status-text recording">RECORDING</span>
+        <span class="status-text recording">Recording</span>
       </div>
     {:else if $recordingState.status === 'stopping'}
       <div class="status">
         <div class="status-dot"></div>
-        <span class="status-text">STOPPING...</span>
+        <span class="status-text">Stopping...</span>
       </div>
     {:else if $isInitializing}
       <div class="status">
         <div class="status-dot initializing"></div>
-        <span class="status-text initializing">INITIALIZING...</span>
+        <span class="status-text initializing">Initializing...</span>
       </div>
     {:else}
       <div class="track-counts">
-        <span class="track-count" class:empty={midiCount === 0}>🎹 {midiCount}</span>
-        <span class="track-count" class:empty={audioCount === 0}>🎤 {audioCount}</span>
-        <span class="track-count" class:empty={videoCount === 0}>🎥 {videoCount}</span>
+        <span class="track-count" class:empty={midiCount === 0} title="MIDI devices">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="6" width="20" height="12" rx="1"/><line x1="5" y1="10" x2="5" y2="14"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="11" y1="10" x2="11" y2="14"/><line x1="14" y1="10" x2="14" y2="14"/><line x1="17" y1="10" x2="17" y2="14"/></svg>
+          {midiCount}
+        </span>
+        <span class="track-count" class:empty={audioCount === 0} title="Audio devices">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+          {audioCount}
+        </span>
+        <span class="track-count" class:empty={videoCount === 0} title="Video devices">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="5" width="14" height="14" rx="2"/><path d="M16 10l6-4v12l-6-4"/></svg>
+          {videoCount}
+        </span>
       </div>
       <div class="trigger-status" class:ready={hasTrigger} class:warning={!hasTrigger}>
         {#if hasTrigger}
           Waiting for MIDI trigger<span class="ellipsis"></span>
         {:else}
-          No MIDI trigger selected!
+          No trigger configured
         {/if}
       </div>
     {/if}
@@ -85,14 +94,14 @@
     disabled={buttonDisabled}
   >
     {#if $isRecording}
-      <span class="btn-icon">⏹</span>
+      <svg class="btn-icon" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
       Stop
     {:else if $isInitializing}
-      <span class="btn-icon">⏳</span>
-      Please Wait
+      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+      Wait
     {:else}
-      <span class="btn-icon">⏺</span>
-      Start Manually
+      <svg class="btn-icon" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+      Record
     {/if}
   </button>
 </div>
@@ -102,27 +111,27 @@
     display: flex;
     align-items: center;
     gap: 1rem;
-    padding: 0.5rem 0.75rem;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.75rem;
-    transition: all 0.2s ease;
+    padding: 0.5rem 0.875rem;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 0.25rem;
+    transition: all 0.3s ease;
   }
   
   .recording-indicator.recording {
-    background: rgba(239, 68, 68, 0.08);
-    border-color: rgba(239, 68, 68, 0.2);
+    background: rgba(180, 60, 60, 0.1);
+    border-color: rgba(180, 60, 60, 0.25);
   }
   
   .recording-indicator.initializing {
-    background: rgba(251, 191, 36, 0.08);
-    border-color: rgba(251, 191, 36, 0.2);
+    background: rgba(201, 169, 98, 0.08);
+    border-color: rgba(201, 169, 98, 0.2);
   }
   
   .status-container {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.1875rem;
   }
   
   .status {
@@ -134,29 +143,39 @@
   .track-counts {
     display: flex;
     align-items: center;
-    gap: 0.625rem;
+    gap: 0.75rem;
   }
   
   .track-count {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
     font-size: 0.75rem;
-    color: #a1a1aa;
+    color: #8a8a8a;
+  }
+  
+  .track-count svg {
+    width: 14px;
+    height: 14px;
+    opacity: 0.7;
   }
   
   .track-count.empty {
-    opacity: 0.4;
+    opacity: 0.35;
   }
   
   .trigger-status {
     font-size: 0.6875rem;
-    color: #71717a;
+    color: #5a5a5a;
+    letter-spacing: 0.02em;
   }
   
   .trigger-status.ready {
-    color: #71717a;
+    color: #5a5a5a;
   }
   
   .trigger-status.warning {
-    color: #ef4444;
+    color: #a65d5d;
   }
   
   .ellipsis {
@@ -167,7 +186,7 @@
   
   .ellipsis::after {
     content: '';
-    animation: ellipsis 1.5s infinite;
+    animation: ellipsis 2s infinite;
   }
   
   @keyframes ellipsis {
@@ -179,57 +198,59 @@
   }
   
   .status-dot {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
-    background: #71717a;
-    transition: all 0.2s ease;
+    background: #4a4a4a;
+    transition: all 0.3s ease;
   }
   
   .status-dot.active {
-    background: #ef4444;
-    box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
-    animation: blink 1s ease-in-out infinite;
+    background: #b43c3c;
+    box-shadow: 0 0 10px rgba(180, 60, 60, 0.6);
+    animation: pulse-glow 2s ease-in-out infinite;
   }
   
   .status-dot.initializing {
-    background: #fbbf24;
-    box-shadow: 0 0 8px rgba(251, 191, 36, 0.5);
-    animation: pulse 1.5s ease-in-out infinite;
+    background: #c9a962;
+    box-shadow: 0 0 8px rgba(201, 169, 98, 0.4);
+    animation: pulse 2s ease-in-out infinite;
   }
   
   @keyframes pulse {
     0%, 100% { transform: scale(1); opacity: 1; }
-    50% { transform: scale(1.2); opacity: 0.7; }
+    50% { transform: scale(1.15); opacity: 0.8; }
   }
   
-  @keyframes blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 10px rgba(180, 60, 60, 0.6); }
+    50% { box-shadow: 0 0 16px rgba(180, 60, 60, 0.8); }
   }
   
   .status-text {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    color: #a1a1aa;
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
+    font-size: 0.6875rem;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #8a8a8a;
   }
   
   .status-text.recording {
-    color: #ef4444;
+    color: #b43c3c;
   }
   
   .status-text.initializing {
-    color: #fbbf24;
+    color: #c9a962;
   }
   
   .elapsed {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 1rem;
-    font-weight: 500;
-    color: #fff;
-    min-width: 60px;
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
+    font-size: 0.9375rem;
+    font-weight: 400;
+    color: #e8e6e3;
+    min-width: 56px;
+    letter-spacing: 0.02em;
   }
   
   .control-btn {
@@ -237,39 +258,41 @@
     align-items: center;
     gap: 0.375rem;
     padding: 0.5rem 0.875rem;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.5rem;
-    color: #71717a;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.25rem;
+    color: #6b6b6b;
     font-family: inherit;
-    font-size: 0.8125rem;
-    font-weight: 500;
+    font-size: 0.75rem;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.2s ease;
   }
   
   .control-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.1);
-    color: #a1a1aa;
+    border-color: rgba(255, 255, 255, 0.12);
+    color: #a8a8a8;
   }
   
   .control-btn.stop {
-    background: rgba(239, 68, 68, 0.15);
-    border-color: rgba(239, 68, 68, 0.3);
-    color: #ef4444;
+    border-color: rgba(180, 60, 60, 0.4);
+    color: #b43c3c;
   }
   
   .control-btn.stop:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.25);
+    background: rgba(180, 60, 60, 0.1);
+    border-color: rgba(180, 60, 60, 0.5);
   }
   
   .control-btn:disabled {
-    opacity: 0.5;
+    opacity: 0.4;
     cursor: not-allowed;
   }
   
   .btn-icon {
-    font-size: 0.875rem;
+    width: 12px;
+    height: 12px;
   }
 </style>

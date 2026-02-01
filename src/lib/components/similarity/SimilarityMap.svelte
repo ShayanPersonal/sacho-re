@@ -389,7 +389,7 @@
   
   .cluster-count {
     color: #52525b;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
     font-size: 0.75rem;
   }
 </style>
