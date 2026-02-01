@@ -515,6 +515,17 @@ pub struct VideoPlaybackInfo {
     pub codec: String,
 }
 
+/// Information about a video file's codec and playability
+#[derive(Debug, Serialize)]
+pub struct VideoCodecCheck {
+    /// The detected codec name
+    pub codec: String,
+    /// Whether this video can be played
+    pub is_playable: bool,
+    /// Reason if not playable
+    pub reason: Option<String>,
+}
+
 /// A single frame for playback
 #[derive(Debug, Serialize)]
 pub struct VideoFrameData {
@@ -524,6 +535,23 @@ pub struct VideoFrameData {
     pub timestamp_ms: u64,
     /// Duration in milliseconds
     pub duration_ms: u64,
+}
+
+/// Check if a video file's codec is supported for playback
+/// This probes the actual codec from the file, not just the container
+#[tauri::command]
+pub fn check_video_codec(session_path: String, filename: String) -> Result<VideoCodecCheck, String> {
+    use std::path::Path;
+    use crate::video;
+    
+    let path = Path::new(&session_path).join(&filename);
+    let codec_info = video::probe_video_codec(&path).map_err(|e| e.to_string())?;
+    
+    Ok(VideoCodecCheck {
+        codec: codec_info.codec,
+        is_playable: codec_info.is_supported,
+        reason: codec_info.reason,
+    })
 }
 
 #[tauri::command]
@@ -614,4 +642,78 @@ pub fn get_video_frame_timestamps(
     let mut demuxer = video::open_video(&path).map_err(|e| e.to_string())?;
     
     demuxer.get_frame_timestamps().map_err(|e| e.to_string())
+}
+
+// ============================================================================
+// Encoder Availability Commands
+// ============================================================================
+
+/// Information about available video encoders
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncoderAvailability {
+    /// Whether AV1 encoding is available (hardware or software)
+    pub av1_available: bool,
+    /// Whether AV1 hardware encoding is available
+    pub av1_hardware: bool,
+    /// Whether VP9 encoding is available (hardware or software)
+    pub vp9_available: bool,
+    /// Whether VP9 hardware encoding is available
+    pub vp9_hardware: bool,
+    /// Whether VP8 encoding is available (hardware or software)
+    pub vp8_available: bool,
+    /// Whether VP8 hardware encoding is available
+    pub vp8_hardware: bool,
+    /// Name of the AV1 encoder if available
+    pub av1_encoder_name: Option<String>,
+    /// Name of the VP9 encoder if available
+    pub vp9_encoder_name: Option<String>,
+    /// Name of the VP8 encoder if available
+    pub vp8_encoder_name: Option<String>,
+    /// Recommended default encoding mode
+    pub recommended_default: String,
+}
+
+#[tauri::command]
+pub fn get_encoder_availability() -> EncoderAvailability {
+    use crate::encoding::{
+        detect_best_av1_encoder, detect_best_vp8_encoder, detect_best_vp9_encoder,
+        has_hardware_av1_encoder, has_hardware_vp9_encoder, has_hardware_vp8_encoder,
+        has_av1_encoder, has_vp8_encoder, has_vp9_encoder,
+        get_recommended_encoding_mode,
+    };
+    
+    let av1_type = detect_best_av1_encoder();
+    let vp9_type = detect_best_vp9_encoder();
+    let vp8_type = detect_best_vp8_encoder();
+    let recommended = get_recommended_encoding_mode();
+    
+    EncoderAvailability {
+        av1_available: has_av1_encoder(),
+        av1_hardware: has_hardware_av1_encoder(),
+        vp9_available: has_vp9_encoder(),
+        vp9_hardware: has_hardware_vp9_encoder(),
+        vp8_available: has_vp8_encoder(),
+        vp8_hardware: has_hardware_vp8_encoder(),
+        av1_encoder_name: if has_av1_encoder() {
+            Some(av1_type.display_name().to_string())
+        } else {
+            None
+        },
+        vp9_encoder_name: if has_vp9_encoder() {
+            Some(vp9_type.display_name().to_string())
+        } else {
+            None
+        },
+        vp8_encoder_name: if has_vp8_encoder() {
+            Some(vp8_type.display_name().to_string())
+        } else {
+            None
+        },
+        recommended_default: match recommended {
+            crate::config::VideoEncodingMode::Av1Hardware => "av1_hardware".to_string(),
+            crate::config::VideoEncodingMode::Vp9 => "vp9".to_string(),
+            crate::config::VideoEncodingMode::Vp8 => "vp8".to_string(),
+            crate::config::VideoEncodingMode::Raw => "raw".to_string(),
+        },
+    }
 }

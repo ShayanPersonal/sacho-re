@@ -4,7 +4,6 @@
 // This is a passthrough demuxer - no decoding or re-encoding is performed.
 // 
 // This is used for the custom video player that displays individual JPEG frames.
-// For H.264, H.265, and AV1, the native HTML5 video player is used instead.
 
 use std::path::{Path, PathBuf};
 

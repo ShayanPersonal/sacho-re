@@ -12,7 +12,11 @@ pub mod encoder;
 
 pub use encoder::{
     AsyncVideoEncoder, EncoderConfig, EncoderError, EncoderStats,
-    HardwareEncoderType, RawVideoFrame, detect_best_encoder, has_hardware_encoder,
+    HardwareEncoderType, RawVideoFrame, 
+    detect_best_encoder, detect_best_encoder_for_codec, detect_best_av1_encoder, detect_best_vp8_encoder, detect_best_vp9_encoder,
+    has_hardware_encoder, has_hardware_av1_encoder, has_hardware_vp9_encoder, has_hardware_vp8_encoder,
+    has_av1_encoder, has_vp8_encoder, has_vp9_encoder,
+    get_recommended_encoding_mode,
 };
 
 use serde::{Deserialize, Serialize};
@@ -23,12 +27,12 @@ use serde::{Deserialize, Serialize};
 pub enum VideoCodec {
     /// Motion JPEG - each frame is a complete JPEG image
     Mjpeg,
-    /// H.264/AVC - widely supported, good compression
-    H264,
-    /// H.265/HEVC - better compression than H.264
-    H265,
     /// AV1 - royalty-free, excellent compression
     Av1,
+    /// VP8 - royalty-free, good compression, widely supported
+    Vp8,
+    /// VP9 - royalty-free, excellent compression, widely supported
+    Vp9,
     /// Raw uncompressed video - requires encoding by the application
     Raw,
 }
@@ -37,9 +41,9 @@ impl VideoCodec {
     /// All supported codecs (for iteration)
     pub const ALL: &'static [VideoCodec] = &[
         VideoCodec::Mjpeg,
-        VideoCodec::H264,
-        VideoCodec::H265,
         VideoCodec::Av1,
+        VideoCodec::Vp8,
+        VideoCodec::Vp9,
         VideoCodec::Raw,
     ];
     
@@ -49,18 +53,15 @@ impl VideoCodec {
             // MJPEG variants
             "image/jpeg" => Some(VideoCodec::Mjpeg),
             
-            // H.264/AVC variants
-            "video/x-h264" => Some(VideoCodec::H264),
-            "video/h264" => Some(VideoCodec::H264),
-            
-            // H.265/HEVC variants  
-            "video/x-h265" => Some(VideoCodec::H265),
-            "video/x-hevc" => Some(VideoCodec::H265),
-            "video/h265" => Some(VideoCodec::H265),
-            
             // AV1 variants
             "video/x-av1" => Some(VideoCodec::Av1),
             "video/av1" => Some(VideoCodec::Av1),
+            
+            // VP8 variants
+            "video/x-vp8" => Some(VideoCodec::Vp8),
+            
+            // VP9 variants
+            "video/x-vp9" => Some(VideoCodec::Vp9),
             
             // Raw uncompressed video
             "video/x-raw" => Some(VideoCodec::Raw),
@@ -73,9 +74,9 @@ impl VideoCodec {
     pub fn gst_caps_name(&self) -> &'static str {
         match self {
             VideoCodec::Mjpeg => "image/jpeg",
-            VideoCodec::H264 => "video/x-h264",
-            VideoCodec::H265 => "video/x-h265",
             VideoCodec::Av1 => "video/x-av1",
+            VideoCodec::Vp8 => "video/x-vp8",
+            VideoCodec::Vp9 => "video/x-vp9",
             VideoCodec::Raw => "video/x-raw",
         }
     }
@@ -85,10 +86,10 @@ impl VideoCodec {
     pub fn container(&self) -> ContainerFormat {
         match self {
             VideoCodec::Mjpeg => ContainerFormat::Mkv,
-            VideoCodec::H264 => ContainerFormat::Mp4,
-            VideoCodec::H265 => ContainerFormat::Mp4,
             VideoCodec::Av1 => ContainerFormat::WebM,
-            VideoCodec::Raw => ContainerFormat::WebM, // Will be encoded to AV1 -> WebM
+            VideoCodec::Vp8 => ContainerFormat::WebM,
+            VideoCodec::Vp9 => ContainerFormat::WebM,
+            VideoCodec::Raw => ContainerFormat::WebM,
         }
     }
     
@@ -97,9 +98,9 @@ impl VideoCodec {
     pub fn gst_parser(&self) -> &'static str {
         match self {
             VideoCodec::Mjpeg => "jpegparse",
-            VideoCodec::H264 => "h264parse",
-            VideoCodec::H265 => "h265parse",
             VideoCodec::Av1 => "av1parse",
+            VideoCodec::Vp8 => "identity", // VP8 doesn't need parsing before muxing
+            VideoCodec::Vp9 => "identity", // VP9 doesn't need parsing before muxing
             VideoCodec::Raw => "identity", // No parsing needed, use identity element
         }
     }
@@ -108,9 +109,9 @@ impl VideoCodec {
     pub fn display_name(&self) -> &'static str {
         match self {
             VideoCodec::Mjpeg => "MJPEG",
-            VideoCodec::H264 => "H.264",
-            VideoCodec::H265 => "H.265",
             VideoCodec::Av1 => "AV1",
+            VideoCodec::Vp8 => "VP8",
+            VideoCodec::Vp9 => "VP9",
             VideoCodec::Raw => "RAW",
         }
     }
@@ -119,10 +120,10 @@ impl VideoCodec {
     pub fn native_playback_supported(&self) -> bool {
         match self {
             VideoCodec::Mjpeg => false, // Needs custom frame player
-            VideoCodec::H264 => true,
-            VideoCodec::H265 => true,  // Most browsers support HEVC now
             VideoCodec::Av1 => true,
-            VideoCodec::Raw => true, // Will be encoded to AV1, which is supported
+            VideoCodec::Vp8 => true,
+            VideoCodec::Vp9 => true,
+            VideoCodec::Raw => true, // Will be encoded, which is supported
         }
     }
     
@@ -143,9 +144,9 @@ impl VideoCodec {
 pub enum ContainerFormat {
     /// Matroska (.mkv) - flexible, supports any codec
     Mkv,
-    /// MP4 (.mp4) - widely compatible, good for H.264/H.265
+    /// MP4 (.mp4) - widely compatible
     Mp4,
-    /// WebM (.webm) - web-optimized, good for VP9/AV1
+    /// WebM (.webm) - web-optimized
     WebM,
 }
 

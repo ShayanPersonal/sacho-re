@@ -20,12 +20,44 @@
     setVideoDeviceCodec
   } from '$lib/stores/devices';
   import { settings } from '$lib/stores/settings';
-  import type { VideoCodec, VideoEncodingMode } from '$lib/api';
+  import type { VideoCodec, VideoEncodingMode, EncoderAvailability } from '$lib/api';
+  import { getEncoderAvailability } from '$lib/api';
+  
+  let encoderAvailability = $state<EncoderAvailability | null>(null);
+  
+  // Load encoder availability on mount
+  $effect(() => {
+    getEncoderAvailability().then(availability => {
+      encoderAvailability = availability;
+    });
+  });
+  
+  // Check if raw video encoding is available
+  function isRawEncodingAvailable(): boolean {
+    if (!encoderAvailability) return false;
+    return encoderAvailability.av1_available || encoderAvailability.vp9_available || encoderAvailability.vp8_available;
+  }
+  
+  // Filter codecs to only show those that are actually usable, with 'raw' last
+  function getAvailableCodecs(codecs: VideoCodec[]): VideoCodec[] {
+    let filtered = codecs;
+    if (!isRawEncodingAvailable()) {
+      // Filter out 'raw' if no encoders are available
+      filtered = codecs.filter(c => c !== 'raw');
+    }
+    // Sort so 'raw' is always last
+    return [...filtered].sort((a, b) => {
+      if (a === 'raw') return 1;
+      if (b === 'raw') return -1;
+      return 0;
+    });
+  }
   
   function getEncodingLabel(mode: VideoEncodingMode | undefined): string {
     switch (mode) {
       case 'av1_hardware': return 'AV1';
-      case 'vp9_software': return 'VP9';
+      case 'vp9': return 'VP9';
+      case 'vp8': return 'VP8';
       default: return 'AV1';
     }
   }
@@ -33,10 +65,10 @@
   function getCodecDisplayName(codec: VideoCodec, encodingMode: VideoEncodingMode | undefined): string {
     switch (codec) {
       case 'mjpeg': return 'MJPEG';
-      case 'h264': return 'H.264';
-      case 'h265': return 'H.265';
+      case 'vp8': return 'VP8';
+      case 'vp9': return 'VP9';
       case 'av1': return 'AV1';
-      case 'raw': return `Raw`;
+      case 'raw': return `Raw [${getEncodingLabel(encodingMode)}]`;
       default: return codec.toUpperCase();
     }
   }
@@ -245,7 +277,7 @@
           <div class="video-header">
             <span class="video-col-device">Device</span>
             <div class="video-col-format">
-              <span>Format</span>
+              <span>Stream Type</span>
               <button 
                 class="help-btn" 
                 onclick={(e) => { e.stopPropagation(); showFormatHelp = !showFormatHelp; }}
@@ -263,14 +295,14 @@
           </div>
           <div class="device-list">
             {#each filterDevices($videoDevices) as device}
-              {@const isSupported = device.supported_codecs.length > 0}
+              {@const availableCodecs = getAvailableCodecs(device.supported_codecs)}
+              {@const isSupported = availableCodecs.length > 0}
               {@const selectedCodec = $videoDeviceCodecs[device.id]}
-              {@const effectiveCodec = selectedCodec ?? device.supported_codecs[0]}
+              {@const effectiveCodec = selectedCodec && availableCodecs.includes(selectedCodec) ? selectedCodec : availableCodecs[0]}
               <div class="device-row video-row" class:device-unsupported={!isSupported}>
                 <div class="device-info">
                   <span class="device-name">{device.name}</span>
                   <div class="device-meta">
-                    <span class="meta-tag">{device.device_type}</span>
                     {#if device.resolutions.length > 0}
                       <span class="meta-tag">
                         {device.resolutions[0].width}x{device.resolutions[0].height}
@@ -280,7 +312,7 @@
                 </div>
                 <div class="codec-tags-cell">
                   {#if isSupported}
-                    {#each device.supported_codecs as codec}
+                    {#each availableCodecs as codec}
                       {@const isSelected = codec === effectiveCodec}
                       <button 
                         class="codec-tag" 

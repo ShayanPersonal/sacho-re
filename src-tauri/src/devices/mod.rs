@@ -65,7 +65,6 @@ pub struct MidiDevice {
 pub struct VideoDevice {
     pub id: String,
     pub name: String,
-    pub device_type: VideoDeviceType,
     pub resolutions: Vec<Resolution>,
     /// Supported video codecs for this device (can be recorded)
     pub supported_codecs: Vec<VideoCodec>,
@@ -81,20 +80,15 @@ impl VideoDevice {
     
     /// Get the preferred codec for recording
     /// 
-    /// Priority order (best first):
-    /// 1. H.264 - widely supported, good compression, native player works
-    /// 2. H.265 - better compression, native player works
-    /// 3. AV1 - best compression, native player works
-    /// 4. MJPEG - fallback, requires custom player
-    /// 
     /// Note: Raw is not included in preferred codecs as it requires explicit selection
     pub fn preferred_codec(&self) -> Option<VideoCodec> {
         // Prefer pre-encoded codecs that work with native player
         // Raw is deliberately not in this list - users must explicitly select it
+        // We only use free codecs.
         const PRIORITY: &[VideoCodec] = &[
-            VideoCodec::H264,
-            VideoCodec::H265,
             VideoCodec::Av1,
+            VideoCodec::Vp9,
+            VideoCodec::Vp8,
             VideoCodec::Mjpeg,
         ];
         

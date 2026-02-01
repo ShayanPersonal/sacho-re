@@ -199,36 +199,11 @@ impl VideoWriter {
             container.extension(), codec.display_name());
         
         // Create appsrc with appropriate caps for the codec
-        // Capture pipeline outputs byte-stream format, which h264parse/h265parse can convert
-        // to AVC/HEVC format for mp4mux
-        let caps = match codec {
-            crate::encoding::VideoCodec::H264 => {
-                gst::Caps::builder("video/x-h264")
-                    .field("stream-format", "byte-stream")
-                    .field("alignment", "au")
-                    .field("width", width as i32)
-                    .field("height", height as i32)
-                    .field("framerate", gst::Fraction::new(fps as i32, 1))
-                    .build()
-            }
-            crate::encoding::VideoCodec::H265 => {
-                gst::Caps::builder("video/x-h265")
-                    .field("stream-format", "byte-stream")
-                    .field("alignment", "au")
-                    .field("width", width as i32)
-                    .field("height", height as i32)
-                    .field("framerate", gst::Fraction::new(fps as i32, 1))
-                    .build()
-            }
-            _ => {
-                // For MJPEG, AV1, etc. - just use the basic caps
-                gst::Caps::builder(codec.gst_caps_name())
-                    .field("width", width as i32)
-                    .field("height", height as i32)
-                    .field("framerate", gst::Fraction::new(fps as i32, 1))
-                    .build()
-            }
-        };
+        let caps = gst::Caps::builder(codec.gst_caps_name())
+            .field("width", width as i32)
+            .field("height", height as i32)
+            .field("framerate", gst::Fraction::new(fps as i32, 1))
+            .build();
         
         let appsrc = gst_app::AppSrc::builder()
             .name("src")
@@ -406,7 +381,7 @@ impl VideoCapturePipeline {
         let pipeline = gst::Pipeline::new();
         
         // Create source element based on platform
-        // Windows: Use DirectShow (dshowvideosrc) to access H.264 from capture cards
+        // Windows: Use DirectShow (dshowvideosrc) to access video from capture cards
         // Linux: Use v4l2src
         // macOS: Use avfvideosrc
         #[cfg(target_os = "windows")]
@@ -480,49 +455,16 @@ impl VideoCapturePipeline {
         // For MJPEG, skip the parser. jpegparse extracts dimensions from JPEG SOF markers,
         // which some capture devices report with swapped width/height. By skipping it,
         // we use the camera's advertised dimensions directly.
-        // For H.264/H.265, we need the parser to ensure proper frame boundaries and
-        // convert to byte-stream format.
-        let use_parser = !matches!(codec, crate::encoding::VideoCodec::Mjpeg);
+        // For MJPEG, use jpegparse. For other codecs (AV1, VP8, VP9), use identity (passthrough)
+        let parser = gst::ElementFactory::make(codec.gst_parser())
+            .build()
+            .map_err(|e| VideoError::Pipeline(format!("Failed to create {}: {}", codec.gst_parser(), e)))?;
         
-        if use_parser {
-            let parser = gst::ElementFactory::make(codec.gst_parser())
-                .build()
-                .map_err(|e| VideoError::Pipeline(format!("Failed to create {}: {}", codec.gst_parser(), e)))?;
-            
-            // Force byte-stream output for H.264/H.265
-            let output_caps = match codec {
-                crate::encoding::VideoCodec::H264 => {
-                    gst::Caps::builder("video/x-h264")
-                        .field("stream-format", "byte-stream")
-                        .field("alignment", "au")
-                        .build()
-                }
-                crate::encoding::VideoCodec::H265 => {
-                    gst::Caps::builder("video/x-h265")
-                        .field("stream-format", "byte-stream")
-                        .field("alignment", "au")
-                        .build()
-                }
-                _ => gst::Caps::new_any(),
-            };
-            let output_capsfilter = gst::ElementFactory::make("capsfilter")
-                .property("caps", output_caps)
-                .build()
-                .map_err(|e| VideoError::Pipeline(format!("Failed to create output capsfilter: {}", e)))?;
-            
-            pipeline.add_many([&source, &capsfilter, &parser, &output_capsfilter, &queue, appsink.upcast_ref()])
-                .map_err(|e| VideoError::Pipeline(format!("Failed to add elements: {}", e)))?;
-            
-            gst::Element::link_many([&source, &capsfilter, &parser, &output_capsfilter, &queue, appsink.upcast_ref()])
-                .map_err(|e| VideoError::Pipeline(format!("Failed to link pipeline: {}", e)))?;
-        } else {
-            // MJPEG: skip parser, link capsfilter directly to queue
-            pipeline.add_many([&source, &capsfilter, &queue, appsink.upcast_ref()])
-                .map_err(|e| VideoError::Pipeline(format!("Failed to add elements: {}", e)))?;
-            
-            gst::Element::link_many([&source, &capsfilter, &queue, appsink.upcast_ref()])
-                .map_err(|e| VideoError::Pipeline(format!("Failed to link pipeline: {}", e)))?;
-        }
+        pipeline.add_many([&source, &capsfilter, &parser, &queue, appsink.upcast_ref()])
+            .map_err(|e| VideoError::Pipeline(format!("Failed to add elements: {}", e)))?;
+        
+        gst::Element::link_many([&source, &capsfilter, &parser, &queue, appsink.upcast_ref()])
+            .map_err(|e| VideoError::Pipeline(format!("Failed to link pipeline: {}", e)))?;
         
         // Debug: Print the caps being used
         println!("[Video] {} passthrough pipeline created for {} (device {})", 
@@ -821,12 +763,24 @@ impl VideoCapturePipeline {
     
     /// Start recording to a file
     /// Returns the pre-roll duration that was captured
-    pub fn start_recording(&mut self, output_path: PathBuf) -> Result<Duration> {
+    pub fn start_recording(&mut self, mut output_path: PathBuf) -> Result<Duration> {
         if self.is_recording {
             return Err(VideoError::Pipeline("Already recording".to_string()));
         }
         
-        println!("[Video] Starting recording to {:?} (codec: {})", output_path, self.codec.display_name());
+        // For raw video, determine the actual output format based on encoding mode
+        if self.codec == crate::encoding::VideoCodec::Raw {
+            let target_codec = match self.encoding_mode {
+                VideoEncodingMode::Av1Hardware => crate::encoding::VideoCodec::Av1,
+                VideoEncodingMode::Vp9 => crate::encoding::VideoCodec::Vp9,
+                VideoEncodingMode::Vp8 => crate::encoding::VideoCodec::Vp8,
+                VideoEncodingMode::Raw => crate::encoding::VideoCodec::Av1, // Fallback
+            };
+            output_path = output_path.with_extension(target_codec.container().extension());
+            println!("[Video] Starting recording to {:?} (raw -> {})", output_path, target_codec.display_name());
+        } else {
+            println!("[Video] Starting recording to {:?} (codec: {})", output_path, self.codec.display_name());
+        }
         
         // Drain pre-roll buffer
         let preroll_frames = self.preroll_buffer.lock().drain();
@@ -843,12 +797,20 @@ impl VideoCapturePipeline {
         
         // Handle raw vs pre-encoded video differently
         if self.codec == crate::encoding::VideoCodec::Raw {
+            // Determine target codec based on encoding mode
+            let target_codec = match self.encoding_mode {
+                VideoEncodingMode::Av1Hardware => crate::encoding::VideoCodec::Av1,
+                VideoEncodingMode::Vp9 => crate::encoding::VideoCodec::Vp9,
+                VideoEncodingMode::Vp8 => crate::encoding::VideoCodec::Vp8,
+                VideoEncodingMode::Raw => crate::encoding::VideoCodec::Av1, // Fallback
+            };
+            
             // Raw video - use async encoder
             let encoder_config = EncoderConfig {
                 bitrate: 0, // Auto
                 keyframe_interval: self.fps * 2, // Keyframe every 2 seconds
                 preset: "p4".to_string(), // Balanced preset
-                target_codec: crate::encoding::VideoCodec::Av1,
+                target_codec,
             };
             
             // Create encoder with buffer size of ~2 seconds of frames for backpressure

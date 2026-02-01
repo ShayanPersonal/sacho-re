@@ -134,9 +134,17 @@ export async function cleanupStaleDeviceIds() {
 }
 
 export async function saveDeviceSelection() {
+  // Use the settings store as the source of truth for current config
+  // This ensures we don't overwrite settings changed elsewhere (like video_encoding_mode)
   let currentConfig: Config | null = null;
-  const unsubConfig = config.subscribe(c => currentConfig = c);
+  const unsubConfig = settings.subscribe(c => currentConfig = c);
   unsubConfig();
+  
+  if (!currentConfig) {
+    // Fallback to local config if settings not available
+    const unsubLocal = config.subscribe(c => currentConfig = c);
+    unsubLocal();
+  }
   
   if (!currentConfig) return;
   

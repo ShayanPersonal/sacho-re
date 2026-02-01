@@ -65,8 +65,6 @@ fn probe_compressed_formats(
 ) {
     // List of compressed formats to try (in priority order)
     let formats_to_try = [
-        ("video/x-h264", VideoCodec::H264, "H.264"),
-        ("video/x-h265", VideoCodec::H265, "H.265"),
         ("image/jpeg", VideoCodec::Mjpeg, "MJPEG"),
     ];
     
@@ -151,8 +149,6 @@ fn try_format_with_debug(device_name: &str, caps_name: &str) -> (bool, Option<St
                         let actual_name = structure.name().as_str();
                         // Check if format matches (be flexible with naming)
                         actual_name == caps_name ||
-                            (caps_name == "video/x-h264" && actual_name.contains("h264")) ||
-                            (caps_name == "video/x-h265" && (actual_name.contains("h265") || actual_name.contains("hevc"))) ||
                             (caps_name == "image/jpeg" && (actual_name.contains("jpeg") || actual_name == "image/jpeg"))
                     } else {
                         false
@@ -178,8 +174,6 @@ fn format_display_name(gst_name: &str) -> String {
     match gst_name {
         "video/x-raw" => "RAW".to_string(),
         "image/jpeg" => "MJPEG".to_string(),
-        "video/x-h264" | "video/h264" => "H.264".to_string(),
-        "video/x-h265" | "video/x-hevc" | "video/h265" => "H.265".to_string(),
         "video/x-av1" | "video/av1" => "AV1".to_string(),
         "video/x-vp8" => "VP8".to_string(),
         "video/x-vp9" => "VP9".to_string(),
@@ -362,7 +356,7 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
         }
         
         // On Windows, if we only found RAW format, probe more aggressively
-        // Some devices (like capture cards) expose H.264 through DirectShow but not DeviceMonitor
+        // Some devices (like capture cards) expose video through DirectShow but not DeviceMonitor
         #[cfg(target_os = "windows")]
         {
             // Check if we only have Raw codec (or nothing except Raw/DV formats)
@@ -402,7 +396,6 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
         devices.push(VideoDevice {
             id: device_id,
             name,
-            device_type: VideoDeviceType::Webcam,
             resolutions,
             supported_codecs,
             all_formats: detected_formats,

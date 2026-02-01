@@ -22,12 +22,11 @@ export interface MidiDevice {
 }
 
 /** Supported video codecs */
-export type VideoCodec = 'mjpeg' | 'h264' | 'h265' | 'av1' | 'raw';
+export type VideoCodec = 'mjpeg' | 'av1' | 'vp8' | 'vp9' | 'raw';
 
 export interface VideoDevice {
   id: string;
   name: string;
-  device_type: 'webcam' | 'screen';
   resolutions: Resolution[];
   /** Supported video codecs for this device (can be recorded) */
   supported_codecs: VideoCodec[];
@@ -44,8 +43,8 @@ export function isVideoDeviceSupported(device: VideoDevice): boolean {
 export function getCodecDisplayName(codec: VideoCodec): string {
   switch (codec) {
     case 'mjpeg': return 'MJPEG';
-    case 'h264': return 'H.264';
-    case 'h265': return 'H.265';
+    case 'vp8': return 'VP8';
+    case 'vp9': return 'VP9';
     case 'av1': return 'AV1';
     case 'raw': return 'RAW';
   }
@@ -126,7 +125,7 @@ export interface VideoFileInfo {
   size_bytes: number;
 }
 
-export type VideoEncodingMode = 'vp9_software' | 'av1_hardware' | 'raw';
+export type VideoEncodingMode = 'av1_hardware' | 'vp9' | 'vp8' | 'raw';
 
 export interface Config {
   storage_path: string;
@@ -199,6 +198,37 @@ export async function getMidiDevices(): Promise<MidiDevice[]> {
 
 export async function getVideoDevices(): Promise<VideoDevice[]> {
   return invoke('get_video_devices');
+}
+
+// ============================================================================
+// Encoder Availability
+// ============================================================================
+
+export interface EncoderAvailability {
+  /** Whether AV1 encoding is available (hardware or software) */
+  av1_available: boolean;
+  /** Whether AV1 hardware encoding is available */
+  av1_hardware: boolean;
+  /** Whether VP9 encoding is available (hardware or software) */
+  vp9_available: boolean;
+  /** Whether VP9 hardware encoding is available */
+  vp9_hardware: boolean;
+  /** Whether VP8 encoding is available (hardware or software) */
+  vp8_available: boolean;
+  /** Whether VP8 hardware encoding is available */
+  vp8_hardware: boolean;
+  /** Name of the AV1 encoder if available */
+  av1_encoder_name: string | null;
+  /** Name of the VP9 encoder if available */
+  vp9_encoder_name: string | null;
+  /** Name of the VP8 encoder if available */
+  vp8_encoder_name: string | null;
+  /** Recommended default encoding mode */
+  recommended_default: VideoEncodingMode;
+}
+
+export async function getEncoderAvailability(): Promise<EncoderAvailability> {
+  return invoke('get_encoder_availability');
 }
 
 // ============================================================================
@@ -309,10 +339,24 @@ export interface VideoPlaybackInfo {
   codec: string;
 }
 
+export interface VideoCodecCheck {
+  /** The detected codec name */
+  codec: string;
+  /** Whether this video can be played */
+  is_playable: boolean;
+  /** Reason if not playable */
+  reason: string | null;
+}
+
 export interface VideoFrameData {
   data_base64: string;
   timestamp_ms: number;
   duration_ms: number;
+}
+
+/** Check if a video file's codec is supported for playback */
+export async function checkVideoCodec(sessionPath: string, filename: string): Promise<VideoCodecCheck> {
+  return invoke('check_video_codec', { sessionPath, filename });
 }
 
 export async function getVideoInfo(sessionPath: string, filename: string): Promise<VideoPlaybackInfo> {

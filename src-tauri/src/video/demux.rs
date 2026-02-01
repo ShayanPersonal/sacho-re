@@ -18,7 +18,7 @@ pub struct VideoInfo {
     pub duration_ms: u64,
     /// Total number of frames (approximate)
     pub frame_count: u64,
-    /// Codec name (e.g., "mjpeg", "vp9", "h264")
+    /// Codec name (e.g., "mjpeg", "vp9", "av1")
     pub codec: String,
 }
 

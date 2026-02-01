@@ -99,7 +99,7 @@ impl Default for EncoderConfig {
     }
 }
 
-/// Type of hardware encoder available
+/// Type of hardware encoder backend
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HardwareEncoderType {
     /// NVIDIA NVENC
@@ -116,13 +116,70 @@ pub enum HardwareEncoderType {
 
 impl HardwareEncoderType {
     /// Get the GStreamer element name for AV1 encoding
-    pub fn av1_encoder_element(&self) -> &'static str {
+    /// Supports both hardware and software (libaom) encoders
+    pub fn av1_encoder_element(&self) -> Option<&'static str> {
         match self {
-            HardwareEncoderType::Nvenc => "nvav1enc",
-            HardwareEncoderType::Amf => "amfav1enc",
-            HardwareEncoderType::Qsv => "qsvav1enc",
-            HardwareEncoderType::VaApi => "vaav1enc",
-            HardwareEncoderType::Software => "av1enc", // libaom
+            HardwareEncoderType::Nvenc => Some("nvav1enc"),
+            HardwareEncoderType::Amf => Some("amfav1enc"),
+            HardwareEncoderType::Qsv => Some("qsvav1enc"),
+            // VA-API: check for both new 'va' and old 'vaapi' plugins
+            HardwareEncoderType::VaApi => {
+                if gst::ElementFactory::find("vaav1enc").is_some() {
+                    Some("vaav1enc")
+                } else if gst::ElementFactory::find("vaapiav1enc").is_some() {
+                    Some("vaapiav1enc")
+                } else {
+                    None
+                }
+            }
+            // Software AV1 encoding via libaom (slower but works everywhere)
+            HardwareEncoderType::Software => Some("av1enc"),
+        }
+    }
+    
+    /// Get the GStreamer element name for VP8 encoding
+    /// VP8 is royalty-free, so we can use both hardware and software encoders
+    pub fn vp8_encoder_element(&self) -> Option<&'static str> {
+        match self {
+            HardwareEncoderType::Qsv => Some("qsvvp8enc"),
+            // VA-API: check for both new 'va' and old 'vaapi' plugins
+            HardwareEncoderType::VaApi => {
+                if gst::ElementFactory::find("vavp8enc").is_some() {
+                    Some("vavp8enc")
+                } else if gst::ElementFactory::find("vaapivp8enc").is_some() {
+                    Some("vaapivp8enc")
+                } else {
+                    None
+                }
+            }
+            // Software fallback - vp8enc from libvpx is royalty-free
+            HardwareEncoderType::Software => Some("vp8enc"),
+            // These don't support VP8 encoding
+            HardwareEncoderType::Nvenc => None,
+            HardwareEncoderType::Amf => None,
+        }
+    }
+    
+    /// Get the GStreamer element name for VP9 encoding
+    /// VP9 is royalty-free, so we can use both hardware and software encoders
+    pub fn vp9_encoder_element(&self) -> Option<&'static str> {
+        match self {
+            HardwareEncoderType::Qsv => Some("qsvvp9enc"),
+            // VA-API: check for both new 'va' and old 'vaapi' plugins
+            HardwareEncoderType::VaApi => {
+                if gst::ElementFactory::find("vavp9enc").is_some() {
+                    Some("vavp9enc")
+                } else if gst::ElementFactory::find("vaapivp9enc").is_some() {
+                    Some("vaapivp9enc")
+                } else {
+                    None
+                }
+            }
+            // Software fallback - vp9enc from libvpx is royalty-free
+            HardwareEncoderType::Software => Some("vp9enc"),
+            // These don't support VP9 encoding
+            HardwareEncoderType::Nvenc => None,
+            HardwareEncoderType::Amf => None,
         }
     }
     
@@ -133,33 +190,190 @@ impl HardwareEncoderType {
             HardwareEncoderType::Amf => "AMD AMF",
             HardwareEncoderType::Qsv => "Intel QuickSync",
             HardwareEncoderType::VaApi => "VA-API",
-            HardwareEncoderType::Software => "Software (libaom)",
+            HardwareEncoderType::Software => "Software",
         }
     }
 }
 
-/// Detect the best available hardware encoder
-pub fn detect_best_encoder() -> HardwareEncoderType {
-    // Check in order of preference
+/// Detect the best available AV1 encoder
+/// 
+/// Checks for hardware encoders first, then falls back to software (libaom).
+/// 
+/// Hardware encoders checked:
+/// - NVIDIA NVENC (nvav1enc) - RTX 40 series and newer
+/// - AMD AMF (amfav1enc) - RX 7000 series and newer
+/// - Intel QuickSync (qsvav1enc) - Arc GPUs and newer Intel iGPUs
+/// - VA-API (vaav1enc, vaapiav1enc) - Linux (Intel Arc, AMD, some NVIDIA)
+/// 
+/// Software fallback:
+/// - libaom (av1enc) - slower but works everywhere
+/// 
+/// Note: Vulkan Video encoding in GStreamer does not yet support AV1.
+pub fn detect_best_av1_encoder() -> HardwareEncoderType {
+    // Check NVIDIA NVENC first (fastest, best quality)
     if gst::ElementFactory::find("nvav1enc").is_some() {
         return HardwareEncoderType::Nvenc;
     }
+    // Check AMD AMF
     if gst::ElementFactory::find("amfav1enc").is_some() {
         return HardwareEncoderType::Amf;
     }
+    // Check Intel QuickSync
     if gst::ElementFactory::find("qsvav1enc").is_some() {
         return HardwareEncoderType::Qsv;
     }
+    // Check VA-API - newer 'va' plugin (Linux)
     if gst::ElementFactory::find("vaav1enc").is_some() {
         return HardwareEncoderType::VaApi;
     }
-    // Fall back to software
+    // Check VA-API - older 'gstreamer-vaapi' plugin (Linux, deprecated but still common)
+    if gst::ElementFactory::find("vaapiav1enc").is_some() {
+        return HardwareEncoderType::VaApi;
+    }
+    // Fall back to software (libaom) - slower but works everywhere
     HardwareEncoderType::Software
 }
 
-/// Check if any hardware encoder is available
+/// Check if any AV1 encoder is available (hardware or software)
+pub fn has_av1_encoder() -> bool {
+    let encoder_type = detect_best_av1_encoder();
+    encoder_type.av1_encoder_element().is_some()
+}
+
+/// Detect the best available VP8 encoder
+/// 
+/// VP8 is royalty-free, so we can use any available encoder.
+/// Checks for hardware encoders first, then falls back to software (libvpx).
+/// 
+/// Hardware encoders checked:
+/// - Intel QuickSync (qsvvp8enc) - Windows/Linux
+/// - VA-API (vavp8enc, vaapivp8enc) - Linux (Intel, AMD)
+/// 
+/// Note: NVIDIA NVENC and AMD AMF do not support VP8 encoding.
+/// Note: Vulkan Video encoding in GStreamer does not yet support VP8.
+pub fn detect_best_vp8_encoder() -> HardwareEncoderType {
+    // Check Intel QuickSync (Windows and Linux)
+    if gst::ElementFactory::find("qsvvp8enc").is_some() {
+        return HardwareEncoderType::Qsv;
+    }
+    // Check VA-API - newer 'va' plugin (Linux - Intel, AMD)
+    if gst::ElementFactory::find("vavp8enc").is_some() {
+        return HardwareEncoderType::VaApi;
+    }
+    // Check VA-API - older 'gstreamer-vaapi' plugin (Linux, deprecated but still common)
+    if gst::ElementFactory::find("vaapivp8enc").is_some() {
+        return HardwareEncoderType::VaApi;
+    }
+    // Fall back to software (vp8enc from libvpx) - always available with GStreamer
+    if gst::ElementFactory::find("vp8enc").is_some() {
+        return HardwareEncoderType::Software;
+    }
+    // No VP8 encoder found
+    HardwareEncoderType::Software
+}
+
+/// Check if any VP8 encoder is available (hardware or software)
+pub fn has_vp8_encoder() -> bool {
+    let encoder_type = detect_best_vp8_encoder();
+    encoder_type.vp8_encoder_element().is_some()
+}
+
+/// Detect the best available VP9 encoder
+/// 
+/// VP9 is royalty-free, so we can use any available encoder.
+/// Checks for hardware encoders first, then falls back to software (libvpx).
+/// 
+/// Hardware encoders checked:
+/// - Intel QuickSync (qsvvp9enc) - Windows/Linux
+/// - VA-API (vavp9enc, vaapivp9enc) - Linux (Intel, AMD, some NVIDIA)
+/// 
+/// Note: NVIDIA NVENC and AMD AMF do not support VP9 encoding.
+/// Note: Vulkan Video encoding in GStreamer does not yet support VP9.
+pub fn detect_best_vp9_encoder() -> HardwareEncoderType {
+    // Check Intel QuickSync first (Windows and Linux)
+    if gst::ElementFactory::find("qsvvp9enc").is_some() {
+        return HardwareEncoderType::Qsv;
+    }
+    // Check VA-API - newer 'va' plugin (Linux - Intel, AMD, some NVIDIA with nouveau)
+    if gst::ElementFactory::find("vavp9enc").is_some() {
+        return HardwareEncoderType::VaApi;
+    }
+    // Check VA-API - older 'gstreamer-vaapi' plugin (Linux, deprecated but still common)
+    if gst::ElementFactory::find("vaapivp9enc").is_some() {
+        return HardwareEncoderType::VaApi;
+    }
+    // Fall back to software (vp9enc from libvpx) - royalty-free
+    if gst::ElementFactory::find("vp9enc").is_some() {
+        return HardwareEncoderType::Software;
+    }
+    // No VP9 encoder found
+    HardwareEncoderType::Software
+}
+
+/// Check if any VP9 encoder is available (hardware or software)
+pub fn has_vp9_encoder() -> bool {
+    let encoder_type = detect_best_vp9_encoder();
+    encoder_type.vp9_encoder_element().is_some()
+}
+
+/// Detect the best encoder for a given target codec
+pub fn detect_best_encoder_for_codec(codec: VideoCodec) -> HardwareEncoderType {
+    match codec {
+        VideoCodec::Av1 => detect_best_av1_encoder(),
+        VideoCodec::Vp8 => detect_best_vp8_encoder(),
+        VideoCodec::Vp9 => detect_best_vp9_encoder(),
+        _ => HardwareEncoderType::Software,
+    }
+}
+
+/// Legacy function - detect best AV1 encoder
+pub fn detect_best_encoder() -> HardwareEncoderType {
+    detect_best_av1_encoder()
+}
+
+/// Check if any AV1 hardware encoder is available (not software)
+pub fn has_hardware_av1_encoder() -> bool {
+    let encoder_type = detect_best_av1_encoder();
+    !matches!(encoder_type, HardwareEncoderType::Software) && encoder_type.av1_encoder_element().is_some()
+}
+
+/// Check if any VP9 hardware encoder is available (not software)
+pub fn has_hardware_vp9_encoder() -> bool {
+    let encoder_type = detect_best_vp9_encoder();
+    !matches!(encoder_type, HardwareEncoderType::Software) && encoder_type.vp9_encoder_element().is_some()
+}
+
+/// Check if any VP8 hardware encoder is available (not software)
+pub fn has_hardware_vp8_encoder() -> bool {
+    let encoder_type = detect_best_vp8_encoder();
+    !matches!(encoder_type, HardwareEncoderType::Software) && encoder_type.vp8_encoder_element().is_some()
+}
+
+/// Legacy alias for has_hardware_av1_encoder
 pub fn has_hardware_encoder() -> bool {
-    detect_best_encoder() != HardwareEncoderType::Software
+    has_hardware_av1_encoder()
+}
+
+/// Get the recommended default video encoding mode
+/// 
+/// Priority:
+/// 1. AV1 if hardware encoder is available
+/// 2. VP9 if hardware encoder is available  
+/// 3. VP8 if hardware encoder is available
+/// 4. VP8 software (fallback - always available)
+pub fn get_recommended_encoding_mode() -> crate::config::VideoEncodingMode {
+    use crate::config::VideoEncodingMode;
+    
+    if has_hardware_av1_encoder() {
+        VideoEncodingMode::Av1Hardware
+    } else if has_hardware_vp9_encoder() {
+        VideoEncodingMode::Vp9
+    } else if has_hardware_vp8_encoder() {
+        VideoEncodingMode::Vp8
+    } else {
+        // Fallback to VP8 software
+        VideoEncodingMode::Vp8
+    }
 }
 
 /// Asynchronous video encoder that runs encoding in a background thread
@@ -228,8 +442,8 @@ impl AsyncVideoEncoder {
         config: EncoderConfig,
         buffer_size: usize,
     ) -> Result<Self> {
-        let hw_type = detect_best_encoder();
-        println!("[Encoder] Using {} for AV1 encoding", hw_type.display_name());
+        let hw_type = detect_best_encoder_for_codec(config.target_codec);
+        println!("[Encoder] Using {} for {} encoding", hw_type.display_name(), config.target_codec.display_name());
         
         // Create bounded channel for frames (provides backpressure)
         let (frame_sender, frame_receiver) = bounded::<EncoderMessage>(buffer_size);
@@ -506,15 +720,30 @@ impl AsyncVideoEncoder {
         })
     }
     
-    /// Remux a WebM file to add proper duration header
+    /// Remux a video file to add proper duration header
     /// 
-    /// WebM files created in streaming mode don't have duration in the header.
+    /// Files created in streaming mode may not have duration in the header.
     /// This function remuxes the file to add it.
+    /// 
+    /// For MP4 files with faststart, this may not be necessary, but we still
+    /// attempt it to ensure maximum compatibility.
     fn remux_with_duration(file_path: &PathBuf) -> Result<u64> {
-        println!("[Encoder] Remuxing to add duration header...");
+        let extension = file_path.extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("webm");
+        
+        // MP4 files with faststart/fragmentation typically don't need remuxing
+        if extension == "mp4" {
+            println!("[Encoder] MP4 file - skipping remux (faststart already applied)");
+            return std::fs::metadata(file_path)
+                .map(|m| m.len())
+                .map_err(|e| EncoderError::Io(e));
+        }
+        
+        println!("[Encoder] Remuxing {} to add duration header...", extension);
         
         // Create temp file path
-        let temp_path = file_path.with_extension("webm.tmp");
+        let temp_path = file_path.with_extension(format!("{}.tmp", extension));
         
         // Build remux pipeline: filesrc ! matroskademux ! webmmux ! filesink
         let pipeline = gst::Pipeline::new();
@@ -625,6 +854,22 @@ impl AsyncVideoEncoder {
         config: &EncoderConfig,
         hw_type: HardwareEncoderType,
     ) -> Result<gst::Pipeline> {
+        match config.target_codec {
+            VideoCodec::Av1 => Self::create_av1_pipeline(output_path, width, height, fps, config, hw_type),
+            VideoCodec::Vp9 => Self::create_vp9_pipeline(output_path, width, height, fps, config, hw_type),
+            VideoCodec::Vp8 => Self::create_vp8_pipeline(output_path, width, height, fps, config, hw_type),
+            _ => Err(EncoderError::NotAvailable(format!(
+                "Encoding not supported for codec: {:?}", config.target_codec
+            ))),
+        }
+    }
+    
+    /// Create common pipeline elements (appsrc, queue, videoconvert)
+    fn create_common_pipeline_start(
+        width: u32,
+        height: u32,
+        fps: u32,
+    ) -> Result<(gst::Pipeline, gst_app::AppSrc, gst::Element, gst::Element)> {
         let pipeline = gst::Pipeline::new();
         
         // Create appsrc with raw video caps - must specify format for proper negotiation
@@ -657,8 +902,22 @@ impl AsyncVideoEncoder {
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create videoconvert: {}", e)))?;
         
-        // Create encoder based on hardware type
-        let encoder = Self::create_encoder(hw_type, config)?;
+        Ok((pipeline, appsrc, queue, videoconvert))
+    }
+    
+    /// Create AV1 encoding pipeline (WebM container)
+    fn create_av1_pipeline(
+        output_path: &PathBuf,
+        width: u32,
+        height: u32,
+        fps: u32,
+        config: &EncoderConfig,
+        hw_type: HardwareEncoderType,
+    ) -> Result<gst::Pipeline> {
+        let (pipeline, appsrc, queue, videoconvert) = Self::create_common_pipeline_start(width, height, fps)?;
+        
+        // Create AV1 encoder
+        let encoder = Self::create_av1_encoder(hw_type, config)?;
         
         // AV1 parser
         let parser = gst::ElementFactory::make("av1parse")
@@ -689,9 +948,12 @@ impl AsyncVideoEncoder {
         Ok(pipeline)
     }
     
-    /// Create the encoder element based on hardware type
-    fn create_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
-        let encoder_name = hw_type.av1_encoder_element();
+    /// Create the AV1 encoder element based on hardware type
+    fn create_av1_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
+        let encoder_name = hw_type.av1_encoder_element()
+            .ok_or_else(|| EncoderError::NotAvailable(format!(
+                "{} does not support AV1 encoding", hw_type.display_name()
+            )))?;
         
         let encoder = gst::ElementFactory::make(encoder_name)
             .build()
@@ -717,26 +979,264 @@ impl AsyncVideoEncoder {
                 }
             }
             HardwareEncoderType::Amf => {
-                // AMD AMF settings
                 if config.bitrate > 0 {
-                    encoder.set_property("bitrate", config.bitrate / 1000); // AMF uses kbps
+                    encoder.set_property("bitrate", config.bitrate / 1000);
                 }
             }
             HardwareEncoderType::Qsv => {
-                // Intel QuickSync settings
                 if config.bitrate > 0 {
                     encoder.set_property("bitrate", config.bitrate / 1000);
                 }
             }
             HardwareEncoderType::VaApi => {
-                // VA-API settings
                 if config.bitrate > 0 {
                     encoder.set_property("bitrate", config.bitrate / 1000);
                 }
             }
             HardwareEncoderType::Software => {
-                // libaom settings - software is slow, use fast settings
-                encoder.set_property_from_str("cpu-used", "8"); // Fastest
+                // libaom (av1enc) settings - optimize for speed
+                // cpu-used: 0 (slowest) to 8 (fastest)
+                encoder.set_property("cpu-used", 8u32);
+                // Use multiple threads based on CPU cores
+                let num_cpus = std::thread::available_parallelism()
+                    .map(|p| p.get() as u32)
+                    .unwrap_or(4);
+                encoder.set_property("threads", num_cpus);
+                // row-mt: enable row-based multi-threading
+                encoder.set_property("row-mt", true);
+                // target-bitrate in kbps for libaom
+                if config.bitrate > 0 {
+                    encoder.set_property("target-bitrate", config.bitrate / 1000);
+                } else {
+                    // Default to 8 Mbps
+                    encoder.set_property("target-bitrate", 8000u32);
+                }
+                // Keyframe interval
+                if config.keyframe_interval > 0 {
+                    encoder.set_property("keyframe-max-dist", config.keyframe_interval);
+                }
+                // Use VBR (variable bitrate) for better quality
+                encoder.set_property_from_str("end-usage", "vbr");
+            }
+        }
+        
+        Ok(encoder)
+    }
+    
+    /// Create VP8 encoding pipeline (WebM container)
+    fn create_vp8_pipeline(
+        output_path: &PathBuf,
+        width: u32,
+        height: u32,
+        fps: u32,
+        config: &EncoderConfig,
+        hw_type: HardwareEncoderType,
+    ) -> Result<gst::Pipeline> {
+        let (pipeline, appsrc, queue, videoconvert) = Self::create_common_pipeline_start(width, height, fps)?;
+        
+        // Create VP8 encoder
+        let encoder = Self::create_vp8_encoder(hw_type, config)?;
+        
+        // WebM muxer for VP8
+        let muxer = gst::ElementFactory::make("webmmux")
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create webmmux: {}", e)))?;
+        
+        // File sink with sync disabled for better performance
+        let filesink = gst::ElementFactory::make("filesink")
+            .property("location", output_path.to_string_lossy().to_string())
+            .property("async", false)
+            .property("sync", false)
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
+        
+        // Add elements to pipeline (no parser needed for VP8)
+        pipeline.add_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, &muxer, &filesink])
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
+        
+        // Link elements
+        gst::Element::link_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, &muxer, &filesink])
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
+        
+        Ok(pipeline)
+    }
+    
+    /// Create the VP8 encoder element based on hardware type
+    /// 
+    /// VP8 is royalty-free, so we can use both hardware and software encoders.
+    /// Hardware encoders (VA-API, QuickSync) are preferred, with libvpx as fallback.
+    fn create_vp8_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
+        let encoder_name = hw_type.vp8_encoder_element()
+            .ok_or_else(|| EncoderError::NotAvailable(format!(
+                "{} does not support VP8 encoding", hw_type.display_name()
+            )))?;
+        
+        let encoder = gst::ElementFactory::make(encoder_name)
+            .build()
+            .map_err(|e| EncoderError::NotAvailable(format!("Failed to create {}: {}", encoder_name, e)))?;
+        
+        // Set encoder properties based on type
+        match hw_type {
+            HardwareEncoderType::VaApi => {
+                // VA-API VP8 settings
+                if config.bitrate > 0 {
+                    encoder.set_property("bitrate", config.bitrate / 1000);
+                }
+            }
+            HardwareEncoderType::Qsv => {
+                // Intel QuickSync VP8 settings
+                if config.bitrate > 0 {
+                    encoder.set_property("bitrate", config.bitrate / 1000);
+                }
+            }
+            HardwareEncoderType::Software => {
+                // libvpx vp8enc settings - optimize for speed
+                // deadline: 0=best, 1=realtime (fastest)
+                encoder.set_property_from_str("deadline", "1");
+                // cpu-used: 0-16, higher = faster encoding (algorithmic complexity tradeoff)
+                // Use 8 as a balance - still fast but better quality than 16
+                encoder.set_property("cpu-used", 8i32);
+                // threads: use available CPU cores for parallel encoding
+                let num_cpus = std::thread::available_parallelism()
+                    .map(|p| p.get() as i32)
+                    .unwrap_or(4)
+                    .min(16); // libvpx max threads is 16
+                encoder.set_property("threads", num_cpus);
+                // target-bitrate in bits per second (not kbps!)
+                if config.bitrate > 0 {
+                    encoder.set_property("target-bitrate", config.bitrate as i32);
+                } else {
+                    // Default to 12 Mbps for good quality
+                    encoder.set_property("target-bitrate", 12_000_000i32);
+                }
+                // Keyframe interval
+                if config.keyframe_interval > 0 {
+                    encoder.set_property("keyframe-max-dist", config.keyframe_interval as i32);
+                }
+                // Use VBR for better quality (CBR can be too restrictive)
+                encoder.set_property_from_str("end-usage", "vbr");
+                // Set buffer sizes for VBR - allows bitrate to fluctuate for quality
+                encoder.set_property("buffer-size", 6000i32); // 6 seconds of buffer
+                encoder.set_property("buffer-initial-size", 4000i32);
+                encoder.set_property("buffer-optimal-size", 5000i32);
+            }
+            // These encoder types don't support VP8
+            _ => {
+                return Err(EncoderError::NotAvailable(format!(
+                    "VP8 encoding is not available with {}.",
+                    hw_type.display_name()
+                )));
+            }
+        }
+        
+        Ok(encoder)
+    }
+    
+    /// Create VP9 encoding pipeline (WebM container)
+    fn create_vp9_pipeline(
+        output_path: &PathBuf,
+        width: u32,
+        height: u32,
+        fps: u32,
+        config: &EncoderConfig,
+        hw_type: HardwareEncoderType,
+    ) -> Result<gst::Pipeline> {
+        let (pipeline, appsrc, queue, videoconvert) = Self::create_common_pipeline_start(width, height, fps)?;
+        
+        // Create VP9 encoder
+        let encoder = Self::create_vp9_encoder(hw_type, config)?;
+        
+        // WebM muxer for VP9
+        let muxer = gst::ElementFactory::make("webmmux")
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create webmmux: {}", e)))?;
+        
+        // File sink with sync disabled for better performance
+        let filesink = gst::ElementFactory::make("filesink")
+            .property("location", output_path.to_string_lossy().to_string())
+            .property("async", false)
+            .property("sync", false)
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
+        
+        // Add elements to pipeline (no parser needed for VP9)
+        pipeline.add_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, &muxer, &filesink])
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
+        
+        // Link elements
+        gst::Element::link_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, &muxer, &filesink])
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
+        
+        Ok(pipeline)
+    }
+    
+    /// Create the VP9 encoder element based on hardware type
+    /// 
+    /// VP9 is royalty-free, so we can use both hardware and software encoders.
+    /// Hardware encoders (QuickSync, VA-API) are preferred, with libvpx as fallback.
+    fn create_vp9_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
+        let encoder_name = hw_type.vp9_encoder_element()
+            .ok_or_else(|| EncoderError::NotAvailable(format!(
+                "{} does not support VP9 encoding", hw_type.display_name()
+            )))?;
+        
+        let encoder = gst::ElementFactory::make(encoder_name)
+            .build()
+            .map_err(|e| EncoderError::NotAvailable(format!("Failed to create {}: {}", encoder_name, e)))?;
+        
+        // Set encoder properties based on type
+        match hw_type {
+            HardwareEncoderType::Qsv => {
+                // Intel QuickSync VP9 settings
+                if config.bitrate > 0 {
+                    encoder.set_property("bitrate", config.bitrate / 1000);
+                }
+            }
+            HardwareEncoderType::VaApi => {
+                // VA-API VP9 settings
+                if config.bitrate > 0 {
+                    encoder.set_property("bitrate", config.bitrate / 1000);
+                }
+            }
+            HardwareEncoderType::Software => {
+                // libvpx vp9enc settings - optimize for speed
+                // deadline: 0=best, 1=good, 2=realtime (fastest)
+                encoder.set_property_from_str("deadline", "1");
+                // cpu-used: 0-8 for VP9, higher = faster encoding
+                // Use 6 as a balance between speed and quality
+                encoder.set_property("cpu-used", 6i32);
+                // threads: use available CPU cores for parallel encoding
+                let num_cpus = std::thread::available_parallelism()
+                    .map(|p| p.get() as i32)
+                    .unwrap_or(4)
+                    .min(16);
+                encoder.set_property("threads", num_cpus);
+                // row-mt: enable row-based multi-threading for better parallelism
+                encoder.set_property("row-mt", true);
+                // target-bitrate in bits per second
+                if config.bitrate > 0 {
+                    encoder.set_property("target-bitrate", config.bitrate as i32);
+                } else {
+                    // Default to 10 Mbps for good quality (VP9 is more efficient than VP8)
+                    encoder.set_property("target-bitrate", 10_000_000i32);
+                }
+                // Keyframe interval
+                if config.keyframe_interval > 0 {
+                    encoder.set_property("keyframe-max-dist", config.keyframe_interval as i32);
+                }
+                // Use VBR for better quality
+                encoder.set_property_from_str("end-usage", "vbr");
+                // Set buffer sizes for VBR
+                encoder.set_property("buffer-size", 6000i32);
+                encoder.set_property("buffer-initial-size", 4000i32);
+                encoder.set_property("buffer-optimal-size", 5000i32);
+            }
+            // These encoder types don't support VP9
+            _ => {
+                return Err(EncoderError::NotAvailable(format!(
+                    "VP9 encoding is not available with {}.",
+                    hw_type.display_name()
+                )));
             }
         }
         

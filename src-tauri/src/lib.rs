@@ -125,10 +125,12 @@ pub fn run() {
             commands::rescan_sessions,
             commands::restart_midi_monitor,
             commands::read_session_file,
+            commands::check_video_codec,
             commands::get_video_info,
             commands::get_video_frame,
             commands::get_video_frames_batch,
             commands::get_video_frame_timestamps,
+            commands::get_encoder_availability,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sacho");

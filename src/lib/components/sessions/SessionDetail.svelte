@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SessionMetadata } from '$lib/api';
-  import { formatDuration, formatDate, readSessionFile } from '$lib/api';
+  import { formatDuration, formatDate, readSessionFile, checkVideoCodec } from '$lib/api';
   import { toggleSessionFavorite, updateNotes } from '$lib/stores/sessions';
   import { revealItemInDir } from '@tauri-apps/plugin-opener';
   import { convertFileSrc } from '@tauri-apps/api/core';
@@ -29,6 +29,8 @@
   let midiMuted = $state(true); // Muted by default
   let videoError = $state<string | null>(null);
   let useCustomPlayer = $state(false); // Switch to custom JPEG frame player on error
+  let videoUnsupportedCodec = $state<string | null>(null); // Detected unsupported codec
+  let isCheckingCodec = $state(false); // Loading state for codec check
   
   // Fallback time tracking when no video/audio is playing
   let playStartTime = 0;
@@ -72,6 +74,33 @@
     return filename.toLowerCase().endsWith('.mkv');
   }
   
+  // Check the video codec and determine if it's playable
+  async function checkCurrentVideoCodec() {
+    if (!currentVideoFile) {
+      videoUnsupportedCodec = null;
+      return;
+    }
+    
+    isCheckingCodec = true;
+    try {
+      const result = await checkVideoCodec(session.path, currentVideoFile.filename);
+      console.log('[Video] Codec check:', result);
+      
+      if (!result.is_playable) {
+        videoUnsupportedCodec = result.codec.toUpperCase();
+        videoError = null; // Don't show generic error, use specific unsupported message
+      } else {
+        videoUnsupportedCodec = null;
+      }
+    } catch (e) {
+      console.error('[Video] Failed to check codec:', e);
+      // If we can't probe, try to play anyway - native player will show error if needed
+      videoUnsupportedCodec = null;
+    } finally {
+      isCheckingCodec = false;
+    }
+  }
+  
   // Handle video error - switch to custom player for MKV files
   function handleVideoError(e: Event) {
     const video = e.target as HTMLVideoElement;
@@ -97,6 +126,15 @@
       useCustomPlayer = false;
     }
   }
+  
+  // Check codec when video file changes
+  $effect(() => {
+    if (currentVideoFile) {
+      checkCurrentVideoCodec();
+    } else {
+      videoUnsupportedCodec = null;
+    }
+  });
   
   // Helper to build file path with correct separator
   function buildFilePath(basePath: string, filename: string): string {
@@ -450,8 +488,20 @@
     <!-- Video Player -->
     {#if session.video_files.length > 0}
       <div class="video-container">
-        {#if useCustomPlayer && currentVideoFile}
-          <!-- Custom JPEG frame player for unsupported codecs -->
+        {#if isCheckingCodec}
+          <!-- Loading state while checking codec -->
+          <div class="video-loading-overlay">
+            <span class="loading-text">Checking video...</span>
+          </div>
+        {:else if videoUnsupportedCodec}
+          <!-- Unsupported codec - block playback -->
+          <div class="video-unsupported-overlay">
+            <span class="error-icon">⚠</span>
+            <span class="error-text">Unsupported video format</span>
+            <span class="error-hint">Use an external player for this video</span>
+          </div>
+        {:else if useCustomPlayer && currentVideoFile}
+          <!-- Custom JPEG frame player for MJPEG -->
           <VideoPlayer 
             sessionPath={session.path}
             filename={currentVideoFile.filename}
@@ -488,7 +538,7 @@
         {/if}
       </div>
       {#if currentVideoFile}
-        <p class="source-label">{currentVideoFile.device_name}{useCustomPlayer ? ' (frame player)' : ''}</p>
+        <p class="source-label">{currentVideoFile.device_name}{useCustomPlayer ? ' (frame player)' : ''}{videoUnsupportedCodec ? ' (unsupported)' : ''}</p>
       {/if}
     {:else}
       <div class="no-video">
@@ -764,6 +814,39 @@
     justify-content: center;
     gap: 0.5rem;
     color: #71717a;
+  }
+  
+  /* These overlays need their own dimensions since there's no video element behind them */
+  .video-unsupported-overlay,
+  .video-loading-overlay {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    color: #71717a;
+    min-height: 200px;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+  }
+  
+  .video-unsupported-overlay {
+    background: rgba(39, 39, 42, 0.95);
+  }
+  
+  .video-loading-overlay {
+    background: rgba(39, 39, 42, 0.8);
+  }
+  
+  .loading-text {
+    font-size: 0.875rem;
+    color: #a1a1aa;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  
+  @keyframes pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
   }
   
   .error-icon {

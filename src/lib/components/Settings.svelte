@@ -1,16 +1,40 @@
 <script lang="ts">
   import { settings, saveSettings, saveSettingsDebounced, saveStatus } from '$lib/stores/settings';
   import { open } from '@tauri-apps/plugin-dialog';
-  import type { Config } from '$lib/api';
+  import type { Config, EncoderAvailability } from '$lib/api';
+  import { getEncoderAvailability } from '$lib/api';
   
   // Local editable copy
   let localSettings = $state<Config | null>(null);
   let showRawVideoHelp = $state(false);
+  let encoderAvailability = $state<EncoderAvailability | null>(null);
   
   $effect(() => {
     if ($settings && !localSettings) {
       localSettings = { ...$settings };
     }
+  });
+  
+  // Load encoder availability on mount and set default if needed
+  $effect(() => {
+    getEncoderAvailability().then(availability => {
+      encoderAvailability = availability;
+      
+      // If the current encoding mode is not valid or not set, use the recommended default
+      if (localSettings && availability) {
+        const currentMode = localSettings.video_encoding_mode;
+        const isCurrentValid = (
+          (currentMode === 'av1_hardware' && availability.av1_available) ||
+          (currentMode === 'vp9' && availability.vp9_available) ||
+          (currentMode === 'vp8' && availability.vp8_available)
+        );
+        
+        if (!isCurrentValid) {
+          localSettings.video_encoding_mode = availability.recommended_default;
+          // Don't auto-save here - this is just setting the UI default
+        }
+      }
+    });
   });
   
   // Auto-save for immediate changes (checkboxes, selects)
@@ -115,8 +139,22 @@
             <span class="setting-description">Encoding to apply on raw video feeds</span>
           </div>
           <select bind:value={localSettings.video_encoding_mode} onchange={autoSave}>
-            <option value="av1_hardware">AV1 Hardware (uses less system resources)</option>
+            {#if encoderAvailability?.av1_available}
+              <option value="av1_hardware">AV1 ({encoderAvailability.av1_encoder_name}){encoderAvailability.av1_hardware ? '' : ' - slow'}</option>
+            {/if}
+            {#if encoderAvailability?.vp9_available}
+              <option value="vp9">VP9 ({encoderAvailability.vp9_encoder_name}){encoderAvailability.vp9_hardware ? '' : ' - slow'}</option>
+            {/if}
+            {#if encoderAvailability?.vp8_available}
+              <option value="vp8">VP8 ({encoderAvailability.vp8_encoder_name}){encoderAvailability.vp8_hardware ? '' : ' - slow'}</option>
+            {/if}
+            {#if !encoderAvailability?.av1_available && !encoderAvailability?.vp9_available && !encoderAvailability?.vp8_available}
+              <option value="" disabled>No encoders available</option>
+            {/if}
           </select>
+          {#if encoderAvailability && !encoderAvailability.av1_available && !encoderAvailability.vp9_available && !encoderAvailability.vp8_available}
+            <p class="encoder-warning">No encoders detected. Raw video recording is not available.</p>
+          {/if}
         </div>
       </section>
       
@@ -339,6 +377,26 @@
   .setting-row select:focus {
     outline: none;
     border-color: rgba(239, 68, 68, 0.4);
+  }
+  
+  .setting-row select option {
+    background: #27272a;
+    color: #e4e4e7;
+    padding: 0.5rem;
+  }
+  
+  .setting-row select option:hover {
+    background: #3f3f46;
+  }
+  
+  .encoder-warning {
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(234, 179, 8, 0.1);
+    border: 1px solid rgba(234, 179, 8, 0.3);
+    border-radius: 0.375rem;
+    color: #facc15;
+    font-size: 0.8125rem;
   }
   
   .path-input {
