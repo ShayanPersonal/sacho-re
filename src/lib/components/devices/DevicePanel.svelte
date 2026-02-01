@@ -746,7 +746,7 @@
   
   .help-btn:hover {
     background: rgba(255, 255, 255, 0.2);
-    color: #a1a1aa;
+    color: #8a8a8a;
   }
   
   .help-tooltip {
@@ -756,7 +756,7 @@
     transform: translateX(-50%);
     margin-top: 0.5rem;
     padding: 0.625rem 0.75rem;
-    background: #27272a;
+    background: #1a1a1a;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 0.5rem;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
@@ -764,7 +764,7 @@
     font-weight: 400;
     text-transform: none;
     letter-spacing: normal;
-    color: #a1a1aa;
+    color: #8a8a8a;
     white-space: normal;
     width: 220px;
     line-height: 1.4;
@@ -806,7 +806,7 @@
   .empty-message {
     padding: 1rem;
     text-align: center;
-    color: #52525b;
+    color: #5a5a5a;
     font-size: 0.875rem;
   }
 </style>

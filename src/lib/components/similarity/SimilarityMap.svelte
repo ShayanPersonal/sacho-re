@@ -43,7 +43,7 @@
     if (!ctx) return;
     
     // Clear
-    ctx.fillStyle = '#0a0a0f';
+    ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, width, height);
     
     // Draw grid
@@ -264,16 +264,18 @@
   }
   
   .map-header h2 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #fff;
+    font-family: 'Bebas Neue', Impact, 'Arial Narrow', sans-serif;
+    font-size: 1.375rem;
+    font-weight: 400;
+    color: #e8e6e3;
+    letter-spacing: 0.06em;
   }
   
   .map-stats {
     display: flex;
     gap: 0.5rem;
-    font-size: 0.875rem;
-    color: #71717a;
+    font-size: 0.8125rem;
+    color: #6b6b6b;
   }
   
   .map-actions {
@@ -283,43 +285,45 @@
   }
   
   .action-btn {
-    padding: 0.5rem 0.875rem;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.5rem;
-    color: #a1a1aa;
+    padding: 0.5rem 0.75rem;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.25rem;
+    color: #6b6b6b;
     font-family: inherit;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.2s ease;
   }
   
   .action-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.08);
-    color: #e4e4e7;
+    color: #a8a8a8;
+    border-color: rgba(255, 255, 255, 0.1);
   }
   
   .action-btn.primary {
-    background: rgba(239, 68, 68, 0.15);
-    border-color: rgba(239, 68, 68, 0.3);
-    color: #ef4444;
+    border-color: rgba(201, 169, 98, 0.3);
+    color: #c9a962;
   }
   
   .action-btn.primary:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.25);
+    background: rgba(201, 169, 98, 0.1);
+    border-color: rgba(201, 169, 98, 0.4);
   }
   
   .action-btn:disabled {
-    opacity: 0.5;
+    opacity: 0.4;
     cursor: not-allowed;
   }
   
   .map-container {
     flex: 1;
     position: relative;
-    background: #0a0a0f;
+    background: #0a0a0a;
     border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.75rem;
+    border-radius: 0.25rem;
     overflow: hidden;
   }
   
@@ -342,21 +346,21 @@
   
   .tooltip-content {
     padding: 0.5rem 0.75rem;
-    background: rgba(0, 0, 0, 0.9);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.5rem;
+    background: rgba(10, 10, 10, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.25rem;
     backdrop-filter: blur(10px);
   }
   
   .tooltip-date {
     font-size: 0.8125rem;
-    color: #fff;
+    color: #e8e6e3;
     white-space: nowrap;
   }
   
   .tooltip-cluster {
     font-size: 0.75rem;
-    color: #71717a;
+    color: #6b6b6b;
     margin-top: 0.25rem;
   }
   
@@ -365,9 +369,9 @@
     flex-wrap: wrap;
     gap: 1rem;
     padding: 0.75rem;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 0.5rem;
+    background: rgba(255, 255, 255, 0.015);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 0.25rem;
   }
   
   .cluster-item {
@@ -384,11 +388,11 @@
   }
   
   .cluster-name {
-    color: #a1a1aa;
+    color: #8a8a8a;
   }
   
   .cluster-count {
-    color: #52525b;
+    color: #5a5a5a;
     font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
     font-size: 0.75rem;
   }

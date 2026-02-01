@@ -42,19 +42,20 @@ export const hoveredPoint = derived(
 
 // Get cluster color
 export function getClusterColor(clusterId: number | null): string {
-  if (clusterId === null) return '#6b7280'; // Gray for unclustered
+  if (clusterId === null) return '#5a5a5a'; // Gray for unclustered
   
+  // Muted, warm color palette
   const colors = [
-    '#ef4444', // red
-    '#f97316', // orange
-    '#eab308', // yellow
-    '#22c55e', // green
-    '#14b8a6', // teal
-    '#3b82f6', // blue
-    '#8b5cf6', // violet
-    '#ec4899', // pink
-    '#06b6d4', // cyan
-    '#84cc16', // lime
+    '#c9a962', // gold
+    '#a67c52', // bronze
+    '#8b7355', // tan
+    '#7a8b6e', // sage
+    '#6b8a8a', // muted teal
+    '#8a7a6b', // warm gray
+    '#9a7b6a', // terracotta
+    '#7a6b5a', // umber
+    '#6a7a6a', // olive
+    '#8a6a7a', // mauve
   ];
   
   return colors[clusterId % colors.length];

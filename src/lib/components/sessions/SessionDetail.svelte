@@ -741,7 +741,7 @@
     border-radius: 0.25rem;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #52525b;
+    color: #5a5a5a;
     font-size: 1.25rem;
     line-height: 1;
     cursor: pointer;
@@ -767,7 +767,7 @@
   
   .session-duration {
     font-size: 0.875rem;
-    color: #71717a;
+    color: #6b6b6b;
   }
   
   /* Player Section */
@@ -814,7 +814,7 @@
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    color: #71717a;
+    color: #6b6b6b;
   }
   
   /* These overlays need their own dimensions since there's no video element behind them */
@@ -884,7 +884,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #52525b;
+    color: #5a5a5a;
     font-size: 0.875rem;
   }
   
@@ -923,7 +923,7 @@
   .time-display {
     font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
     font-size: 0.75rem;
-    color: #71717a;
+    color: #6b6b6b;
     min-width: 40px;
     text-align: center;
   }
@@ -986,7 +986,7 @@
   }
   
   .notes-input::placeholder {
-    color: #52525b;
+    color: #5a5a5a;
   }
   
   .notes-input:focus {
@@ -1009,7 +1009,7 @@
     border-radius: 0.25rem;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #a1a1aa;
+    color: #8a8a8a;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -1038,7 +1038,7 @@
     font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
-    color: #22c55e;
+    color: #7a9a6e;
     min-width: 40px;
   }
   
@@ -1049,7 +1049,7 @@
   .track-info {
     flex: 1;
     font-size: 0.8125rem;
-    color: #71717a;
+    color: #6b6b6b;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1060,7 +1060,7 @@
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 0.25rem;
-    color: #a1a1aa;
+    color: #8a8a8a;
     font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
     font-size: 0.6875rem;
     cursor: pointer;
@@ -1085,7 +1085,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #71717a;
+    color: #6b6b6b;
     margin-bottom: 0.5rem;
   }
   
@@ -1097,8 +1097,8 @@
   
   .tag {
     padding: 0.25rem 0.625rem;
-    background: rgba(139, 92, 246, 0.15);
-    border: 1px solid rgba(139, 92, 246, 0.3);
+    background: rgba(201, 169, 98, 0.12);
+    border: 1px solid rgba(201, 169, 98, 0.25);
     border-radius: 1rem;
     font-size: 0.75rem;
     color: #a78bfa;
@@ -1109,7 +1109,7 @@
     background: rgba(0, 0, 0, 0.2);
     border-radius: 0.25rem;
     font-size: 0.875rem;
-    color: #a1a1aa;
+    color: #8a8a8a;
     line-height: 1.5;
   }
   
@@ -1130,7 +1130,7 @@
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 0.25rem;
-    color: #a1a1aa;
+    color: #8a8a8a;
     font-family: inherit;
     font-size: 0.8125rem;
     cursor: pointer;
@@ -1152,7 +1152,7 @@
     right: 0;
     margin-bottom: 0.25rem;
     min-width: 160px;
-    background: #1c1c1e;
+    background: #1a1a1a;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 0.25rem;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
