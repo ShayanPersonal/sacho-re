@@ -110,6 +110,8 @@ pub enum HardwareEncoderType {
     Qsv,
     /// VA-API (Linux)
     VaApi,
+    /// Windows Media Foundation
+    MediaFoundation,
     /// Software fallback
     Software,
 }
@@ -134,6 +136,8 @@ impl HardwareEncoderType {
             }
             // Software AV1 encoding via libaom (slower but works everywhere)
             HardwareEncoderType::Software => Some("av1enc"),
+            // Media Foundation does not support AV1 encoding
+            HardwareEncoderType::MediaFoundation => None,
         }
     }
     
@@ -157,6 +161,7 @@ impl HardwareEncoderType {
             // These don't support VP8 encoding
             HardwareEncoderType::Nvenc => None,
             HardwareEncoderType::Amf => None,
+            HardwareEncoderType::MediaFoundation => None,
         }
     }
     
@@ -175,6 +180,8 @@ impl HardwareEncoderType {
                     None
                 }
             }
+            // Windows Media Foundation VP9 encoder
+            HardwareEncoderType::MediaFoundation => Some("mfvp9enc"),
             // Software fallback - vp9enc from libvpx is royalty-free
             HardwareEncoderType::Software => Some("vp9enc"),
             // These don't support VP9 encoding
@@ -190,6 +197,7 @@ impl HardwareEncoderType {
             HardwareEncoderType::Amf => "AMD AMF",
             HardwareEncoderType::Qsv => "Intel QuickSync",
             HardwareEncoderType::VaApi => "VA-API",
+            HardwareEncoderType::MediaFoundation => "Media Foundation",
             HardwareEncoderType::Software => "Software",
         }
     }
@@ -286,6 +294,7 @@ pub fn has_vp8_encoder() -> bool {
 /// Hardware encoders checked:
 /// - Intel QuickSync (qsvvp9enc) - Windows/Linux
 /// - VA-API (vavp9enc, vaapivp9enc) - Linux (Intel, AMD, some NVIDIA)
+/// - Windows Media Foundation (mfvp9enc) - Windows
 /// 
 /// Note: NVIDIA NVENC and AMD AMF do not support VP9 encoding.
 /// Note: Vulkan Video encoding in GStreamer does not yet support VP9.
@@ -301,6 +310,10 @@ pub fn detect_best_vp9_encoder() -> HardwareEncoderType {
     // Check VA-API - older 'gstreamer-vaapi' plugin (Linux, deprecated but still common)
     if gst::ElementFactory::find("vaapivp9enc").is_some() {
         return HardwareEncoderType::VaApi;
+    }
+    // Check Windows Media Foundation (Windows only)
+    if gst::ElementFactory::find("mfvp9enc").is_some() {
+        return HardwareEncoderType::MediaFoundation;
     }
     // Fall back to software (vp9enc from libvpx) - royalty-free
     if gst::ElementFactory::find("vp9enc").is_some() {
@@ -1018,6 +1031,12 @@ impl AsyncVideoEncoder {
                 // Use VBR (variable bitrate) for better quality
                 encoder.set_property_from_str("end-usage", "vbr");
             }
+            // Media Foundation does not support AV1 encoding
+            HardwareEncoderType::MediaFoundation => {
+                return Err(EncoderError::NotAvailable(
+                    "Media Foundation does not support AV1 encoding".into()
+                ));
+            }
         }
         
         Ok(encoder)
@@ -1197,6 +1216,19 @@ impl AsyncVideoEncoder {
                 if config.bitrate > 0 {
                     encoder.set_property("bitrate", config.bitrate / 1000);
                 }
+            }
+            HardwareEncoderType::MediaFoundation => {
+                // Windows Media Foundation VP9 settings
+                // Bitrate in kbps
+                if config.bitrate > 0 {
+                    encoder.set_property("bitrate", config.bitrate / 1000);
+                }
+                // GOP size (keyframe interval)
+                if config.keyframe_interval > 0 {
+                    encoder.set_property("gop-size", config.keyframe_interval);
+                }
+                // Low latency mode for real-time encoding
+                encoder.set_property("low-latency", true);
             }
             HardwareEncoderType::Software => {
                 // libvpx vp9enc settings - optimize for speed

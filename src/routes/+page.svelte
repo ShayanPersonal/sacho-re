@@ -5,9 +5,10 @@
   import SimilarityMap from '$lib/components/similarity/SimilarityMap.svelte';
   import DevicePanel from '$lib/components/devices/DevicePanel.svelte';
   import Settings from '$lib/components/Settings.svelte';
+  import About from '$lib/components/About.svelte';
   import { refreshRecordingState } from '$lib/stores/recording';
   
-  type Tab = 'sessions' | 'similarity' | 'devices' | 'settings';
+  type Tab = 'sessions' | 'similarity' | 'devices' | 'settings' | 'about';
   let activeTab: Tab = $state('sessions');
   
   onMount(() => {
@@ -67,6 +68,17 @@
       </svg>
       Settings
     </button>
+    <button 
+      class="tab" 
+      class:active={activeTab === 'about'}
+      onclick={() => activeTab = 'about'}
+    >
+      <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M12 16v-4M12 8h.01"/>
+      </svg>
+      About
+    </button>
     <div class="spacer"></div>
     <RecordingIndicator />
   </nav>
@@ -80,6 +92,8 @@
       <DevicePanel />
     {:else if activeTab === 'settings'}
       <Settings />
+    {:else if activeTab === 'about'}
+      <About />
     {/if}
   </main>
 </div>

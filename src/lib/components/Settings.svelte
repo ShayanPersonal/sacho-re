@@ -154,6 +154,18 @@
           </select>
           {#if encoderAvailability && !encoderAvailability.av1_available && !encoderAvailability.vp9_available && !encoderAvailability.vp8_available}
             <p class="encoder-warning">No encoders detected. Raw video recording is not available.</p>
+          {:else if encoderAvailability}
+            <p class="encoder-info">
+              {#if encoderAvailability.av1_hardware || encoderAvailability.vp9_hardware || encoderAvailability.vp8_hardware}
+                Your device supports hardware acceleration for {[
+                  encoderAvailability.av1_hardware ? 'AV1' : null,
+                  encoderAvailability.vp9_hardware ? 'VP9' : null,
+                  encoderAvailability.vp8_hardware ? 'VP8' : null
+                ].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' and $1')}. We recommend using <strong>{encoderAvailability.av1_hardware ? 'AV1' : encoderAvailability.vp9_hardware ? 'VP9' : 'VP8'}</strong> for the best experience.
+              {:else}
+                Your device does not support hardware acceleration for any available codec. We recommend using <strong>VP8</strong> for the best experience.
+              {/if}
+            </p>
           {/if}
         </div>
       </section>
@@ -401,6 +413,21 @@
     border-radius: 0.25rem;
     color: #c9a962;
     font-size: 0.75rem;
+  }
+  
+  .encoder-info {
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.25rem;
+    color: #6b6b6b;
+    font-size: 0.75rem;
+    line-height: 1.5;
+  }
+  
+  .encoder-info strong {
+    color: #a8a8a8;
   }
   
   .path-input {

@@ -113,7 +113,7 @@
         videoError = null;
       } else {
         // For other formats, show error
-        videoError = 'Video format not supported';
+        videoError = 'Unsupported video format';
       }
     }
   }
@@ -527,7 +527,7 @@
             <div class="video-error-overlay">
               <span class="error-icon">⚠</span>
               <span class="error-text">{videoError}</span>
-              <span class="error-hint">Use external player</span>
+              <span class="error-hint">Use an external player for this video</span>
             </div>
           {/if}
         {/if}
@@ -772,7 +772,7 @@
   
   /* Player Section */
   .player-section {
-    background: #0a0a0a;
+    background:rgb(15, 15, 15);
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 0.25rem;
     padding: 1rem;
@@ -786,7 +786,7 @@
     margin: 0 auto 0.5rem;
     border-radius: 0.25rem;
     overflow: hidden;
-    background: #0a0a0a;
+    background: #0c0c0b;
     border: 2px solid rgba(255, 255, 255, 0.08);
   }
   
@@ -832,11 +832,11 @@
   }
   
   .video-unsupported-overlay {
-    background: #0a0a0a;
+    background: #0c0c0b;
   }
   
   .video-loading-overlay {
-    background: #0a0a0a;
+    background: #0c0c0b;
   }
   
   .loading-text {
@@ -1043,7 +1043,7 @@
   }
   
   .track-label.midi {
-    color: #a78bfa;
+    color: #c9a962;
   }
   
   .track-info {
@@ -1071,6 +1071,24 @@
   .switch-btn:hover {
     background: rgba(255, 255, 255, 0.1);
     color: #e4e4e7;
+  }
+  
+  .switch-btn.video-switch {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #e8e6e3;
+    font-size: 0.75rem;
+    padding: 0.25rem 0.625rem;
+    backdrop-filter: blur(4px);
+    z-index: 5;
+  }
+  
+  .switch-btn.video-switch:hover {
+    background: rgba(0, 0, 0, 0.85);
+    color: #fff;
   }
   
   /* Content */
@@ -1101,7 +1119,7 @@
     border: 1px solid rgba(201, 169, 98, 0.25);
     border-radius: 1rem;
     font-size: 0.75rem;
-    color: #a78bfa;
+    color: #c9a962;
   }
   
   .notes {
