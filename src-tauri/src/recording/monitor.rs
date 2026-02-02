@@ -43,6 +43,9 @@ pub struct CaptureState {
     pub audio_prerolls: Vec<AudioPrerollBuffer>,
     /// Pre-roll duration in seconds
     pub pre_roll_secs: u32,
+    /// MIDI timestamp offset in microseconds (equals sync_preroll_duration)
+    /// This is added to real-time MIDI timestamps to align with pre-roll content
+    pub midi_timestamp_offset_us: u64,
 }
 
 impl CaptureState {
@@ -57,6 +60,7 @@ impl CaptureState {
             midi_preroll: MidiPrerollBuffer::new(pre_roll_secs),
             audio_prerolls: Vec::new(),
             pre_roll_secs,
+            midi_timestamp_offset_us: 0,
         }
     }
     
@@ -78,6 +82,7 @@ impl Default for CaptureState {
             midi_preroll: MidiPrerollBuffer::new(2),
             audio_prerolls: Vec::new(),
             pre_roll_secs: 2,
+            midi_timestamp_offset_us: 0,
         }
     }
 }
@@ -209,9 +214,10 @@ impl MidiMonitor {
                                     state.midi_preroll.push(port_name_clone.clone(), event, timestamp_us);
                                 } else {
                                     // Recording is active, store with proper timestamp
+                                    // Add midi_timestamp_offset_us to align with pre-roll content
                                     let rel_time = state.start_time
-                                        .map(|st| st.elapsed().as_micros() as u64)
-                                        .unwrap_or(0);
+                                        .map(|st| st.elapsed().as_micros() as u64 + state.midi_timestamp_offset_us)
+                                        .unwrap_or(state.midi_timestamp_offset_us);
                                     state.midi_events.push((
                                         port_name_clone.clone(),
                                         TimestampedMidiEvent {
@@ -293,9 +299,10 @@ impl MidiMonitor {
                                 );
                             } else {
                                 // Recording is active, store with proper timestamp
+                                // Add midi_timestamp_offset_us to align with pre-roll content
                                 let rel_time = state.start_time
-                                    .map(|st| st.elapsed().as_micros() as u64)
-                                    .unwrap_or(0);
+                                    .map(|st| st.elapsed().as_micros() as u64 + state.midi_timestamp_offset_us)
+                                    .unwrap_or(state.midi_timestamp_offset_us);
                                 state.midi_events.push((
                                     port_name_clone.clone(),
                                     TimestampedMidiEvent {
@@ -780,6 +787,12 @@ fn start_recording(
         state.session_path = Some(session_path.clone());
         state.start_time = Some(trigger_instant);
         
+        // Set MIDI timestamp offset to sync_preroll_duration
+        // Real-time MIDI events need this offset added to align with pre-roll content
+        state.midi_timestamp_offset_us = sync_preroll_duration
+            .map(|d| d.as_micros() as u64)
+            .unwrap_or(0);
+        
         // Switch from "starting" to "recording" - now new events go directly to midi_events
         state.is_starting = false;
         state.is_recording = true;
@@ -856,6 +869,7 @@ fn stop_recording(
         state.is_recording = false;
         state.is_starting = false;
         state.start_time = None;
+        state.midi_timestamp_offset_us = 0;
         
         (path, events, audio, duration)
     };
