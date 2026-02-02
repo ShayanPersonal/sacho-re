@@ -24,7 +24,7 @@
       </div>
       
       <p class="about-description">
-        An automatic recording and organization tool for musicians and spontaneous creatives. Free yourself from the DAW.
+        An automatic recording and organization tool for musicians and other spontaneous creatives. Free yourself from the DAW.
       </p>
       
       <div class="about-features">

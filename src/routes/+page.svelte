@@ -25,7 +25,7 @@
       class:active={activeTab === 'sessions'}
       onclick={() => activeTab = 'sessions'}
     >
-      <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <svg class="tab-icon icon-recordings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <circle cx="12" cy="12" r="10"/>
         <circle cx="12" cy="12" r="3"/>
       </svg>
@@ -37,7 +37,7 @@
       class:active={activeTab === 'similarity'}
       onclick={() => activeTab = 'similarity'}
     >
-      <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <svg class="tab-icon icon-visualize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M3 3v18h18"/>
         <path d="M7 16l4-4 4 4 6-6"/>
       </svg>
@@ -48,7 +48,7 @@
       class:active={activeTab === 'devices'}
       onclick={() => activeTab = 'devices'}
     >
-      <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <svg class="tab-icon icon-devices" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <rect x="4" y="4" width="16" height="16" rx="2"/>
         <circle cx="9" cy="9" r="1.5" fill="currentColor"/>
         <circle cx="15" cy="9" r="1.5" fill="currentColor"/>
@@ -62,7 +62,7 @@
       class:active={activeTab === 'settings'}
       onclick={() => activeTab = 'settings'}
     >
-      <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <svg class="tab-icon icon-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <circle cx="12" cy="12" r="3"/>
         <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
       </svg>
@@ -73,7 +73,7 @@
       class:active={activeTab === 'about'}
       onclick={() => activeTab = 'about'}
     >
-      <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <svg class="tab-icon icon-about" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <circle cx="12" cy="12" r="10"/>
         <path d="M12 16v-4M12 8h.01"/>
       </svg>
@@ -135,9 +135,9 @@
     display: flex;
     align-items: center;
     gap: 0.125rem;
-    padding: 0.625rem 1.5rem;
-    background: rgba(0, 0, 0, 0.4);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 0.625rem 1rem 0.625rem 0.5rem;
+    background: linear-gradient(180deg,rgb(12, 12, 9) 0%, #1e1e1c 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
   }
   
   .spacer {
@@ -152,28 +152,61 @@
     background: transparent;
     border: none;
     border-radius: 0.25rem;
-    color: #6b6b6b;
+    color: #8a8a8a;
     font-family: inherit;
-    font-size: 0.8125rem;
-    font-weight: 400;
+    font-size: 0.875rem;
+    font-weight: 500;
     letter-spacing: 0.03em;
     text-transform: uppercase;
     cursor: pointer;
     transition: all 0.2s ease;
+    position: relative;
+  }
+  
+  .tab:not(:last-of-type)::after {
+    content: '';
+    position: absolute;
+    right: -0.0625rem;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 1rem;
+    width: 1px;
+    background: rgba(255, 255, 255, 0.12);
   }
   
   .tab:hover {
-    color: #a8a8a8;
+    color: #b8b8b8;
   }
   
   .tab.active {
-    color: #c9a962;
+    color: rgb(219, 187, 116);
+    text-shadow: 0 0 8px rgba(219, 187, 116, 0.5), 0 0 16px rgba(219, 187, 116, 0.25);
   }
   
   .tab-icon {
     width: 16px;
     height: 16px;
     stroke-width: 1.5;
+  }
+  
+  .icon-recordings {
+    stroke: #c75050;
+  }
+  
+  .icon-visualize {
+    stroke: #6bc750;
+  }
+  
+  .icon-devices {
+    stroke: #50a0c7;
+  }
+  
+  .icon-settings {
+    stroke: #9a8a8a;
+  }
+  
+  .icon-about {
+    stroke: #8a8ac7;
   }
   
   .content {
