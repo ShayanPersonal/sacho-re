@@ -46,6 +46,11 @@
   // Debounced auto-save for text/number inputs
   function autoSaveDebounced() {
     if (!localSettings) return;
+    
+    // Clamp numeric values to valid ranges
+    localSettings.idle_timeout_secs = Math.max(5, Math.min(30, localSettings.idle_timeout_secs));
+    localSettings.pre_roll_secs = Math.max(0, Math.min(30, localSettings.pre_roll_secs));
+    
     saveSettingsDebounced(localSettings);
   }
   
@@ -94,30 +99,36 @@
         <h3>Recording</h3>
         <div class="setting-row">
           <label>
-            <span class="setting-label">Idle Timeout (seconds)</span>
-            <span class="setting-description">Stop recording after this many seconds of no MIDI activity</span>
+            <span class="setting-label">Idle Timeout</span>
+            <span class="setting-description">Stop recording after no MIDI activity is detected for this length of time</span>
           </label>
-          <input 
-            type="number" 
-            min="5" 
-            max="300"
-            bind:value={localSettings.idle_timeout_secs}
-            oninput={autoSaveDebounced}
-          />
+          <div class="input-with-suffix">
+            <input 
+              type="number" 
+              min="5" 
+              max="30"
+              bind:value={localSettings.idle_timeout_secs}
+              oninput={autoSaveDebounced}
+            />
+            <span class="input-suffix">seconds</span>
+          </div>
         </div>
         
         <div class="setting-row">
           <label>
-            <span class="setting-label">Pre-roll Size (seconds)</span>
-            <span class="setting-description">Include this many seconds before the trigger in recordings</span>
+            <span class="setting-label">Pre-roll Length</span>
+            <span class="setting-description">How much of the past to retrospectively include at the start of a recording</span>
           </label>
-          <input 
-            type="number" 
-            min="0" 
-            max="5"
-            bind:value={localSettings.pre_roll_secs}
-            oninput={autoSaveDebounced}
-          />
+          <div class="input-with-suffix">
+            <input 
+              type="number" 
+              min="0" 
+              max="30"
+              bind:value={localSettings.pre_roll_secs}
+              oninput={autoSaveDebounced}
+            />
+            <span class="input-suffix">seconds</span>
+          </div>
         </div>
         <div class="setting-row">
           <div class="setting-label-group">
@@ -213,7 +224,7 @@
             <span class="setting-label">Start at system startup <i>(important)</i></span>
           </label>
            <p class="setting-recommendation">This ensures the application will start up again if your device restarts.</p>
-          <p class="setting-recommendation">To stop the application, right-click the tray icon and select Quit. Note that performances will not be recorded until you start the application again.</p>
+          <p class="setting-recommendation">To stop the application, right-click the tray icon and select Quit. Note that your performances will not be recorded until the application is started back up again.</p>
         </div>
       </section>
       
@@ -395,7 +406,22 @@
   }
   
   .setting-row input[type="number"] {
-    max-width: 100px;
+    max-width: 60px;
+  }
+  
+  .input-with-suffix {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  .input-with-suffix input {
+    flex-shrink: 0;
+  }
+  
+  .input-suffix {
+    font-size: 0.8125rem;
+    color: #6b6b6b;
   }
   
   .setting-row input:focus,

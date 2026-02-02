@@ -62,7 +62,7 @@
       </div>
       
       <div class="about-credits">
-        <p class="tech-stack">Built around open video formats.</p>
+        <p class="tech-stack">Built around free and open video formats.</p>
       </div>
       
       <div class="disclaimer">
