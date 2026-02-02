@@ -136,7 +136,7 @@
                 </div>
               {/if}
             </span>
-            <span class="setting-description">Encoding to apply on raw video feeds</span>
+            <span class="setting-description">Encoding to apply to raw video feeds</span>
           </div>
           <select bind:value={localSettings.video_encoding_mode} onchange={autoSave}>
             {#if encoderAvailability?.av1_available}
@@ -185,6 +185,7 @@
             />
             <button class="browse-btn" onclick={browseStoragePath}>Browse</button>
           </div>
+          <p class="setting-recommendation">We recommend backing up this folder with a cloud storage service.</p>
         </div>
         <div class="setting-row">
           <label>
@@ -193,7 +194,7 @@
           </label>
           <select bind:value={localSettings.audio_format} onchange={autoSave}>
             <option value="wav">WAV (lossless, larger files)</option>
-            <option value="flac">FLAC (lossless, compressed)</option>
+            <option value="flac">FLAC (lossless, smaller files)</option>
           </select>
         </div>
         
@@ -370,6 +371,13 @@
   .setting-description {
     font-size: 0.75rem;
     color: #4a4a4a;
+  }
+
+  .setting-recommendation {
+    font-size: 0.75rem;
+    color: #6a6a6a;
+    font-style: italic;
+    margin: 0.5rem 0 0 0;
   }
   
   .setting-row input[type="number"],

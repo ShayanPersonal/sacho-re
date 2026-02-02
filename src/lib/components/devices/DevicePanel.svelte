@@ -236,7 +236,7 @@
                     <span class="meta-tag">{device.channels}ch</span>
                     <span class="meta-tag">{device.sample_rate / 1000}kHz</span>
                     {#if device.is_default}
-                      <span class="meta-tag default">Default</span>
+                      <span class="meta-tag default">System Default</span>
                     {/if}
                   </div>
                 </div>
