@@ -24,9 +24,7 @@
       </div>
       
       <p class="about-description">
-        An automatic recording and organization tool for musicians and other spontaneous creatives.
-
-        Free yourself from the DAW.
+        An automatic recording and organization tool for musicians and spontaneous creatives. Free yourself from the DAW.
       </p>
       
       <div class="about-features">
@@ -59,12 +57,20 @@
             </svg>
           </span>
           <span class="feature-label">Video Recording</span>
-          <span class="feature-desc">See your technique and posture</span>
+          <span class="feature-desc">Capture the moment as it happened</span>
         </div>
       </div>
       
       <div class="about-credits">
         <p class="tech-stack">Built around open video formats.</p>
+      </div>
+      
+      <div class="disclaimer">
+        <p>
+          This software is provided "as-is" without warranty of any kind, express or implied. 
+          In no event shall the author be liable for any claim, damages, or other liability 
+          arising from the use of this software. Use at your own risk.
+        </p>
       </div>
     </div>
   </div>
@@ -227,5 +233,20 @@
     font-size: 0.75rem;
     font-style: italic;
     color: #4a4a4a;
+  }
+  
+  .disclaimer {
+    margin-top: 0.75rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    width: 100%;
+  }
+  
+  .disclaimer p {
+    font-size: 0.625rem;
+    color: #4a4a4a;
+    line-height: 1.6;
+    margin: 0;
+    text-align: center;
   }
 </style>

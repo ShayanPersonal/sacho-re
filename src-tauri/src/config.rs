@@ -35,8 +35,13 @@ pub struct Config {
     /// Whether to minimize to tray on close
     pub minimize_to_tray: bool,
     
-    /// Whether to show notifications
-    pub show_notifications: bool,
+    /// Whether to show notification when recording starts
+    #[serde(default = "default_true")]
+    pub notify_recording_start: bool,
+    
+    /// Whether to show notification when recording stops
+    #[serde(default = "default_true")]
+    pub notify_recording_stop: bool,
     
     /// Selected audio device IDs
     pub selected_audio_devices: Vec<String>,
@@ -110,7 +115,8 @@ impl Default for Config {
             video_encoding_mode: VideoEncodingMode::default(),
             auto_start: false,
             minimize_to_tray: true,
-            show_notifications: true,
+            notify_recording_start: true,
+            notify_recording_stop: true,
             selected_audio_devices: Vec::new(),
             selected_midi_devices: Vec::new(),
             trigger_midi_devices: Vec::new(),
@@ -182,4 +188,9 @@ fn get_config_path(app_handle: &AppHandle) -> PathBuf {
 /// Default pre-roll duration (for serde)
 fn default_pre_roll_secs() -> u32 {
     2
+}
+
+/// Default true value (for serde)
+fn default_true() -> bool {
+    true
 }

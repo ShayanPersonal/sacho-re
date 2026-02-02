@@ -43,16 +43,12 @@ pub fn run() {
             }
         }))
         .on_window_event(|window, event| {
-            // Handle window close to minimize to tray
+            // Handle window close - always minimize to tray
+            // App can only be quit via tray icon context menu
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let app = window.app_handle();
-                let config = app.state::<RwLock<config::Config>>();
-                
-                if config.read().minimize_to_tray {
-                    // Hide window instead of closing
-                    let _ = window.hide();
-                    api.prevent_close();
-                }
+                // Hide window instead of closing
+                let _ = window.hide();
+                api.prevent_close();
             }
         })
         .setup(|app| {

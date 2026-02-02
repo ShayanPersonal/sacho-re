@@ -820,7 +820,7 @@ fn start_recording(
     };
     
     // Send desktop notification
-    if config_read.show_notifications {
+    if config_read.notify_recording_start {
         notifications::notify_recording_started(app_handle, &active_devices);
     }
     
@@ -1023,7 +1023,7 @@ fn stop_recording(
     
     // Send desktop notification
     let config = app_handle.state::<RwLock<Config>>();
-    if config.read().show_notifications {
+    if config.read().notify_recording_stop {
         let folder_name = session_path.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("session");

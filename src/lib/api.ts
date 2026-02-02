@@ -134,8 +134,8 @@ export interface Config {
   audio_format: 'wav' | 'flac';
   video_encoding_mode: VideoEncodingMode;
   auto_start: boolean;
-  minimize_to_tray: boolean;
-  show_notifications: boolean;
+  notify_recording_start: boolean;
+  notify_recording_stop: boolean;
   selected_audio_devices: string[];
   selected_midi_devices: string[];
   trigger_midi_devices: string[];

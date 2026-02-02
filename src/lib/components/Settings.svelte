@@ -210,19 +210,10 @@
               bind:checked={localSettings.auto_start}
               onchange={autoSave}
             />
-            <span class="setting-label">Start with system</span>
+            <span class="setting-label">Start at system startup <i>(important)</i></span>
           </label>
-        </div>
-        
-        <div class="setting-row">
-          <label class="checkbox-row">
-            <input 
-              type="checkbox" 
-              bind:checked={localSettings.minimize_to_tray}
-              onchange={autoSave}
-            />
-            <span class="setting-label">Minimize to tray on close</span>
-          </label>
+           <p class="setting-recommendation">This ensures the application will start up again if your device restarts.</p>
+          <p class="setting-recommendation">To stop the application, right-click the tray icon and select Quit. Note that performances will not be recorded until you start the application again.</p>
         </div>
       </section>
       
@@ -232,10 +223,20 @@
           <label class="checkbox-row">
             <input 
               type="checkbox" 
-              bind:checked={localSettings.show_notifications}
+              bind:checked={localSettings.notify_recording_start}
               onchange={autoSave}
             />
-            <span class="setting-label">Show desktop notifications</span>
+            <span class="setting-label">Notify when recording starts</span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <label class="checkbox-row">
+            <input 
+              type="checkbox" 
+              bind:checked={localSettings.notify_recording_stop}
+              onchange={autoSave}
+            />
+            <span class="setting-label">Notify when recording stops</span>
           </label>
         </div>
       </section>
