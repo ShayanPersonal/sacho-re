@@ -136,7 +136,7 @@
     align-items: center;
     gap: 0.125rem;
     padding: 0.625rem 1rem 0.625rem 0.5rem;
-    background: linear-gradient(180deg,rgb(12, 12, 9) 0%, #1e1e1c 100%);
+    background: linear-gradient(0,rgb(12, 12, 9) 0%, #1e1e1c 100%);
     border-bottom: 1px solid rgba(255, 255, 255, 0.2);
   }
   
