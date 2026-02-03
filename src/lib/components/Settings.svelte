@@ -186,7 +186,7 @@
         <div class="setting-row">
           <label>
             <span class="setting-label">Recording Location</span>
-            <span class="setting-description">Where to save recorded sessions</span>
+            <span class="setting-description">Where to save and load recorded sessions</span>
           </label>
           <div class="path-input">
             <input 

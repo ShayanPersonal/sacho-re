@@ -24,40 +24,47 @@
       </div>
       
       <p class="about-description">
-        An unobtrusive recording and organizing tool for live musicians and other spontaneous creatives. Free yourself from the DAW.
+        An unobtrusive recording tool for spontaneous creatives. Free yourself from the DAW.
       </p>
       
       <div class="about-features">
         <div class="feature">
           <span class="feature-icon">
             <svg viewBox="0 0 24 24" fill="currentColor">
-              <rect x="3" y="10" width="3" height="8" rx="1"/>
-              <rect x="8" y="6" width="3" height="12" rx="1"/>
-              <rect x="13" y="8" width="3" height="10" rx="1"/>
-              <rect x="18" y="4" width="3" height="14" rx="1"/>
+              <circle cx="12" cy="12" r="3"/>
+              <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
             </svg>
           </span>
-          <span class="feature-label">MIDI Recording</span>
-          <span class="feature-desc">Capture every note and expression</span>
+          <span class="feature-label">Trigger Recording</span>
+          <span class="feature-desc">Automatic MIDI, audio, and video recording when a performance is detected.</span>
         </div>
         <div class="feature">
           <span class="feature-icon">
             <svg viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+              <circle cx="6" cy="8" r="2.5"/>
+              <circle cx="9" cy="5" r="2"/>
+              <circle cx="5" cy="12" r="1.5"/>
+              <circle cx="17" cy="16" r="2.5"/>
+              <circle cx="14" cy="18" r="2"/>
+              <circle cx="19" cy="12" r="1.5"/>
+              <circle cx="12" cy="12" r="1" opacity="0.5"/>
             </svg>
           </span>
-          <span class="feature-label">Audio Capture</span>
-          <span class="feature-desc">High-quality lossless recording</span>
+          <span class="feature-label">Similarity Map</span>
+          <span class="feature-desc">Visually groups together similar MIDI files. Quickly locate performances with similar themes, chord progressions, etc.</span>
         </div>
         <div class="feature">
           <span class="feature-icon">
             <svg viewBox="0 0 24 24" fill="currentColor">
-              <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+              <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M12 7v5l-3 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              <path d="M4.5 8A8 8 0 0 1 12 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+              <path d="M4 4v4h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
             </svg>
           </span>
-          <span class="feature-label">Video Recording</span>
-          <span class="feature-desc">Capture the moment as it happened</span>
+          <span class="feature-label">Pre-roll Capture</span>
+          <span class="feature-desc">Capture the moments leading up to the performance for a more natural recording.</span>
         </div>
       </div>
       
@@ -214,8 +221,6 @@
   
   .about-credits {
     margin-top: 0.75rem;
-    padding-top: 1.25rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
     width: 100%;
   }
   
@@ -296,10 +301,6 @@
 
   :global(body.light-mode) .feature-desc {
     color: #6a6a6a;
-  }
-
-  :global(body.light-mode) .about-credits {
-    border-top-color: rgba(0, 0, 0, 0.08);
   }
 
   :global(body.light-mode) .tech-stack {
