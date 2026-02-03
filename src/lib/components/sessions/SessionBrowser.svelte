@@ -588,4 +588,153 @@
     font-size: 0.8125rem;
     letter-spacing: 0.02em;
   }
+
+  /* Light mode overrides */
+  :global(body.light-mode) .sidebar {
+    background: rgba(255, 255, 255, 0.7);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .search-bar input {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(0, 0, 0, 0.12);
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .search-bar input::placeholder {
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode) .search-bar input:focus {
+    border-color: rgba(160, 128, 48, 0.5);
+  }
+
+  :global(body.light-mode) .search-btn {
+    border-color: rgba(0, 0, 0, 0.1);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .search-btn:hover {
+    color: #3a3a3a;
+    border-color: rgba(0, 0, 0, 0.2);
+  }
+
+  :global(body.light-mode) .filter-btn {
+    border-color: rgba(0, 0, 0, 0.08);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .filter-btn:hover {
+    color: #3a3a3a;
+    border-color: rgba(0, 0, 0, 0.15);
+  }
+
+  :global(body.light-mode) .filter-btn.active {
+    border-color: rgba(160, 128, 48, 0.4);
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode) .filter-badge {
+    background: #a08030;
+    color: #ffffff;
+  }
+
+  :global(body.light-mode) .filter-menu {
+    background: #ffffff;
+    border-color: rgba(0, 0, 0, 0.12);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  }
+
+  :global(body.light-mode) .filter-option {
+    color: #4a4a4a;
+  }
+
+  :global(body.light-mode) .filter-option:hover {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  :global(body.light-mode) .filter-option input[type="checkbox"] {
+    accent-color: #a08030;
+  }
+
+  :global(body.light-mode) .filter-divider {
+    background: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .loading,
+  :global(body.light-mode) .empty {
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode) .group-header {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .group-header:hover {
+    color: #3a3a3a;
+  }
+
+  :global(body.light-mode) .group-arrow {
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode) .group-count {
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode) .session-item:hover {
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  :global(body.light-mode) .session-item.selected {
+    background: rgba(160, 128, 48, 0.1);
+    border-color: rgba(160, 128, 48, 0.25);
+  }
+
+  :global(body.light-mode) .favorite {
+    color: #a08030;
+  }
+
+  :global(body.light-mode) .session-time {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .session-title {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .session-duration {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .meta-icon {
+    color: #6a6a6a;
+  }
+
+  :global(body.light-mode) .sidebar-actions {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .refresh-btn {
+    border-color: rgba(0, 0, 0, 0.1);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .refresh-btn:hover {
+    color: #3a3a3a;
+    border-color: rgba(0, 0, 0, 0.2);
+  }
+
+  :global(body.light-mode) .detail-panel {
+    background: rgba(255, 255, 255, 0.7);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .no-selection {
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode) .no-selection-icon {
+    opacity: 0.3;
+  }
 </style>

@@ -404,4 +404,460 @@
   :global(body.light-mode ::-webkit-scrollbar-thumb:hover) {
     background: rgba(0, 0, 0, 0.3);
   }
+
+  /* Help buttons and tooltips */
+  :global(body.light-mode .help-btn) {
+    background: rgba(0, 0, 0, 0.08);
+    color: #6a6a6a;
+  }
+
+  :global(body.light-mode .help-btn:hover) {
+    background: rgba(0, 0, 0, 0.12);
+    color: #4a4a4a;
+  }
+
+  :global(body.light-mode .help-tooltip) {
+    background: #ffffff;
+    border-color: rgba(0, 0, 0, 0.12);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    color: #4a4a4a;
+  }
+
+  :global(body.light-mode .help-tooltip strong) {
+    color: #a08030;
+  }
+
+  /* Browse and action buttons */
+  :global(body.light-mode .browse-btn),
+  :global(body.light-mode .action-btn),
+  :global(body.light-mode .refresh-btn),
+  :global(body.light-mode .search-btn),
+  :global(body.light-mode .filter-btn) {
+    border-color: rgba(0, 0, 0, 0.12);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode .browse-btn:hover),
+  :global(body.light-mode .action-btn:hover),
+  :global(body.light-mode .refresh-btn:hover),
+  :global(body.light-mode .search-btn:hover),
+  :global(body.light-mode .filter-btn:hover) {
+    color: #3a3a3a;
+    border-color: rgba(0, 0, 0, 0.2);
+  }
+
+  :global(body.light-mode .action-btn.primary),
+  :global(body.light-mode .filter-btn.active) {
+    border-color: rgba(160, 128, 48, 0.4);
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode .action-btn.primary:hover) {
+    background: rgba(160, 128, 48, 0.1);
+  }
+
+  /* Select dropdown options */
+  :global(body.light-mode select option) {
+    background: #ffffff;
+    color: #2a2a2a;
+  }
+
+  /* Section headers in device panel and settings */
+  :global(body.light-mode .settings-section h3),
+  :global(body.light-mode .section-header) {
+    color: #6a6a6a;
+  }
+
+  :global(body.light-mode .section-header:hover) {
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  :global(body.light-mode .settings-section h3) {
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+  }
+
+  /* Save status */
+  :global(body.light-mode .save-status.saving) {
+    background: rgba(0, 0, 0, 0.05);
+    color: #6a6a6a;
+  }
+
+  :global(body.light-mode .save-status.saved) {
+    background: rgba(160, 128, 48, 0.12);
+    color: #8a6a20;
+  }
+
+  /* Filter menu */
+  :global(body.light-mode .filter-menu) {
+    background: #ffffff;
+    border-color: rgba(0, 0, 0, 0.12);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  }
+
+  :global(body.light-mode .filter-option) {
+    color: #4a4a4a;
+  }
+
+  :global(body.light-mode .filter-option:hover) {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  :global(body.light-mode .filter-divider) {
+    background: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode .filter-badge) {
+    background: #a08030;
+    color: #ffffff;
+  }
+
+  /* Group headers in session list */
+  :global(body.light-mode .group-header) {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode .group-header:hover) {
+    color: #3a3a3a;
+  }
+
+  :global(body.light-mode .group-arrow),
+  :global(body.light-mode .group-count),
+  :global(body.light-mode .section-arrow),
+  :global(body.light-mode .section-count) {
+    color: #8a8a8a;
+  }
+
+  /* Meta tags and badges */
+  :global(body.light-mode .meta-tag) {
+    background: rgba(0, 0, 0, 0.06);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode .meta-tag.default) {
+    background: rgba(160, 128, 48, 0.15);
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode .meta-tag.unsupported) {
+    background: rgba(180, 60, 60, 0.1);
+    color: #a04040;
+  }
+
+  /* Codec tags */
+  :global(body.light-mode .codec-tag) {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.12);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode .codec-tag:hover) {
+    background: rgba(0, 0, 0, 0.08);
+    color: #3a3a3a;
+  }
+
+  :global(body.light-mode .codec-tag.codec-selected) {
+    background: rgba(160, 128, 48, 0.15);
+    border-color: rgba(160, 128, 48, 0.4);
+    color: #8a6a20;
+  }
+
+  /* Device rows and sections */
+  :global(body.light-mode .device-section) {
+    background: rgba(255, 255, 255, 0.7);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode .device-row) {
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  :global(body.light-mode .device-name) {
+    color: #3a3a3a;
+  }
+
+  /* Session items */
+  :global(body.light-mode .session-item.selected) {
+    background: rgba(160, 128, 48, 0.12);
+    border-color: rgba(160, 128, 48, 0.25);
+  }
+
+  :global(body.light-mode .favorite) {
+    color: #a08030;
+  }
+
+  /* Sidebar and panels */
+  :global(body.light-mode .sidebar) {
+    background: rgba(255, 255, 255, 0.7);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode .detail-panel) {
+    background: rgba(255, 255, 255, 0.7);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode .sidebar-actions) {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  /* No selection state */
+  :global(body.light-mode .no-selection) {
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode .no-selection-icon) {
+    opacity: 0.4;
+  }
+
+  /* More menu */
+  :global(body.light-mode .more-menu) {
+    background: #ffffff;
+    border-color: rgba(0, 0, 0, 0.12);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  }
+
+  :global(body.light-mode .more-menu-item) {
+    color: #3a3a3a;
+  }
+
+  :global(body.light-mode .more-menu-item:hover) {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  :global(body.light-mode .more-menu-item.danger) {
+    color: #c04040;
+  }
+
+  :global(body.light-mode .more-menu-item.danger:hover) {
+    background: rgba(180, 60, 60, 0.1);
+  }
+
+  /* Player section */
+  :global(body.light-mode .player-section) {
+    background: rgba(245, 245, 240, 1);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode .video-container) {
+    border-color: rgba(0, 0, 0, 0.12);
+  }
+
+  /* Control buttons */
+  :global(body.light-mode .control-btn) {
+    border-color: rgba(0, 0, 0, 0.12);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode .control-btn:hover:not(:disabled)) {
+    border-color: rgba(0, 0, 0, 0.2);
+    color: #3a3a3a;
+  }
+
+  /* Track controls */
+  :global(body.light-mode .track-control) {
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  :global(body.light-mode .mute-btn) {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.1);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode .mute-btn:hover) {
+    background: rgba(0, 0, 0, 0.08);
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode .track-label) {
+    color: #5a8a4a;
+  }
+
+  :global(body.light-mode .track-label.midi) {
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode .track-info) {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode .switch-btn) {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.12);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode .switch-btn:hover) {
+    background: rgba(0, 0, 0, 0.08);
+    color: #2a2a2a;
+  }
+
+  /* Notes input */
+  :global(body.light-mode .notes-section) {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode .notes-input) {
+    background: rgba(255, 255, 255, 0.8);
+    border-color: rgba(0, 0, 0, 0.12);
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode .notes-input::placeholder) {
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode .notes-input:focus) {
+    border-color: rgba(180, 60, 60, 0.4);
+  }
+
+  /* Tags */
+  :global(body.light-mode .tag) {
+    background: rgba(160, 128, 48, 0.12);
+    border-color: rgba(160, 128, 48, 0.3);
+    color: #8a6a20;
+  }
+
+  /* Detail headers and borders */
+  :global(body.light-mode .detail-header) {
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode .detail-actions) {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode .session-title) {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode .session-time) {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode .favorite-btn) {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.1);
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode .favorite-btn:hover),
+  :global(body.light-mode .favorite-btn.active) {
+    background: rgba(180, 140, 40, 0.15);
+    border-color: rgba(180, 140, 40, 0.3);
+    color: #a08030;
+  }
+
+  /* Time display */
+  :global(body.light-mode .time-display) {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode .elapsed) {
+    color: #2a2a2a;
+  }
+
+  /* Similarity map */
+  :global(body.light-mode .map-container) {
+    border-color: rgba(0, 0, 0, 0.1);
+  }
+
+  :global(body.light-mode .cluster-legend) {
+    background: rgba(255, 255, 255, 0.7);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode .cluster-name) {
+    color: #4a4a4a;
+  }
+
+  :global(body.light-mode .cluster-count) {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode .tooltip-content) {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(0, 0, 0, 0.12);
+  }
+
+  :global(body.light-mode .tooltip-date) {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode .tooltip-cluster) {
+    color: #5a5a5a;
+  }
+
+  /* Empty and loading states */
+  :global(body.light-mode .loading),
+  :global(body.light-mode .empty),
+  :global(body.light-mode .empty-message) {
+    color: #8a8a8a;
+  }
+
+  /* Source labels */
+  :global(body.light-mode .source-label) {
+    color: #7a7a7a;
+  }
+
+  /* Error states */
+  :global(body.light-mode .error-banner) {
+    background: rgba(200, 60, 60, 0.1);
+    border-color: rgba(200, 60, 60, 0.3);
+    color: #a04040;
+  }
+
+  /* About page specifics */
+  :global(body.light-mode .about-card) {
+    background: rgba(255, 255, 255, 0.85);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode .about-header h2) {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode .about-title h3) {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode .about-logo) {
+    color: #a08030;
+  }
+
+  :global(body.light-mode .about-features) {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode .feature) {
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  :global(body.light-mode .feature-icon) {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode .about-credits) {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode .disclaimer) {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  /* Meta icons */
+  :global(body.light-mode .meta-icon) {
+    color: #5a5a5a;
+  }
+
+  /* MIDI/Video header columns */
+  :global(body.light-mode .midi-header),
+  :global(body.light-mode .video-header) {
+    color: #7a7a7a;
+  }
+
+  /* Seek bar */
+  :global(body.light-mode .seek-bar) {
+    background: rgba(0, 0, 0, 0.12);
+  }
 </style>

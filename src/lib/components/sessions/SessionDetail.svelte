@@ -1205,4 +1205,232 @@
   .more-menu-item.danger:hover {
     background: rgba(239, 68, 68, 0.15);
   }
+
+  /* Light mode overrides */
+  :global(body.light-mode) .detail-header {
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .session-title {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .session-duration {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .favorite-btn {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.1);
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode) .favorite-btn:hover {
+    background: rgba(180, 140, 40, 0.12);
+    border-color: rgba(180, 140, 40, 0.25);
+    color: #a08030;
+  }
+
+  :global(body.light-mode) .favorite-btn.active {
+    background: rgba(180, 140, 40, 0.15);
+    border-color: rgba(180, 140, 40, 0.3);
+    color: #a08030;
+  }
+
+  :global(body.light-mode) .player-section {
+    background: rgba(245, 245, 240, 1);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .video-container {
+    background: #e8e8e8;
+    border-color: rgba(0, 0, 0, 0.12);
+  }
+
+  :global(body.light-mode) .video-container video {
+    background: #1a1a1a;
+  }
+
+  :global(body.light-mode) .video-error-overlay,
+  :global(body.light-mode) .video-unsupported-overlay,
+  :global(body.light-mode) .video-loading-overlay {
+    background: #e8e8e8;
+    color: #6a6a6a;
+  }
+
+  :global(body.light-mode) .error-icon {
+    opacity: 0.5;
+  }
+
+  :global(body.light-mode) .error-text {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .error-hint {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .loading-text {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .source-label {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .no-video {
+    background: rgba(0, 0, 0, 0.05);
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .play-btn {
+    background: rgba(200, 60, 60, 0.12);
+    border-color: rgba(200, 60, 60, 0.3);
+    color: #c04040;
+  }
+
+  :global(body.light-mode) .play-btn:hover {
+    background: rgba(200, 60, 60, 0.2);
+  }
+
+  :global(body.light-mode) .time-display {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .seek-bar {
+    background: rgba(0, 0, 0, 0.12);
+  }
+
+  :global(body.light-mode) .seek-bar::-webkit-slider-thumb {
+    background: #c04040;
+  }
+
+  :global(body.light-mode) .seek-bar::-moz-range-thumb {
+    background: #c04040;
+  }
+
+  :global(body.light-mode) .track-control {
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  :global(body.light-mode) .mute-btn {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.1);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .mute-btn:hover {
+    background: rgba(0, 0, 0, 0.08);
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .mute-btn.muted {
+    color: #c04040;
+    background: rgba(200, 60, 60, 0.1);
+    border-color: rgba(200, 60, 60, 0.2);
+  }
+
+  :global(body.light-mode) .track-label {
+    color: #5a8a4a;
+  }
+
+  :global(body.light-mode) .track-label.midi {
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode) .track-info {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .switch-btn {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.12);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .switch-btn:hover {
+    background: rgba(0, 0, 0, 0.08);
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .switch-btn.video-switch {
+    background: rgba(255, 255, 255, 0.85);
+    border-color: rgba(0, 0, 0, 0.2);
+    color: #3a3a3a;
+  }
+
+  :global(body.light-mode) .switch-btn.video-switch:hover {
+    background: rgba(255, 255, 255, 0.95);
+    color: #1a1a1a;
+  }
+
+  :global(body.light-mode) .notes-section {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .notes-input {
+    background: rgba(255, 255, 255, 0.8);
+    border-color: rgba(0, 0, 0, 0.12);
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .notes-input::placeholder {
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode) .notes-input:focus {
+    border-color: rgba(200, 60, 60, 0.4);
+  }
+
+  :global(body.light-mode) .detail-section h3 {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .tag {
+    background: rgba(160, 128, 48, 0.12);
+    border-color: rgba(160, 128, 48, 0.3);
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode) .notes {
+    background: rgba(0, 0, 0, 0.03);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .detail-actions {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .action-btn {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.1);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .action-btn:hover {
+    background: rgba(0, 0, 0, 0.08);
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .more-menu {
+    background: #ffffff;
+    border-color: rgba(0, 0, 0, 0.12);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  }
+
+  :global(body.light-mode) .more-menu-item {
+    color: #3a3a3a;
+  }
+
+  :global(body.light-mode) .more-menu-item:hover {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  :global(body.light-mode) .more-menu-item.danger {
+    color: #c04040;
+  }
+
+  :global(body.light-mode) .more-menu-item.danger:hover {
+    background: rgba(200, 60, 60, 0.1);
+  }
 </style>

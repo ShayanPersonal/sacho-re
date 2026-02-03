@@ -364,4 +364,38 @@
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
+
+  /* Light mode overrides */
+  :global(body.light-mode) .video-player {
+    background: #e8e8e8;
+  }
+
+  :global(body.light-mode) .loading-overlay,
+  :global(body.light-mode) .error-overlay,
+  :global(body.light-mode) .no-frame {
+    color: #6a6a6a;
+  }
+
+  :global(body.light-mode) .spinner {
+    border-color: rgba(0, 0, 0, 0.1);
+    border-top-color: #a08030;
+  }
+
+  :global(body.light-mode) .error-icon {
+    opacity: 0.5;
+  }
+
+  :global(body.light-mode) .info-badge {
+    background: rgba(255, 255, 255, 0.85);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .buffering-indicator {
+    background: rgba(255, 255, 255, 0.85);
+  }
+
+  :global(body.light-mode) .mini-spinner {
+    border-color: rgba(0, 0, 0, 0.15);
+    border-top-color: #a08030;
+  }
 </style>

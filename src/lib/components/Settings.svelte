@@ -588,4 +588,122 @@
   .help-tooltip strong {
     color: #c9a962;
   }
+
+  /* Light mode overrides */
+  :global(body.light-mode) .settings-header h2 {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .settings-section {
+    background: rgba(255, 255, 255, 0.7);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .settings-section h3 {
+    color: #7a7a7a;
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .setting-label {
+    color: #3a3a3a;
+  }
+
+  :global(body.light-mode) .setting-description {
+    color: #6a6a6a;
+  }
+
+  :global(body.light-mode) .setting-recommendation {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .setting-row input[type="number"],
+  :global(body.light-mode) .setting-row input[type="text"],
+  :global(body.light-mode) .setting-row select {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(0, 0, 0, 0.15);
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .setting-row input:focus,
+  :global(body.light-mode) .setting-row select:focus {
+    border-color: rgba(160, 128, 48, 0.5);
+  }
+
+  :global(body.light-mode) .setting-row select option {
+    background: #ffffff;
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .input-suffix {
+    color: #6a6a6a;
+  }
+
+  :global(body.light-mode) .browse-btn {
+    border-color: rgba(0, 0, 0, 0.12);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .browse-btn:hover {
+    color: #3a3a3a;
+    border-color: rgba(0, 0, 0, 0.2);
+  }
+
+  :global(body.light-mode) .checkbox-row input {
+    accent-color: #a08030;
+  }
+
+  :global(body.light-mode) .encoder-warning {
+    background: rgba(180, 140, 40, 0.1);
+    border-color: rgba(180, 140, 40, 0.3);
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode) .encoder-info {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.1);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .encoder-info strong {
+    color: #3a3a3a;
+  }
+
+  :global(body.light-mode) .help-btn {
+    background: rgba(0, 0, 0, 0.08);
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .help-btn:hover {
+    background: rgba(0, 0, 0, 0.12);
+    color: #4a4a4a;
+  }
+
+  :global(body.light-mode) .help-tooltip {
+    background: #ffffff;
+    border-color: rgba(0, 0, 0, 0.12);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .help-tooltip strong {
+    color: #a08030;
+  }
+
+  :global(body.light-mode) .save-status.saving {
+    background: rgba(0, 0, 0, 0.05);
+    color: #6a6a6a;
+  }
+
+  :global(body.light-mode) .save-status.saved {
+    background: rgba(160, 128, 48, 0.12);
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode) .loading {
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode) .setting-label-with-help > span:first-child {
+    color: #3a3a3a;
+  }
 </style>

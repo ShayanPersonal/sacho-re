@@ -16,6 +16,10 @@
     pan
   } from '$lib/stores/similarity';
   import { formatDate } from '$lib/api';
+  import { settings } from '$lib/stores/settings';
+  
+  // Reactive light mode from settings
+  let isLightMode = $derived($settings?.light_mode ?? false);
   
   let canvas: HTMLCanvasElement;
   let container: HTMLDivElement;
@@ -42,12 +46,12 @@
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     
-    // Clear
-    ctx.fillStyle = '#0a0a0a';
+    // Clear - use light/dark mode colors
+    ctx.fillStyle = isLightMode ? '#f0f0ee' : '#0a0a0a';
     ctx.fillRect(0, 0, width, height);
     
-    // Draw grid
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+    // Draw grid - use light/dark mode colors
+    ctx.strokeStyle = isLightMode ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.03)';
     ctx.lineWidth = 1;
     const gridSize = 50 * $viewTransform.scale;
     const offsetX = $viewTransform.x % gridSize;
@@ -81,7 +85,7 @@
       const color = getClusterColor(point.cluster_id);
       
       if (isSelected) {
-        ctx.fillStyle = '#fff';
+        ctx.fillStyle = isLightMode ? '#1a1a1a' : '#fff';
         ctx.shadowColor = color;
         ctx.shadowBlur = 15;
       } else if (isHovered) {
@@ -395,5 +399,64 @@
     color: #5a5a5a;
     font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
     font-size: 0.75rem;
+  }
+
+  /* Light mode overrides */
+  :global(body.light-mode) .map-header h2 {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .map-stats {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .action-btn {
+    border-color: rgba(0, 0, 0, 0.12);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .action-btn:hover:not(:disabled) {
+    color: #3a3a3a;
+    border-color: rgba(0, 0, 0, 0.2);
+  }
+
+  :global(body.light-mode) .action-btn.primary {
+    border-color: rgba(160, 128, 48, 0.4);
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode) .action-btn.primary:hover:not(:disabled) {
+    background: rgba(160, 128, 48, 0.1);
+  }
+
+  :global(body.light-mode) .map-container {
+    background: #f0f0ee;
+    border-color: rgba(0, 0, 0, 0.1);
+  }
+
+  :global(body.light-mode) .tooltip-content {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(0, 0, 0, 0.12);
+  }
+
+  :global(body.light-mode) .tooltip-date {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .tooltip-cluster {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .cluster-legend {
+    background: rgba(255, 255, 255, 0.7);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .cluster-name {
+    color: #4a4a4a;
+  }
+
+  :global(body.light-mode) .cluster-count {
+    color: #7a7a7a;
   }
 </style>

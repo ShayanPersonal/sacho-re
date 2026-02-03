@@ -809,4 +809,159 @@
     color: #5a5a5a;
     font-size: 0.875rem;
   }
+
+  /* Light mode overrides */
+  :global(body.light-mode) .panel-header h2 {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .action-btn {
+    border-color: rgba(0, 0, 0, 0.12);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .action-btn:hover:not(:disabled) {
+    color: #3a3a3a;
+    border-color: rgba(0, 0, 0, 0.2);
+  }
+
+  :global(body.light-mode) .action-btn.primary {
+    border-color: rgba(160, 128, 48, 0.4);
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode) .action-btn.primary:hover:not(:disabled) {
+    background: rgba(160, 128, 48, 0.1);
+  }
+
+  :global(body.light-mode) .search-bar input {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(0, 0, 0, 0.12);
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .search-bar input::placeholder {
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode) .search-bar input:focus {
+    border-color: rgba(160, 128, 48, 0.5);
+  }
+
+  :global(body.light-mode) .device-section {
+    background: rgba(255, 255, 255, 0.7);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .section-header {
+    color: #4a4a4a;
+  }
+
+  :global(body.light-mode) .section-header:hover {
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  :global(body.light-mode) .section-arrow {
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode) .section-count {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .midi-header,
+  :global(body.light-mode) .video-header {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .device-row {
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  :global(body.light-mode) .device-name {
+    color: #3a3a3a;
+  }
+
+  :global(body.light-mode) .meta-tag {
+    background: rgba(0, 0, 0, 0.06);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .meta-tag.default {
+    background: rgba(160, 128, 48, 0.15);
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode) .meta-tag.unsupported {
+    background: rgba(180, 60, 60, 0.1);
+    color: #a04040;
+  }
+
+  :global(body.light-mode) .codec-tag {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.12);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .codec-tag:hover {
+    background: rgba(0, 0, 0, 0.08);
+    color: #3a3a3a;
+  }
+
+  :global(body.light-mode) .codec-tag.codec-selected {
+    background: rgba(160, 128, 48, 0.15);
+    border-color: rgba(160, 128, 48, 0.4);
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode) .codec-tag.codec-selected:hover {
+    background: rgba(160, 128, 48, 0.2);
+  }
+
+  :global(body.light-mode) .help-btn {
+    background: rgba(0, 0, 0, 0.08);
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .help-btn:hover {
+    background: rgba(0, 0, 0, 0.12);
+    color: #4a4a4a;
+  }
+
+  :global(body.light-mode) .help-tooltip {
+    background: #ffffff;
+    border-color: rgba(0, 0, 0, 0.12);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .help-tooltip strong {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .checkbox-cell input {
+    accent-color: #c04040;
+  }
+
+  :global(body.light-mode) .empty-message {
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode) .error-banner {
+    background: rgba(200, 60, 60, 0.1);
+    border-color: rgba(200, 60, 60, 0.3);
+    color: #a04040;
+  }
+
+  :global(body.light-mode) .device-list::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.05);
+  }
+
+  :global(body.light-mode) .device-list::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.15);
+  }
+
+  :global(body.light-mode) .device-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.25);
+  }
 </style>

@@ -295,4 +295,68 @@
     width: 12px;
     height: 12px;
   }
+
+  /* Light mode overrides */
+  :global(body.light-mode) .recording-indicator {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.1);
+  }
+
+  :global(body.light-mode) .recording-indicator.recording {
+    background: rgba(180, 60, 60, 0.08);
+    border-color: rgba(180, 60, 60, 0.2);
+  }
+
+  :global(body.light-mode) .recording-indicator.initializing {
+    background: rgba(160, 128, 48, 0.08);
+    border-color: rgba(160, 128, 48, 0.2);
+  }
+
+  :global(body.light-mode) .track-count {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .track-count.empty {
+    opacity: 0.4;
+  }
+
+  :global(body.light-mode) .trigger-status {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .trigger-status.warning {
+    color: #a04040;
+  }
+
+  :global(body.light-mode) .status-dot {
+    background: #8a8a8a;
+  }
+
+  :global(body.light-mode) .status-text {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .elapsed {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .control-btn {
+    border-color: rgba(0, 0, 0, 0.12);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .control-btn:hover:not(:disabled) {
+    border-color: rgba(0, 0, 0, 0.2);
+    color: #3a3a3a;
+  }
+
+  :global(body.light-mode) .control-btn.stop {
+    border-color: rgba(180, 60, 60, 0.4);
+    color: #b43c3c;
+  }
+
+  :global(body.light-mode) .control-btn.stop:hover:not(:disabled) {
+    background: rgba(180, 60, 60, 0.1);
+    border-color: rgba(180, 60, 60, 0.5);
+  }
 </style>

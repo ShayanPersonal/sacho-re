@@ -249,4 +249,72 @@
     margin: 0;
     text-align: center;
   }
+
+  /* Light mode overrides */
+  :global(body.light-mode) .about-header h2 {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .about-card {
+    background: rgba(255, 255, 255, 0.85);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .about-logo {
+    color: #a08030;
+  }
+
+  :global(body.light-mode) .about-title h3 {
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .version-badge {
+    color: #6a6a6a;
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.1);
+  }
+
+  :global(body.light-mode) .about-description {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .about-features {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .feature {
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  :global(body.light-mode) .feature-icon {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .feature-label {
+    color: #3a3a3a;
+  }
+
+  :global(body.light-mode) .feature-desc {
+    color: #6a6a6a;
+  }
+
+  :global(body.light-mode) .about-credits {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .tech-stack {
+    color: #6a6a6a;
+  }
+
+  :global(body.light-mode) .tagline {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .disclaimer {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .disclaimer p {
+    color: #7a7a7a;
+  }
 </style>
