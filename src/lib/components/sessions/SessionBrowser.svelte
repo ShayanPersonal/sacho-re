@@ -73,7 +73,7 @@
     <div class="search-bar">
       <input 
         type="text" 
-        placeholder="Search..." 
+        placeholder="Search notes..." 
         bind:value={searchQuery}
         onkeydown={(e) => e.key === 'Enter' && handleSearch()}
       />

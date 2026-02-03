@@ -24,7 +24,7 @@
       </div>
       
       <p class="about-description">
-        A unobtrusive recording and organization tool for musicians and other spontaneous creatives. Free yourself from the DAW.
+        An unobtrusive recording and organizing tool for live musicians and other spontaneous creatives. Free yourself from the DAW.
       </p>
       
       <div class="about-features">

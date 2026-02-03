@@ -46,6 +46,7 @@ pub fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
     
     // Build tray icon with a unique ID for later lookup
     let _tray = TrayIconBuilder::with_id("main-tray")
+        .icon(app.default_window_icon().cloned().expect("Failed to load tray icon"))
         .tooltip("Sacho - Idle")
         .menu(&menu)
         .show_menu_on_left_click(false)
