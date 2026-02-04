@@ -1,6 +1,12 @@
 <script lang="ts">
+  import { openUrl } from '@tauri-apps/plugin-opener';
+  
   // App version (could be fetched from Tauri in the future)
   const appVersion = '1.0.0';
+  
+  function openExternal(url: string) {
+    openUrl(url);
+  }
 </script>
 
 <div class="about">
@@ -52,7 +58,7 @@
             </svg>
           </span>
           <span class="feature-label">Similarity Map</span>
-          <span class="feature-desc">Visually groups together similar MIDI files. Quickly locate performances with similar themes, chord progressions, etc.</span>
+          <span class="feature-desc">Quickly locate performances with similar themes, chord progressions, etc.</span>
         </div>
         <div class="feature">
           <span class="feature-icon">
@@ -68,8 +74,16 @@
         </div>
       </div>
       
-      <div class="about-credits">
-        <p class="tech-stack">Built around free and open video formats.</p>
+      <div class="open-source-notice">
+        <p class="notice-title">Open Source Licenses</p>
+        <p class="notice-text">
+          This application uses <button class="link-btn" onclick={() => openExternal('https://gstreamer.freedesktop.org/')}>GStreamer</button>, 
+          a multimedia framework licensed under the 
+          <button class="link-btn" onclick={() => openExternal('https://www.gnu.org/licenses/lgpl-2.1.html')}>GNU Lesser General Public License (LGPL)</button>. 
+          The complete source code for this version of GStreamer is available at 
+          <button class="link-btn" onclick={() => openExternal('https://gitlab.freedesktop.org/gstreamer/gstreamer/-/tree/1.26.10')}>gitlab.freedesktop.org/gstreamer/-/tree/1.26.10</button>. 
+          The GStreamer dynamic libraries used by this application are located in the application installation folder.
+        </p>
       </div>
       
       <div class="disclaimer">
@@ -240,6 +254,45 @@
     color: #4a4a4a;
   }
   
+  .open-source-notice {
+    margin-top: 0.75rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    width: 100%;
+  }
+  
+  .notice-title {
+    font-size: 0.6875rem;
+    font-weight: 500;
+    color: #6a6a6a;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0 0 0.5rem 0;
+    text-align: center;
+  }
+  
+  .notice-text {
+    font-size: 0.625rem;
+    color: #5a5a5a;
+    line-height: 1.7;
+    margin: 0;
+    text-align: center;
+  }
+  
+  .notice-text .link-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: #c9a962;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  
+  .notice-text .link-btn:hover {
+    text-decoration: underline;
+  }
+  
   .disclaimer {
     margin-top: 0.75rem;
     padding-top: 1.25rem;
@@ -309,6 +362,22 @@
 
   :global(body.light-mode) .tagline {
     color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .open-source-notice {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .notice-title {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .notice-text {
+    color: #6a6a6a;
+  }
+
+  :global(body.light-mode) .notice-text .link-btn {
+    color: #8a6a20;
   }
 
   :global(body.light-mode) .disclaimer {
