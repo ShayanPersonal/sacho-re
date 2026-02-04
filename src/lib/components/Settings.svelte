@@ -143,7 +143,7 @@
               </button>
               {#if showRawVideoHelp}
                 <div class="help-tooltip">
-                  If you select a video device that's tagged as <strong>raw</strong>, your computer is responsible for encoding the video. Depending on your choice, this may use system resources such as <strong>RAM</strong>, <strong>CPU</strong>, and <strong>GPU</strong>.
+                  If you select a video device that's tagged as <strong>raw</strong>, your computer is responsible for encoding the video - including during pre-roll recording. Depending on your choice, this uses system resources such as <strong>RAM</strong>, <strong>CPU</strong>, and <strong>GPU</strong>.
                 </div>
               {/if}
             </span>
@@ -586,7 +586,7 @@
   }
   
   .help-tooltip strong {
-    color: #c9a962;
+    color: #e8e6e3;
   }
 
   /* Light mode overrides */
