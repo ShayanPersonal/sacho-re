@@ -94,9 +94,13 @@ impl VideoCodec {
     }
     
     /// Get the GStreamer parser element name for this codec
-    /// Returns None for Raw since it doesn't have a parser
+    /// 
+    /// Note: This is only used by the VideoWriter (recording/video.rs) for muxing.
+    /// The capture pipeline no longer uses a parser for any codec.
+    /// For MJPEG playback, jpegparse is used directly in MjpegDemuxer (video/mjpeg.rs).
     pub fn gst_parser(&self) -> &'static str {
         match self {
+            // MJPEG writer skips parser (line ~249 in video.rs) to avoid dimension issues
             VideoCodec::Mjpeg => "jpegparse",
             VideoCodec::Av1 => "av1parse",
             VideoCodec::Vp8 => "identity", // VP8 doesn't need parsing before muxing

@@ -39,10 +39,13 @@
         <h3>Sacho</h3>
         <span class="version-badge">Version {appVersion}</span>
       </div>
-      
-      <p class="about-description">
-        The songwriter's notebook.
-      </p>
+
+      <div class="about-description">
+        <p>
+          The Songwriter's Notebook
+        </p>
+      </div>
+
       
       <div class="about-features">
         <div class="feature">

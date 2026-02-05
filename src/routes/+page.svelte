@@ -54,7 +54,7 @@
         <path d="M3 3v18h18"/>
         <path d="M7 16l4-4 4 4 6-6"/>
       </svg>
-      Visualize
+      Similarity
     </button>
     <button 
       class="tab" 

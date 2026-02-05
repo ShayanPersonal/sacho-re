@@ -1,7 +1,7 @@
 // Device enumeration implementations
 
 use super::{AudioDevice, MidiDevice, VideoDevice, VideoDeviceType, Resolution};
-use crate::encoding::VideoCodec;
+use crate::encoding::{VideoCodec, has_av1_encoder, has_vp9_encoder, has_vp8_encoder};
 use cpal::traits::{DeviceTrait, HostTrait};
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -12,7 +12,7 @@ fn process_caps(
     detected_formats: &mut Vec<String>,
     supported_codecs: &mut Vec<VideoCodec>,
     resolutions: &mut Vec<Resolution>,
-    hw_encoder_available: bool,
+    can_encode_raw: bool,
 ) {
     for i in 0..caps.size() {
         if let Some(structure) = caps.structure(i) {
@@ -25,9 +25,9 @@ fn process_caps(
                 
                 // Try to match to a supported codec
                 if let Some(codec) = VideoCodec::from_gst_caps_name(format_name) {
-                    // For Raw codec, only add if hardware encoder is available
+                    // For Raw codec, only add if an encoder is available
                     if codec == VideoCodec::Raw {
-                        if hw_encoder_available && !supported_codecs.contains(&codec) {
+                        if can_encode_raw && !supported_codecs.contains(&codec) {
                             supported_codecs.push(codec);
                         }
                     } else if !supported_codecs.contains(&codec) {
@@ -183,26 +183,6 @@ fn format_display_name(gst_name: &str) -> String {
     }
 }
 
-/// Check if any hardware AV1 encoder is available
-pub fn is_hardware_av1_encoder_available() -> bool {
-    // Check NVIDIA NVENC
-    if gst::ElementFactory::find("nvav1enc").is_some() {
-        return true;
-    }
-    // Check AMD AMF
-    if gst::ElementFactory::find("amfav1enc").is_some() {
-        return true;
-    }
-    // Check Intel QuickSync
-    if gst::ElementFactory::find("qsvav1enc").is_some() {
-        return true;
-    }
-    // Check VA-API
-    if gst::ElementFactory::find("vaav1enc").is_some() {
-        return true;
-    }
-    false
-}
 
 /// Enumerate all available audio input devices
 pub fn enumerate_audio_devices() -> Vec<AudioDevice> {
@@ -272,12 +252,62 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
         return Vec::new();
     }
     
-    // Check if hardware AV1 encoder is available for raw video support
-    let hw_encoder_available = is_hardware_av1_encoder_available();
-    if hw_encoder_available {
-        println!("[Sacho] Hardware AV1 encoder available - Raw video format will be supported");
+    // Log GStreamer version for diagnostics
+    let (major, minor, micro, nano) = gstreamer::version();
+    println!("[Sacho] GStreamer version: {}.{}.{}.{}", major, minor, micro, nano);
+    
+    // Check for required plugins and log their status
+    let registry = gstreamer::Registry::get();
+    let required_plugins = [
+        "coreelements",      // Core elements like fakesink
+        "videoconvertscale", // Video conversion
+        #[cfg(target_os = "windows")]
+        "winks",             // Windows Kernel Streaming (webcams)
+        #[cfg(target_os = "windows")]
+        "directshow",        // DirectShow video sources  
+        #[cfg(target_os = "windows")]
+        "mediafoundation",   // Media Foundation (modern Windows API)
+        #[cfg(target_os = "macos")]
+        "applemedia",        // macOS AVFoundation
+        #[cfg(target_os = "linux")]
+        "video4linux2",      // V4L2 on Linux
+    ];
+    
+    println!("[Sacho] Checking required GStreamer plugins:");
+    let mut missing_plugins = Vec::new();
+    for plugin_name in required_plugins {
+        if let Some(plugin) = registry.find_plugin(plugin_name) {
+            println!("[Sacho]   {} v{} - OK", plugin_name, plugin.version());
+        } else {
+            println!("[Sacho]   {} - MISSING", plugin_name);
+            missing_plugins.push(plugin_name);
+        }
+    }
+    
+    if !missing_plugins.is_empty() {
+        println!("[Sacho] WARNING: Missing plugins may cause device enumeration to fail: {:?}", missing_plugins);
+    }
+    
+    // Also check for device provider elements
+    println!("[Sacho] Checking device providers:");
+    #[cfg(target_os = "windows")]
+    {
+        let providers = ["dshowvideosrc", "mfvideosrc", "ksvideosrc"];
+        for provider in providers {
+            if gstreamer::ElementFactory::find(provider).is_some() {
+                println!("[Sacho]   {} - available", provider);
+            } else {
+                println!("[Sacho]   {} - not available", provider);
+            }
+        }
+    }
+    
+    // Check if any encoder is available for raw video support (hardware or software)
+    let can_encode_raw = has_av1_encoder() || has_vp9_encoder() || has_vp8_encoder();
+    if can_encode_raw {
+        println!("[Sacho] Video encoder available - Raw video format will be supported");
     } else {
-        println!("[Sacho] No hardware AV1 encoder found - Raw video format will not be available");
+        println!("[Sacho] No video encoder found - Raw video format will not be available");
     }
     
     // Create device monitor for video sources
@@ -288,8 +318,21 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
     monitor.add_filter(Some("Video/Source"), None);
     monitor.add_filter(Some("Source/Video"), None);
     
+    // Log the providers that DeviceMonitor will use
+    println!("[Sacho] Starting device monitor...");
+    
     if let Err(e) = monitor.start() {
         println!("[Sacho] Failed to start device monitor: {}", e);
+        println!("[Sacho] This usually means no device provider plugins are loaded.");
+        println!("[Sacho] On Windows, ensure GStreamer DLLs are in the same directory as sacho.exe");
+        println!("[Sacho] Required: gstreamer-1.0-0.dll and related plugin DLLs");
+        
+        // Try to provide more context by checking if we can at least create a basic pipeline
+        match gstreamer::ElementFactory::make("fakesink").build() {
+            Ok(_) => println!("[Sacho] Core GStreamer elements work, but device providers are missing"),
+            Err(e) => println!("[Sacho] Even basic GStreamer elements fail: {}", e),
+        }
+        
         return Vec::new();
     }
     
@@ -352,7 +395,7 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
         
         // First, process DeviceMonitor caps (these are accurate for what the device reports)
         for caps in &info.all_caps {
-            process_caps(caps, &mut detected_formats, &mut supported_codecs, &mut resolutions, hw_encoder_available);
+            process_caps(caps, &mut detected_formats, &mut supported_codecs, &mut resolutions, can_encode_raw);
         }
         
         // On Windows, if we only found RAW format, probe more aggressively

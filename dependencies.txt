@@ -1,5 +1,7 @@
 Strict list of gstreamer dependencies required. Make sure they are LGPL and do not include unlicensed codecs.
 
+The files in here should match what is found in src-tauri\installers\raw_dependencies.
+
 gstpbutils-1.0-0.dll
     gstvideo-1.0-0.dll
         orc-0.4-0.dll
@@ -37,6 +39,12 @@ gstwasapi2.dll             - Windows Audio Session API (audio capture)
 
 gstjpeg.dll                - MJPEG encoding/decoding
 gstvpx.dll                 - VP8/VP9 codecs (royalty-free)
-gstvideoparsersbad.dll     - Video stream parsing
+gstvideoparsersbad.dll     - Video stream parsing (jpegparse for MJPEG playback, etc.)
+    gstcodecparsers-1.0-0.dll  - Codec parsing library (runtime dep of videoparsersbad)
 gstmatroska.dll            - Matroska/WebM container support
 gstisomp4.dll              - MP4/MOV container support
+
+Runtime dependencies for mediafoundation plugin:
+gstd3d11-1.0-0.dll         - Direct3D 11 integration (runtime dep of mediafoundation)
+    gstd3dshader-1.0-0.dll - D3D shader support (runtime dep of gstd3d11)
+gstwinrt-1.0-0.dll         - WinRT integration (runtime dep of mediafoundation)

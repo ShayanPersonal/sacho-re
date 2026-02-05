@@ -454,16 +454,14 @@ impl VideoCapturePipeline {
         
         // For MJPEG, skip the parser. jpegparse extracts dimensions from JPEG SOF markers,
         // which some capture devices report with swapped width/height. By skipping it,
-        // we use the camera's advertised dimensions directly.
-        // For MJPEG, use jpegparse. For other codecs (AV1, VP8, VP9), use identity (passthrough)
-        let parser = gst::ElementFactory::make(codec.gst_parser())
-            .build()
-            .map_err(|e| VideoError::Pipeline(format!("Failed to create {}: {}", codec.gst_parser(), e)))?;
-        
-        pipeline.add_many([&source, &capsfilter, &parser, &queue, appsink.upcast_ref()])
+        // we use the camera's advertised dimensions directly. Cameras already output
+        // well-formed JPEG frames so no parsing is needed for capture.
+        // For other codecs, use identity (passthrough) since they don't need parsing either.
+        // Note: jpegparse IS still used in the MjpegDemuxer for playback (video/mjpeg.rs).
+        pipeline.add_many([&source, &capsfilter, &queue, appsink.upcast_ref()])
             .map_err(|e| VideoError::Pipeline(format!("Failed to add elements: {}", e)))?;
         
-        gst::Element::link_many([&source, &capsfilter, &parser, &queue, appsink.upcast_ref()])
+        gst::Element::link_many([&source, &capsfilter, &queue, appsink.upcast_ref()])
             .map_err(|e| VideoError::Pipeline(format!("Failed to link pipeline: {}", e)))?;
         
         // Debug: Print the caps being used
