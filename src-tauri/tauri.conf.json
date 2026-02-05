@@ -44,7 +44,7 @@
     ],
     "externalBin": [],
     "resources": [
-      "installers/*.msi"
+      "installers/raw_dependencies/*.dll"
     ],
     "windows": {
       "certificateThumbprint": null,
