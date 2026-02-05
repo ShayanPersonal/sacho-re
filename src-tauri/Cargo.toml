@@ -84,5 +84,9 @@ ringbuf = "0.4"
 # Base64 encoding for video frame transfer
 base64 = "0.22"
 
+# Windows console attachment for CLI logging
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
+
 [features]
 default = []

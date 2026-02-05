@@ -20,7 +20,22 @@ use tauri::Manager;
 /// Initialize and run the Tauri application
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::init();
+    // Check for --console flag to enable console logging
+    let enable_console = std::env::args().any(|arg| arg == "--console");
+    
+    if enable_console {
+        // On Windows, attach to parent console (if launched from cmd/powershell)
+        #[cfg(windows)]
+        unsafe {
+            use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+        
+        // Initialize logger with a sensible default level if RUST_LOG isn't set
+        env_logger::Builder::from_env(
+            env_logger::Env::default().default_filter_or("info")
+        ).init();
+    }
     
     // Initialize GStreamer environment before anything else
     // This sets up paths for private GStreamer deployment on Windows
