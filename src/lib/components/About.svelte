@@ -36,7 +36,7 @@
       </div>
       
       <p class="about-description">
-        An unobtrusive recording tool for spontaneous creatives. Free yourself from the DAW.
+        The songwriter's dream.
       </p>
       
       <div class="about-features">
