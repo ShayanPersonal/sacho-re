@@ -62,6 +62,40 @@ Var GStreamerMsiFound
             ; Continue anyway - the app will show an error if GStreamer isn't available
         ${EndIf}
         
+        ; Copy essential GStreamer DLLs to the app directory so Windows can find them at startup
+        ; Windows loads DLLs BEFORE the application code runs, so we can't rely on PATH modification
+        ; at runtime. The DLLs must be in the same directory as the exe or in the system PATH.
+        DetailPrint "Copying GStreamer DLLs to application directory..."
+        
+        ; Define the GStreamer bin directory
+        StrCpy $1 "$INSTDIR\gstreamer\1.0\msvc_x86_64\bin"
+        
+        ; Core GStreamer libraries needed at startup
+        CopyFiles /SILENT "$1\gstreamer-1.0-0.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\gstbase-1.0-0.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\gstpbutils-1.0-0.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\gstvideo-1.0-0.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\gstapp-1.0-0.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\gstaudio-1.0-0.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\gsttag-1.0-0.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\gstfft-1.0-0.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\gstriff-1.0-0.dll" "$INSTDIR"
+        
+        ; GLib dependencies
+        CopyFiles /SILENT "$1\gobject-2.0-0.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\glib-2.0-0.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\gmodule-2.0-0.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\gio-2.0-0.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\intl-8.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\ffi-8.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\z-1.dll" "$INSTDIR"
+        CopyFiles /SILENT "$1\pcre2-8-0.dll" "$INSTDIR"
+        
+        ; OpenRC (ORC) runtime compiler
+        CopyFiles /SILENT "$1\orc-0.4-0.dll" "$INSTDIR"
+        
+        DetailPrint "GStreamer DLLs copied to application directory"
+        
         ; Delete the MSI after installation to save space
         Delete "$GStreamerMsiPath"
         
@@ -104,6 +138,26 @@ Var GStreamerMsiFound
 ; POSTUNINSTALL - Runs after uninstallation completes
 ; ============================================================================
 !macro NSIS_HOOK_POSTUNINSTALL
+    ; Clean up copied GStreamer DLLs from app directory
+    Delete "$INSTDIR\gstreamer-1.0-0.dll"
+    Delete "$INSTDIR\gstbase-1.0-0.dll"
+    Delete "$INSTDIR\gstpbutils-1.0-0.dll"
+    Delete "$INSTDIR\gstvideo-1.0-0.dll"
+    Delete "$INSTDIR\gstapp-1.0-0.dll"
+    Delete "$INSTDIR\gstaudio-1.0-0.dll"
+    Delete "$INSTDIR\gsttag-1.0-0.dll"
+    Delete "$INSTDIR\gstfft-1.0-0.dll"
+    Delete "$INSTDIR\gstriff-1.0-0.dll"
+    Delete "$INSTDIR\gobject-2.0-0.dll"
+    Delete "$INSTDIR\glib-2.0-0.dll"
+    Delete "$INSTDIR\gmodule-2.0-0.dll"
+    Delete "$INSTDIR\gio-2.0-0.dll"
+    Delete "$INSTDIR\intl-8.dll"
+    Delete "$INSTDIR\ffi-8.dll"
+    Delete "$INSTDIR\z-1.dll"
+    Delete "$INSTDIR\pcre2-8-0.dll"
+    Delete "$INSTDIR\orc-0.4-0.dll"
+    
     ; Clean up the gstreamer folder if it still exists
     ${If} ${FileExists} "$INSTDIR\gstreamer"
         RMDir /r "$INSTDIR\gstreamer"
