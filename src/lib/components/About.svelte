@@ -1,8 +1,13 @@
 <script lang="ts">
   import { openUrl } from '@tauri-apps/plugin-opener';
+  import { getVersion } from '@tauri-apps/api/app';
+  import { onMount } from 'svelte';
   
-  // App version (could be fetched from Tauri in the future)
-  const appVersion = '1.0.0';
+  let appVersion = $state('...');
+  
+  onMount(async () => {
+    appVersion = await getVersion();
+  });
   
   function openExternal(url: string) {
     openUrl(url);
@@ -64,7 +69,7 @@
             </svg>
           </span>
           <span class="feature-label">Similarity Map</span>
-          <span class="feature-desc">Quickly locate performances with similar themes, chord progressions, etc.</span>
+          <span class="feature-desc">Quickly locate recordings with similar themes and chord progressions.</span>
         </div>
         <div class="feature">
           <span class="feature-icon">

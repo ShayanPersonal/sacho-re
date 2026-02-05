@@ -133,7 +133,7 @@ export interface Config {
   pre_roll_secs: number;
   audio_format: 'wav' | 'flac';
   video_encoding_mode: VideoEncodingMode;
-  light_mode: boolean;
+  dark_mode: boolean;
   auto_start: boolean;
   notify_recording_start: boolean;
   notify_recording_stop: boolean;

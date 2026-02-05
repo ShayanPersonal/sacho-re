@@ -29,9 +29,9 @@ pub struct Config {
     #[serde(default)]
     pub video_encoding_mode: VideoEncodingMode,
     
-    /// Whether to use light color scheme
+    /// Whether to use dark color scheme (default is light)
     #[serde(default)]
-    pub light_mode: bool,
+    pub dark_mode: bool,
     
     /// Whether to start with system
     pub auto_start: bool,
@@ -117,7 +117,7 @@ impl Default for Config {
             pre_roll_secs: 2, // Default to 2 seconds of pre-roll
             audio_format: AudioFormat::Wav,
             video_encoding_mode: VideoEncodingMode::default(),
-            light_mode: false,
+            dark_mode: false,
             auto_start: false,
             minimize_to_tray: true,
             notify_recording_start: true,

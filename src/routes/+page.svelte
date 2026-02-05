@@ -12,15 +12,15 @@
   type Tab = 'sessions' | 'similarity' | 'devices' | 'settings' | 'about';
   let activeTab: Tab = $state('sessions');
   
-  // Reactive light mode from settings
-  let isLightMode = $derived($settings?.light_mode ?? false);
+  // Reactive dark mode from settings (default is light mode)
+  let isDarkMode = $derived($settings?.dark_mode ?? false);
   
-  // Apply light mode class to document body for global styling
+  // Apply light mode class to document body for global styling (light is default)
   $effect(() => {
-    if (isLightMode) {
-      document.body.classList.add('light-mode');
-    } else {
+    if (isDarkMode) {
       document.body.classList.remove('light-mode');
+    } else {
+      document.body.classList.add('light-mode');
     }
   });
   
@@ -31,7 +31,7 @@
   });
 </script>
 
-<div class="app" class:light-mode={isLightMode}>
+<div class="app" class:light-mode={!isDarkMode}>
   <nav class="tabs">
     <button 
       class="tab" 

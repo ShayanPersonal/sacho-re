@@ -18,8 +18,8 @@
   import { formatDate } from '$lib/api';
   import { settings } from '$lib/stores/settings';
   
-  // Reactive light mode from settings
-  let isLightMode = $derived($settings?.light_mode ?? false);
+  // Reactive light mode from settings (light is default when dark_mode is false)
+  let isLightMode = $derived(!($settings?.dark_mode ?? false));
   
   let canvas: HTMLCanvasElement;
   let container: HTMLDivElement;

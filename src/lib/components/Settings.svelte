@@ -218,10 +218,10 @@
           <label class="checkbox-row">
             <input 
               type="checkbox" 
-              bind:checked={localSettings.light_mode}
+              bind:checked={localSettings.dark_mode}
               onchange={autoSave}
             />
-            <span class="setting-label">Light color scheme</span>
+            <span class="setting-label">Dark color scheme</span>
           </label>
         </div>
         <div class="setting-row">
