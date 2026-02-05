@@ -233,7 +233,7 @@
             />
             <span class="setting-label">Start at system startup <i>(recommended)</i></span>
           </label>
-           <p class="setting-recommendation">This ensures the application will start up again if your device restarts (such as for system updates). <b>On password-protected devices, you may have to log back in first.</b></p>
+           <p class="setting-recommendation">This ensures the application will start up again if your device restarts (such as for system updates). <b>On password-protected devices, you may have to log back in before the app starts.</b></p>
           <p class="setting-recommendation">To stop the application from running in the background, right-click the tray icon and select Quit. Note that your performances will not be recorded until the application is started again.</p>
         </div>
       </section>
