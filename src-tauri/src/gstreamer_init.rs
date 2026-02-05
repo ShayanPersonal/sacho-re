@@ -49,14 +49,35 @@ fn setup_gstreamer_windows() {
         env::set_var("GST_PLUGIN_PATH", plugin_path);
         log::debug!("Set GST_PLUGIN_PATH: {}", plugin_path);
         
-        // Use a private registry file to avoid conflicts with system GStreamer
+        // Use a private, versioned registry file to avoid conflicts with system GStreamer.
+        // The registry caches plugin load results (including failures). When bundled DLLs
+        // change between versions (e.g., new dependencies added), a stale registry will
+        // still report plugins as failed. Using a version-specific registry path ensures
+        // a fresh scan after every update.
         if let Some(local_app_data) = dirs::data_local_dir() {
+            let app_version = env!("CARGO_PKG_VERSION");
             let registry_path = local_app_data
                 .join("com.sacho.app")
-                .join("gst-registry.bin");
+                .join(format!("gst-registry-v{}.bin", app_version));
             
             if let Some(parent) = registry_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
+            }
+            
+            // Clean up old registry files from previous versions
+            if let Some(parent) = registry_path.parent() {
+                if let Ok(entries) = std::fs::read_dir(parent) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name();
+                        let name_str = name.to_string_lossy();
+                        if name_str.starts_with("gst-registry") && name_str.ends_with(".bin") 
+                            && name_str != registry_path.file_name().unwrap_or_default().to_string_lossy() 
+                        {
+                            log::debug!("Removing old registry: {}", name_str);
+                            let _ = std::fs::remove_file(entry.path());
+                        }
+                    }
+                }
             }
             
             env::set_var("GST_REGISTRY", registry_path.to_str().unwrap_or_default());

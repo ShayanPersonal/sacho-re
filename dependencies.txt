@@ -42,7 +42,9 @@ gstvpx.dll                 - VP8/VP9 codecs (royalty-free)
 gstvideoparsersbad.dll     - Video stream parsing (jpegparse for MJPEG playback, etc.)
     gstcodecparsers-1.0-0.dll  - Codec parsing library (runtime dep of videoparsersbad)
 gstmatroska.dll            - Matroska/WebM container support
+    gstriff-1.0-0.dll      - RIFF media utilities (runtime dep of matroska + isomp4)
 gstisomp4.dll              - MP4/MOV container support
+    gstrtp-1.0-0.dll       - RTP utilities (runtime dep of isomp4)
 
 Runtime dependencies for mediafoundation plugin:
 gstd3d11-1.0-0.dll         - Direct3D 11 integration (runtime dep of mediafoundation)
