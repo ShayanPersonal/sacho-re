@@ -38,11 +38,13 @@ gstmediafoundation.dll     - Media Foundation (modern Windows API)
 gstwasapi2.dll             - Windows Audio Session API (audio capture)
 
 gstjpeg.dll                - MJPEG encoding/decoding
+    jpeg8.dll              - libjpeg (dynamically loaded by gstjpeg)
 gstvpx.dll                 - VP8/VP9 codecs (royalty-free)
 gstvideoparsersbad.dll     - Video stream parsing (jpegparse for MJPEG playback, etc.)
     gstcodecparsers-1.0-0.dll  - Codec parsing library (runtime dep of videoparsersbad)
 gstmatroska.dll            - Matroska/WebM container support
     gstriff-1.0-0.dll      - RIFF media utilities (runtime dep of matroska + isomp4)
+    bz2.dll                - bzip2 compression (dynamically loaded by gstmatroska)
 gstisomp4.dll              - MP4/MOV container support
     gstrtp-1.0-0.dll       - RTP utilities (runtime dep of isomp4)
 
