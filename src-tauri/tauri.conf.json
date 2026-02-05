@@ -44,7 +44,7 @@
     ],
     "externalBin": [],
     "resources": [
-      "installers/raw_dependencies/*.dll"
+      "installers/dlls/*.dll"
     ],
     "windows": {
       "certificateThumbprint": null,

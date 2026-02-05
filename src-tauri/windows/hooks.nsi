@@ -20,12 +20,12 @@
     ; Create manifest file to track installed DLLs for clean uninstallation
     FileOpen $0 "$INSTDIR\installed_dlls.txt" w
     
-    ; Enumerate all DLLs in raw_dependencies and copy them
-    FindFirst $1 $2 "$INSTDIR\installers\raw_dependencies\*.dll"
+    ; Enumerate all DLLs in dlls and copy them
+    FindFirst $1 $2 "$INSTDIR\installers\dlls\*.dll"
     ${IfNot} ${Errors}
         loop_copy:
             ; Copy the DLL to install directory
-            CopyFiles /SILENT "$INSTDIR\installers\raw_dependencies\$2" "$INSTDIR"
+            CopyFiles /SILENT "$INSTDIR\installers\dlls\$2" "$INSTDIR"
             ; Write the DLL name to manifest
             FileWrite $0 "$2$\r$\n"
             ; Find next file

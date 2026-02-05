@@ -1,6 +1,6 @@
 Strict list of gstreamer dependencies required. Make sure they are LGPL and do not include unlicensed codecs.
 
-The files in here should match what is found in src-tauri\installers\raw_dependencies.
+The files in here should match what is found in src-tauri\installers\dlls.
 
 gstpbutils-1.0-0.dll
     gstvideo-1.0-0.dll
