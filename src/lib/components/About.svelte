@@ -41,7 +41,7 @@
       </div>
       
       <p class="about-description">
-        The songwriter's dream.
+        The songwriter's notebook.
       </p>
       
       <div class="about-features">

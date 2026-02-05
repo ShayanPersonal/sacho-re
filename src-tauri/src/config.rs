@@ -113,14 +113,14 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             storage_path: get_default_storage_path(),
-            idle_timeout_secs: 15,
+            idle_timeout_secs: 5,
             pre_roll_secs: 2, // Default to 2 seconds of pre-roll
             audio_format: AudioFormat::Wav,
             video_encoding_mode: VideoEncodingMode::default(),
             dark_mode: false,
             auto_start: false,
             minimize_to_tray: true,
-            notify_recording_start: true,
+            notify_recording_start: false,
             notify_recording_stop: true,
             selected_audio_devices: Vec::new(),
             selected_midi_devices: Vec::new(),
