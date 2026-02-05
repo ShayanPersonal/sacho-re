@@ -1,4 +1,4 @@
-Strict list of gstreamer dependencies required.
+Strict list of gstreamer dependencies required. Make sure they are LGPL and do not include unlicensed codecs.
 
 gstpbutils-1.0-0.dll
     gstvideo-1.0-0.dll
@@ -21,3 +21,22 @@ glib-2.0-0.dll
 gstapp-1.0-0.dll
 gio-2.0-0.dll
 
+List of plugin DLLs (from lib/gstreamer-1.0/):
+
+gstcoreelements.dll        - Core elements (fakesink, filesrc, queue, etc.)
+gstapp.dll                 - appsrc/appsink for custom data handling
+gstvideoconvertscale.dll   - Video format conversion and scaling
+gstautodetect.dll          - Auto device detection
+gstplayback.dll            - Playback elements (playbin, decodebin)
+gsttypefindfunctions.dll   - File type detection
+
+gstdirectshow.dll          - DirectShow video sources (Windows)
+gstwinks.dll               - Windows Kernel Streaming (webcams)
+gstmediafoundation.dll     - Media Foundation (modern Windows API)
+gstwasapi2.dll             - Windows Audio Session API (audio capture)
+
+gstjpeg.dll                - MJPEG encoding/decoding
+gstvpx.dll                 - VP8/VP9 codecs (royalty-free)
+gstvideoparsersbad.dll     - Video stream parsing
+gstmatroska.dll            - Matroska/WebM container support
+gstisomp4.dll              - MP4/MOV container support
