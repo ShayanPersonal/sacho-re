@@ -118,7 +118,7 @@ impl Default for Config {
             audio_format: AudioFormat::Wav,
             video_encoding_mode: VideoEncodingMode::default(),
             dark_mode: false,
-            auto_start: false,
+            auto_start: true,
             minimize_to_tray: true,
             notify_recording_start: false,
             notify_recording_stop: true,
