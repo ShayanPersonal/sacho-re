@@ -205,18 +205,35 @@ impl AudioPrerollBuffer {
         }
     }
     
-    /// Drain all buffered samples
+    /// Drain all buffered samples (aligned to frame boundary)
     pub fn drain(&mut self) -> Vec<f32> {
+        // Ensure we return a multiple of channels to prevent WAV write errors
+        let total = self.samples.len();
+        let aligned = (total / self.channels as usize) * self.channels as usize;
+        if aligned < total {
+            // Drop the last partial frame
+            self.samples.truncate(aligned);
+        }
         self.samples.drain(..).collect()
     }
     
     /// Drain samples for a specific duration (from the end of the buffer)
     /// This allows syncing audio pre-roll to a shorter video pre-roll duration
     pub fn drain_duration(&mut self, duration: Duration) -> Vec<f32> {
-        let samples_for_duration = (duration.as_secs_f64() * self.sample_rate as f64 * self.channels as f64) as usize;
+        // Calculate samples and round DOWN to nearest frame boundary (multiple of channels)
+        // This prevents partial frames which cause WAV write errors
+        let raw_samples = (duration.as_secs_f64() * self.sample_rate as f64 * self.channels as f64) as usize;
+        let samples_for_duration = (raw_samples / self.channels as usize) * self.channels as usize;
         
         if samples_for_duration >= self.samples.len() {
             // Requested duration covers all samples, drain everything
+            // But ensure we return a multiple of channels
+            let total = self.samples.len();
+            let aligned = (total / self.channels as usize) * self.channels as usize;
+            if aligned < total {
+                // Drop the last partial frame
+                self.samples.truncate(aligned);
+            }
             self.samples.drain(..).collect()
         } else {
             // Only take the last N samples (most recent audio)

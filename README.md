@@ -9,26 +9,30 @@ Being a commercial application, when it comes to gstreamer, Sacho should only us
 ## Features
 
 ### Automatic Recording
+
 - **MIDI-triggered recording** - Recording starts automatically when you play your MIDI controller
-- **Configurable idle timeout** - Recording stops after a period of inactivity (default: 15 seconds)
+- **Configurable idle timeout** - Recording stops after a period of inactivity 
 - **Multi-device support** - Record from multiple audio interfaces, MIDI controllers, and video sources simultaneously
+- **Pre-roll** - Configurable pre-roll captures on your configured devices even when no recording has been triggered, allowing for past capture to be retrospectively included at the beginning of the recordings.
 
 ### Session Management
+
 - **Organized storage** - Sessions are saved with timestamps in a configurable location
 - **Session browser** - Browse, search, and filter your recordings with ease
 - **Tags & notes** - Add metadata to organize and remember your ideas
 - **Favorites** - Mark important sessions for quick access
 
 ### MIDI Similarity Map
+
 - **Visualize your performances** - See all your MIDI recordings on a 2D map
 - **Find similar ideas** - Similar performances are grouped together
 - **Automatic clustering** - AI-powered grouping of related musical ideas
 
 ### System Integration
+
 - **System tray** - Runs quietly in the background
 - **Desktop notifications** - Know when recording starts and stops
 - **Minimal footprint** - Lightweight and efficient
-
 
 ## Getting Started
 

@@ -856,8 +856,15 @@ fn stop_recording(
         let path = state.session_path.take();
         let events = std::mem::take(&mut state.midi_events);
         
-        // Collect audio samples from buffers
+        // Collect audio samples from buffers (aligned to frame boundary)
         let audio: Vec<CollectedAudio> = state.audio_buffers.iter_mut().map(|buf| {
+            // Ensure sample count is a multiple of channels to prevent WAV write errors
+            let total = buf.samples.len();
+            let aligned = (total / buf.channels as usize) * buf.channels as usize;
+            if aligned < total {
+                // Truncate to drop partial frame
+                buf.samples.truncate(aligned);
+            }
             CollectedAudio {
                 device_name: buf.device_name.clone(),
                 samples: buf.samples.drain(..).collect(),

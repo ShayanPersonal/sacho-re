@@ -26,17 +26,17 @@ listen('recording-started', (event) => {
 });
 
 listen('recording-stopped', async (event) => {
-  console.log('Recording stopped from backend:', event.payload);
-  await refreshRecordingState();
-  
-  // Add the new session to the list without full refresh
-  try {
-    const metadata = JSON.parse(event.payload as string) as SessionMetadata;
-    addNewSession(metadata);
-  } catch (e) {
-    console.error('Failed to parse session metadata:', e);
-  }
-});
+    console.log('Recording stopped from backend:', event.payload);
+    await refreshRecordingState();
+    
+    // Add the new session to the list without full refresh
+    try {
+      const metadata = JSON.parse(event.payload as string) as SessionMetadata;
+      addNewSession(metadata);
+    } catch (e) {
+      console.error('Failed to parse session metadata:', e);
+    }
+  });
 
 // Listen for recording state changes (e.g., when devices are being reinitialized)
 listen('recording-state-changed', async (event) => {

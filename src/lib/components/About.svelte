@@ -18,9 +18,15 @@
     <div class="about-card">
       <div class="about-logo">
         <svg viewBox="0 0 64 64" fill="currentColor">
-          <circle cx="32" cy="32" r="28" fill="none" stroke="currentColor" stroke-width="2"/>
+          <!-- Outer ring -->
+          <circle cx="32" cy="32" r="20" fill="none" stroke="currentColor" stroke-width="3"/>
+          <!-- Center circle -->
           <circle cx="32" cy="32" r="8" fill="currentColor"/>
-          <path d="M32 12v8M32 44v8M12 32h8M44 32h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <!-- 8 radiating lines -->
+          <path d="M32 4v8M32 52v8" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          <path d="M4 32h8M52 32h8" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          <path d="M12.2 12.2l5.6 5.6M46.2 46.2l5.6 5.6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          <path d="M51.8 12.2l-5.6 5.6M17.8 46.2l-5.6 5.6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
         </svg>
       </div>
       
