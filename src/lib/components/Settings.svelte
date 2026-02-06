@@ -206,6 +206,7 @@
           <select bind:value={localSettings.audio_format} onchange={autoSave}>
             <option value="wav">WAV (lossless, larger files)</option>
             <option value="flac">FLAC (lossless, smaller files)</option>
+            <option value="opus">Opus (lossy but transparent. 192 kbps, smallest files)</option>
           </select>
         </div>
         

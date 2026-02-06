@@ -39,6 +39,8 @@ midly = "0.5"
 # Audio file writing
 hound = "3.5"
 flacenc = "0.5.1"
+opus = "0.3"
+ogg = "0.9"
 
 # Video capture with GStreamer
 gstreamer = "0.24"
