@@ -550,6 +550,14 @@ impl MidiMonitor {
         
         println!("[Sacho] Manual recording start requested");
         
+        // Clear any stale idle timer so the idle checker doesn't immediately stop us.
+        // Without this, a stale last_event_time from a previous MIDI event
+        // can cause the idle checker to see "idle for > N seconds" and stop
+        // the recording within 1 second of starting.
+        // Setting to None means manual recordings run until explicitly stopped
+        // (idle timeout only applies when MIDI events set last_event_time).
+        *self.last_event_time.write() = None;
+        
         // Start recording (synchronous for manual start so caller knows when it's ready)
         start_recording(&self.app_handle, &self.capture_state, &self.video_manager);
         

@@ -99,8 +99,8 @@
         <h3>Recording</h3>
         <div class="setting-row">
           <label>
-            <span class="setting-label">Idle Timeout</span>
-            <span class="setting-description">Stop recording after no MIDI activity is detected for this length of time</span>
+            <span class="setting-label">Recording Timeout</span>
+            <span class="setting-description">Stop automatic recordings after no MIDI activity is detected for this length of time</span>
           </label>
           <div class="input-with-suffix">
             <input 
