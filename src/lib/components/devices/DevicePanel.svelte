@@ -160,7 +160,7 @@
               </button>
               {#if showMidiHelp}
                 <div class="help-tooltip">
-                  When MIDI is detected on a device marked as <strong>Trigger</strong>, all devices marked as <strong>Record</strong> will automatically start being recording.
+                  When MIDI is detected on a device marked as <strong>Trigger</strong>, all devices marked as <strong>Record</strong> will automatically start recording.
                 </div>
               {/if}
             </div>

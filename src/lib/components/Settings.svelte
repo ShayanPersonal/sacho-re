@@ -99,8 +99,8 @@
         <h3>Recording</h3>
         <div class="setting-row">
           <label>
-            <span class="setting-label">Auto-record timeout</span>
-            <span class="setting-description">Stop automatic recordings after no MIDI activity is detected for this length of time</span>
+            <span class="setting-label">Auto-recording timeout</span>
+            <span class="setting-description">Stop automatic recordings after no MIDI is detected for this length of time</span>
           </label>
           <div class="input-with-suffix">
             <input 
@@ -204,9 +204,9 @@
             <span class="setting-description">Format for recorded audio files</span>
           </label>
           <select bind:value={localSettings.audio_format} onchange={autoSave}>
-            <option value="wav">WAV (lossless, larger files)</option>
-            <option value="flac">FLAC (lossless, smaller files)</option>
-            <option value="opus">Opus (lossy but transparent. 192 kbps, smallest files)</option>
+            <option value="wav">WAV (lossless, largest files)</option>
+            <option value="flac">FLAC (lossless, medium-sized files)</option>
+            <option value="opus">Opus (lossy, smallest files)</option>
           </select>
         </div>
         
