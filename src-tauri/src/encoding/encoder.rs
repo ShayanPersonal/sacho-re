@@ -1223,9 +1223,9 @@ impl AsyncVideoEncoder {
                 if config.bitrate > 0 {
                     encoder.set_property("bitrate", config.bitrate / 1000);
                 }
-                // GOP size (keyframe interval)
+                // GOP size (keyframe interval) - MF expects i32, not u32
                 if config.keyframe_interval > 0 {
-                    encoder.set_property("gop-size", config.keyframe_interval);
+                    encoder.set_property("gop-size", config.keyframe_interval as i32);
                 }
                 // Low latency mode for real-time encoding
                 encoder.set_property("low-latency", true);
