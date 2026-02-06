@@ -110,8 +110,6 @@ pub enum HardwareEncoderType {
     Qsv,
     /// VA-API (Linux)
     VaApi,
-    /// Windows Media Foundation
-    MediaFoundation,
     /// Software fallback
     Software,
 }
@@ -136,8 +134,6 @@ impl HardwareEncoderType {
             }
             // Software AV1 encoding via libaom (slower but works everywhere)
             HardwareEncoderType::Software => Some("av1enc"),
-            // Media Foundation does not support AV1 encoding
-            HardwareEncoderType::MediaFoundation => None,
         }
     }
     
@@ -161,7 +157,6 @@ impl HardwareEncoderType {
             // These don't support VP8 encoding
             HardwareEncoderType::Nvenc => None,
             HardwareEncoderType::Amf => None,
-            HardwareEncoderType::MediaFoundation => None,
         }
     }
     
@@ -180,8 +175,6 @@ impl HardwareEncoderType {
                     None
                 }
             }
-            // Windows Media Foundation VP9 encoder
-            HardwareEncoderType::MediaFoundation => Some("mfvp9enc"),
             // Software fallback - vp9enc from libvpx is royalty-free
             HardwareEncoderType::Software => Some("vp9enc"),
             // These don't support VP9 encoding
@@ -197,7 +190,6 @@ impl HardwareEncoderType {
             HardwareEncoderType::Amf => "AMD AMF",
             HardwareEncoderType::Qsv => "Intel QuickSync",
             HardwareEncoderType::VaApi => "VA-API",
-            HardwareEncoderType::MediaFoundation => "Media Foundation",
             HardwareEncoderType::Software => "Software",
         }
     }
@@ -294,7 +286,6 @@ pub fn has_vp8_encoder() -> bool {
 /// Hardware encoders checked:
 /// - Intel QuickSync (qsvvp9enc) - Windows/Linux
 /// - VA-API (vavp9enc, vaapivp9enc) - Linux (Intel, AMD, some NVIDIA)
-/// - Windows Media Foundation (mfvp9enc) - Windows
 /// 
 /// Note: NVIDIA NVENC and AMD AMF do not support VP9 encoding.
 /// Note: Vulkan Video encoding in GStreamer does not yet support VP9.
@@ -310,10 +301,6 @@ pub fn detect_best_vp9_encoder() -> HardwareEncoderType {
     // Check VA-API - older 'gstreamer-vaapi' plugin (Linux, deprecated but still common)
     if gst::ElementFactory::find("vaapivp9enc").is_some() {
         return HardwareEncoderType::VaApi;
-    }
-    // Check Windows Media Foundation (Windows only)
-    if gst::ElementFactory::find("mfvp9enc").is_some() {
-        return HardwareEncoderType::MediaFoundation;
     }
     // Fall back to software (vp9enc from libvpx) - royalty-free
     if gst::ElementFactory::find("vp9enc").is_some() {
@@ -597,12 +584,29 @@ impl AsyncVideoEncoder {
         }
         
         let mut frames_encoded = 0u64;
+        let mut frames_dropped_stale = 0u64;
         let mut first_pts: Option<u64> = None;
+        
+        // Maximum age for a frame to be worth encoding. Frames older than this
+        // were captured too long ago — encoding them would just create a backlog
+        // that delays recording stop.
+        let max_frame_age = Duration::from_millis(500);
         
         // Process frames from channel
         loop {
             match receiver.recv() {
                 Ok(EncoderMessage::Frame(frame)) => {
+                    // Drop frames that are too old (encoder can't keep up)
+                    let age = frame.capture_time.elapsed();
+                    if age > max_frame_age && frames_encoded > 0 {
+                        frames_dropped_stale += 1;
+                        if frames_dropped_stale == 1 || frames_dropped_stale % 30 == 0 {
+                            println!("[Encoder] Dropping stale frame (age: {:?}, {} total dropped)", 
+                                age, frames_dropped_stale);
+                        }
+                        continue;
+                    }
+                    
                     // Normalize PTS relative to first frame
                     let pts = if let Some(base) = first_pts {
                         frame.pts.saturating_sub(base)
@@ -631,11 +635,13 @@ impl AsyncVideoEncoder {
                     
                     // Log progress periodically
                     if frames_encoded % 100 == 0 {
-                        println!("[Encoder] Encoded {} frames", frames_encoded);
+                        println!("[Encoder] Encoded {} frames ({} stale dropped)", 
+                            frames_encoded, frames_dropped_stale);
                     }
                 }
                 Ok(EncoderMessage::Finish) => {
-                    println!("[Encoder] Finishing encoding...");
+                    println!("[Encoder] Finishing encoding ({} frames encoded, {} stale dropped)...", 
+                        frames_encoded, frames_dropped_stale);
                     break;
                 }
                 Err(_) => {
@@ -897,11 +903,15 @@ impl AsyncVideoEncoder {
             .stream_type(gst_app::AppStreamType::Stream)
             .build();
         
-        // Queue to decouple appsrc from encoder and provide buffering
+        // Queue to decouple appsrc from encoder.
+        // leaky=downstream (2): when the queue is full, drop the OLDEST buffers
+        // to keep latency low. This prevents frame accumulation when the encoder
+        // can't keep up with real-time capture (e.g., software VP8 on slow CPUs).
         let queue = gst::ElementFactory::make("queue")
-            .property("max-size-buffers", 30u32)
-            .property("max-size-time", 0u64) // No time limit
-            .property("max-size-bytes", 0u32) // No byte limit
+            .property("max-size-buffers", 3u32)     // Small buffer — just enough to decouple threads
+            .property("max-size-time", 500_000_000u64) // 500ms max latency
+            .property("max-size-bytes", 0u32)        // No byte limit
+            .property_from_str("leaky", "downstream")   // drop oldest when full
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create queue: {}", e)))?;
         
@@ -1002,9 +1012,9 @@ impl AsyncVideoEncoder {
                 }
             }
             HardwareEncoderType::Software => {
-                // libaom (av1enc) settings - optimize for speed
-                // cpu-used: 0 (slowest) to 8 (fastest)
-                encoder.set_property("cpu-used", 8u32);
+                // libaom (av1enc) settings - prioritize real-time performance
+                // cpu-used: 0 (slowest) to 10 (fastest, libaom supports up to 10)
+                encoder.set_property("cpu-used", 10u32);
                 // Use multiple threads based on CPU cores
                 let num_cpus = std::thread::available_parallelism()
                     .map(|p| p.get() as u32)
@@ -1016,21 +1026,15 @@ impl AsyncVideoEncoder {
                 if config.bitrate > 0 {
                     encoder.set_property("target-bitrate", config.bitrate / 1000);
                 } else {
-                    // Default to 8 Mbps
-                    encoder.set_property("target-bitrate", 8000u32);
+                    // Default to 3 Mbps — AV1 is very efficient
+                    encoder.set_property("target-bitrate", 3000u32);
                 }
                 // Keyframe interval
                 if config.keyframe_interval > 0 {
                     encoder.set_property("keyframe-max-dist", config.keyframe_interval);
                 }
-                // Use VBR (variable bitrate) for better quality
-                encoder.set_property_from_str("end-usage", "vbr");
-            }
-            // Media Foundation does not support AV1 encoding
-            HardwareEncoderType::MediaFoundation => {
-                return Err(EncoderError::NotAvailable(
-                    "Media Foundation does not support AV1 encoding".into()
-                ));
+                // CBR for lower latency
+                encoder.set_property_from_str("end-usage", "cbr");
             }
         }
         
@@ -1104,35 +1108,40 @@ impl AsyncVideoEncoder {
                 }
             }
             HardwareEncoderType::Software => {
-                // libvpx vp8enc settings - optimize for speed
-                // deadline: 0=best, 1=realtime (fastest)
+                // libvpx vp8enc settings - prioritize real-time performance
+                // deadline: 1=realtime (fastest, drops quality to maintain speed)
                 encoder.set_property_from_str("deadline", "1");
-                // cpu-used: 0-16, higher = faster encoding (algorithmic complexity tradeoff)
-                // Use 8 as a balance - still fast but better quality than 16
-                encoder.set_property("cpu-used", 8i32);
+                // cpu-used: 0-16, higher = faster encoding (less algorithmic effort)
+                // 16 is maximum speed — essential for real-time on slower CPUs
+                encoder.set_property("cpu-used", 16i32);
                 // threads: use available CPU cores for parallel encoding
                 let num_cpus = std::thread::available_parallelism()
                     .map(|p| p.get() as i32)
                     .unwrap_or(4)
                     .min(16); // libvpx max threads is 16
                 encoder.set_property("threads", num_cpus);
-                // target-bitrate in bits per second (not kbps!)
+                // target-bitrate in bits per second
                 if config.bitrate > 0 {
                     encoder.set_property("target-bitrate", config.bitrate as i32);
                 } else {
-                    // Default to 12 Mbps for good quality
-                    encoder.set_property("target-bitrate", 12_000_000i32);
+                    // Default to 4 Mbps — lower than before to reduce encoder load.
+                    // VP8 at 4 Mbps still looks good for webcam footage.
+                    encoder.set_property("target-bitrate", 4_000_000i32);
                 }
                 // Keyframe interval
                 if config.keyframe_interval > 0 {
                     encoder.set_property("keyframe-max-dist", config.keyframe_interval as i32);
                 }
-                // Use VBR for better quality (CBR can be too restrictive)
-                encoder.set_property_from_str("end-usage", "vbr");
-                // Set buffer sizes for VBR - allows bitrate to fluctuate for quality
-                encoder.set_property("buffer-size", 6000i32); // 6 seconds of buffer
-                encoder.set_property("buffer-initial-size", 4000i32);
-                encoder.set_property("buffer-optimal-size", 5000i32);
+                // CBR (constant bitrate) is faster to encode than VBR and avoids
+                // the encoder buffering extra frames for rate-control lookahead
+                encoder.set_property_from_str("end-usage", "cbr");
+                // Small buffer to minimize latency (in milliseconds)
+                encoder.set_property("buffer-size", 500i32);
+                encoder.set_property("buffer-initial-size", 300i32);
+                encoder.set_property("buffer-optimal-size", 400i32);
+                // Static threshold: skip encoding blocks that don't change much
+                // (reduces CPU for typical webcam footage with static backgrounds)
+                encoder.set_property("static-threshold", 100i32);
             }
             // These encoder types don't support VP8
             _ => {
@@ -1212,26 +1221,13 @@ impl AsyncVideoEncoder {
                     encoder.set_property("bitrate", config.bitrate / 1000);
                 }
             }
-            HardwareEncoderType::MediaFoundation => {
-                // Windows Media Foundation VP9 settings
-                // Bitrate in kbps
-                if config.bitrate > 0 {
-                    encoder.set_property("bitrate", config.bitrate / 1000);
-                }
-                // GOP size (keyframe interval) - MF expects i32, not u32
-                if config.keyframe_interval > 0 {
-                    encoder.set_property("gop-size", config.keyframe_interval as i32);
-                }
-                // Low latency mode for real-time encoding
-                encoder.set_property("low-latency", true);
-            }
             HardwareEncoderType::Software => {
-                // libvpx vp9enc settings - optimize for speed
-                // deadline: 0=best, 1=realtime
+                // libvpx vp9enc settings - prioritize real-time performance
+                // deadline: 1=realtime
                 encoder.set_property_from_str("deadline", "1");
-                // cpu-used: 0-8 for VP9, higher = faster encoding
-                // Use 6 as a balance between speed and quality
-                encoder.set_property("cpu-used", 6i32);
+                // cpu-used: 0-8 for VP9 (VP9 max is 8, not 16 like VP8)
+                // 8 is maximum speed
+                encoder.set_property("cpu-used", 8i32);
                 // threads: use available CPU cores for parallel encoding
                 let num_cpus = std::thread::available_parallelism()
                     .map(|p| p.get() as i32)
@@ -1244,19 +1240,20 @@ impl AsyncVideoEncoder {
                 if config.bitrate > 0 {
                     encoder.set_property("target-bitrate", config.bitrate as i32);
                 } else {
-                    // Default to 10 Mbps for good quality (VP9 is more efficient than VP8)
-                    encoder.set_property("target-bitrate", 10_000_000i32);
+                    // Default to 3 Mbps — VP9 is more efficient than VP8
+                    encoder.set_property("target-bitrate", 3_000_000i32);
                 }
                 // Keyframe interval
                 if config.keyframe_interval > 0 {
                     encoder.set_property("keyframe-max-dist", config.keyframe_interval as i32);
                 }
-                // Use VBR for better quality
-                encoder.set_property_from_str("end-usage", "vbr");
-                // Set buffer sizes for VBR
-                encoder.set_property("buffer-size", 6000i32);
-                encoder.set_property("buffer-initial-size", 4000i32);
-                encoder.set_property("buffer-optimal-size", 5000i32);
+                // CBR for lower latency (no lookahead buffering)
+                encoder.set_property_from_str("end-usage", "cbr");
+                // Small buffer to minimize latency
+                encoder.set_property("buffer-size", 500i32);
+                encoder.set_property("buffer-initial-size", 300i32);
+                encoder.set_property("buffer-optimal-size", 400i32);
+                encoder.set_property("static-threshold", 100i32);
             }
             // These encoder types don't support VP9
             _ => {
