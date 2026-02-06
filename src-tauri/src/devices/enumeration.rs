@@ -288,6 +288,31 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
         println!("[Sacho] WARNING: Missing plugins may cause device enumeration to fail: {:?}", missing_plugins);
     }
     
+    // Check recording/encoding plugins
+    let recording_plugins = [
+        // Container & muxing
+        ("matroska",         "MKV/WebM container (matroskamux, matroskademux)"),
+        ("isomp4",           "MP4/MOV container"),
+        ("app",              "App elements (appsrc, appsink)"),
+        // Codecs
+        ("vpx",              "VP8/VP9 software encoding (libvpx)"),
+        ("jpeg",             "MJPEG encoding/decoding"),
+        ("videoparsersbad",  "Video parsers (jpegparse, av1parse, etc.)"),
+        // GPU-specific encoders
+        ("nvcodec",          "NVIDIA NVENC (RTX 40+ for AV1, older for H264/H265)"),
+        ("amfcodec",         "AMD AMF (RX 7000+ for AV1)"),
+        ("qsv",              "Intel QuickSync (Arc GPUs, recent iGPUs)"),
+    ];
+    
+    println!("[Sacho] Checking recording/encoding plugins:");
+    for (plugin_name, description) in recording_plugins {
+        if let Some(plugin) = registry.find_plugin(plugin_name) {
+            println!("[Sacho]   {} v{} - OK ({})", plugin_name, plugin.version(), description);
+        } else {
+            println!("[Sacho]   {} - not available ({})", plugin_name, description);
+        }
+    }
+    
     // Also check for device provider elements
     println!("[Sacho] Checking device providers:");
     #[cfg(target_os = "windows")]
