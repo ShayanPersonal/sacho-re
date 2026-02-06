@@ -1215,10 +1215,10 @@ fn write_flac_file(
     
     let flac_path = session_path.join(filename);
     
-    // Convert f32 samples to i32 (16-bit range for compatibility)
+    // Convert f32 samples to i32 (24-bit range for professional quality)
     let samples_i32: Vec<i32> = audio.samples
         .iter()
-        .map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i32)
+        .map(|&s| (s.clamp(-1.0, 1.0) * 8_388_607.0) as i32)
         .collect();
     
     // Create FLAC encoder config
@@ -1230,7 +1230,7 @@ fn write_flac_file(
     let source = flacenc::source::MemSource::from_samples(
         &samples_i32,
         audio.channels as usize,
-        16, // bits per sample
+        24, // bits per sample
         audio.sample_rate as usize,
     );
     
@@ -1261,7 +1261,7 @@ fn write_flac_file(
     })
 }
 
-/// Write audio samples to an Opus file in an Ogg container (192 kbps)
+/// Write audio samples to an Opus file in an Ogg container (256 kbps)
 fn write_opus_file(
     session_path: &PathBuf,
     filename: &str,
@@ -1282,7 +1282,7 @@ fn write_opus_file(
         audio.samples.clone()
     };
 
-    // Create Opus encoder at 192 kbps
+    // Create Opus encoder at 256 kbps
     let opus_channels = if channels == 1 {
         opus::Channels::Mono
     } else {
@@ -1291,7 +1291,7 @@ fn write_opus_file(
     let mut encoder = opus::Encoder::new(target_rate, opus_channels, opus::Application::Audio)
         .map_err(|e| anyhow::anyhow!("Opus encoder init error: {}", e))?;
     encoder
-        .set_bitrate(opus::Bitrate::Bits(192_000))
+        .set_bitrate(opus::Bitrate::Bits(256_000))
         .map_err(|e| anyhow::anyhow!("Opus set bitrate error: {}", e))?;
 
     // Pre-skip: number of samples the decoder must discard at the start
