@@ -362,11 +362,6 @@ pub fn has_hardware_vp8_encoder() -> bool {
     !matches!(encoder_type, HardwareEncoderType::Software) && encoder_type.vp8_encoder_element().is_some()
 }
 
-/// Legacy alias for has_hardware_av1_encoder
-pub fn has_hardware_encoder() -> bool {
-    has_hardware_av1_encoder()
-}
-
 /// Get the recommended default video encoding mode
 /// 
 /// Priority:
@@ -1232,7 +1227,7 @@ impl AsyncVideoEncoder {
             }
             HardwareEncoderType::Software => {
                 // libvpx vp9enc settings - optimize for speed
-                // deadline: 0=best, 1=good, 2=realtime (fastest)
+                // deadline: 0=best, 1=realtime
                 encoder.set_property_from_str("deadline", "1");
                 // cpu-used: 0-8 for VP9, higher = faster encoding
                 // Use 6 as a balance between speed and quality

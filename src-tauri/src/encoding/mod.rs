@@ -14,7 +14,7 @@ pub use encoder::{
     AsyncVideoEncoder, EncoderConfig, EncoderError, EncoderStats,
     HardwareEncoderType, RawVideoFrame, 
     detect_best_encoder, detect_best_encoder_for_codec, detect_best_av1_encoder, detect_best_vp8_encoder, detect_best_vp9_encoder,
-    has_hardware_encoder, has_hardware_av1_encoder, has_hardware_vp9_encoder, has_hardware_vp8_encoder,
+    has_hardware_av1_encoder, has_hardware_vp9_encoder, has_hardware_vp8_encoder,
     has_av1_encoder, has_vp8_encoder, has_vp9_encoder,
     get_recommended_encoding_mode,
 };
