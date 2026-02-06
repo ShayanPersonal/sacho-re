@@ -24,7 +24,7 @@
       if (localSettings && availability) {
         const currentMode = localSettings.video_encoding_mode;
         const isCurrentValid = (
-          (currentMode === 'av1_hardware' && availability.av1_available) ||
+          (currentMode === 'av1' && availability.av1_available) ||
           (currentMode === 'vp9' && availability.vp9_available) ||
           (currentMode === 'vp8' && availability.vp8_available)
         );
@@ -151,13 +151,13 @@
           </div>
           <select bind:value={localSettings.video_encoding_mode} onchange={autoSave}>
             {#if encoderAvailability?.av1_available}
-              <option value="av1_hardware">AV1 ({encoderAvailability.av1_encoder_name}){encoderAvailability.av1_hardware ? '' : ' - slow'}</option>
+              <option value="av1">AV1 ({encoderAvailability.av1_encoder_name + (encoderAvailability.av1_hardware ? '' : ' - slow')})</option>
             {/if}
             {#if encoderAvailability?.vp9_available}
-              <option value="vp9">VP9 ({encoderAvailability.vp9_encoder_name}){encoderAvailability.vp9_hardware ? '' : ' - slow'}</option>
+              <option value="vp9">VP9 ({encoderAvailability.vp9_encoder_name + (encoderAvailability.vp9_hardware ? '' : ' - slow')})</option>
             {/if}
             {#if encoderAvailability?.vp8_available}
-              <option value="vp8">VP8 ({encoderAvailability.vp8_encoder_name}){encoderAvailability.vp8_hardware ? '' : ' - slow'}</option>
+              <option value="vp8">VP8 ({encoderAvailability.vp8_encoder_name + (encoderAvailability.vp8_hardware ? '' : ' - slow')})</option>
             {/if}
             {#if !encoderAvailability?.av1_available && !encoderAvailability?.vp9_available && !encoderAvailability?.vp8_available}
               <option value="" disabled>No encoders available</option>
@@ -206,7 +206,7 @@
           <select bind:value={localSettings.audio_format} onchange={autoSave}>
             <option value="wav">WAV (lossless, largest files)</option>
             <option value="flac">FLAC (lossless, medium-sized files)</option>
-            <option value="opus">Opus (lossy, smallest files)</option>
+            <!--<option value="opus">Opus (lossy, 256 kbps, smallest files)</option> Lossy audio formats may cause issues for users down the line.--> 
           </select>
         </div>
         

@@ -125,7 +125,7 @@ export interface VideoFileInfo {
   size_bytes: number;
 }
 
-export type VideoEncodingMode = 'av1_hardware' | 'vp9' | 'vp8' | 'raw';
+export type VideoEncodingMode = 'av1' | 'vp9' | 'vp8' | 'raw';
 
 export interface Config {
   storage_path: string;

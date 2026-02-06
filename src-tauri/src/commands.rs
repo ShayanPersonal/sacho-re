@@ -710,7 +710,7 @@ pub fn get_encoder_availability() -> EncoderAvailability {
             None
         },
         recommended_default: match recommended {
-            crate::config::VideoEncodingMode::Av1Hardware => "av1_hardware".to_string(),
+            crate::config::VideoEncodingMode::Av1 => "av1".to_string(),
             crate::config::VideoEncodingMode::Vp9 => "vp9".to_string(),
             crate::config::VideoEncodingMode::Vp8 => "vp8".to_string(),
             crate::config::VideoEncodingMode::Raw => "raw".to_string(),

@@ -539,7 +539,7 @@ impl VideoCapturePipeline {
             is_recording: false,
             file_writer: None,
             raw_encoder: None,
-            encoding_mode: VideoEncodingMode::Av1Hardware,
+            encoding_mode: VideoEncodingMode::Av1,
             pixel_format: None,
             consecutive_full_drops: 0,
             total_frames_dropped: 0,
@@ -779,7 +779,7 @@ impl VideoCapturePipeline {
         // For raw video, determine the actual output format based on encoding mode
         if self.codec == crate::encoding::VideoCodec::Raw {
             let target_codec = match self.encoding_mode {
-                VideoEncodingMode::Av1Hardware => crate::encoding::VideoCodec::Av1,
+                VideoEncodingMode::Av1 => crate::encoding::VideoCodec::Av1,
                 VideoEncodingMode::Vp9 => crate::encoding::VideoCodec::Vp9,
                 VideoEncodingMode::Vp8 => crate::encoding::VideoCodec::Vp8,
                 VideoEncodingMode::Raw => crate::encoding::VideoCodec::Av1, // Fallback
@@ -812,7 +812,7 @@ impl VideoCapturePipeline {
         if self.codec == crate::encoding::VideoCodec::Raw {
             // Determine target codec based on encoding mode
             let target_codec = match self.encoding_mode {
-                VideoEncodingMode::Av1Hardware => crate::encoding::VideoCodec::Av1,
+                VideoEncodingMode::Av1 => crate::encoding::VideoCodec::Av1,
                 VideoEncodingMode::Vp9 => crate::encoding::VideoCodec::Vp9,
                 VideoEncodingMode::Vp8 => crate::encoding::VideoCodec::Vp8,
                 VideoEncodingMode::Raw => crate::encoding::VideoCodec::Av1, // Fallback
@@ -1088,7 +1088,7 @@ impl VideoCaptureManager {
             pipelines: HashMap::new(),
             pre_roll_secs,
             is_recording: false,
-            encoding_mode: VideoEncodingMode::Av1Hardware,
+            encoding_mode: VideoEncodingMode::Av1,
         }
     }
     

@@ -55,7 +55,7 @@
   
   function getEncodingLabel(mode: VideoEncodingMode | undefined): string {
     switch (mode) {
-      case 'av1_hardware': return 'AV1';
+      case 'av1': return 'AV1';
       case 'vp9': return 'VP9';
       case 'vp8': return 'VP8';
       default: return 'AV1';

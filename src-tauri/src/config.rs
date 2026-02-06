@@ -83,8 +83,8 @@ pub enum AudioFormat {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum VideoEncodingMode {
-    /// Use AV1 hardware encoding if available (royalty-free, best compression)
-    Av1Hardware,
+    /// Use AV1 encoding (royalty-free, best compression, hardware or software)
+    Av1,
     /// Use VP9 encoding (royalty-free, excellent compression, hardware or software)
     Vp9,
     /// Use VP8 encoding (royalty-free, widely compatible, hardware or software)

@@ -360,7 +360,7 @@ pub fn get_recommended_encoding_mode() -> crate::config::VideoEncodingMode {
     use crate::config::VideoEncodingMode;
     
     if has_hardware_av1_encoder() {
-        VideoEncodingMode::Av1Hardware
+        VideoEncodingMode::Av1
     } else if has_hardware_vp9_encoder() {
         VideoEncodingMode::Vp9
     } else if has_hardware_vp8_encoder() {
