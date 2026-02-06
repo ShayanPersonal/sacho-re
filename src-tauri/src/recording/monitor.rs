@@ -161,11 +161,6 @@ impl MidiMonitor {
         println!("[Sacho] Record MIDI devices: {:?}", config.selected_midi_devices);
         println!("[Sacho] Pre-roll: {} seconds", config.pre_roll_secs);
         
-        if config.trigger_midi_devices.is_empty() {
-            println!("[Sacho] No MIDI trigger devices configured");
-            return Ok(());
-        }
-        
         let midi_in = MidiInput::new("sacho-enum")?;
         let ports = midi_in.ports();
         
@@ -467,9 +462,16 @@ impl MidiMonitor {
             video_mgr.pipeline_count()
         };
         
-        if !self.trigger_connections.is_empty() {
+        let midi_count = self.trigger_connections.len() + self.capture_connections.len();
+        let has_any_device = midi_count > 0 || audio_count > 0 || video_count > 0;
+        
+        if has_any_device {
             *self.is_monitoring.write() = true;
-            self.start_idle_checker();
+            
+            // Only start idle checker if we have MIDI triggers (auto-stop on idle)
+            if !self.trigger_connections.is_empty() {
+                self.start_idle_checker();
+            }
             
             // Start video polling thread
             if video_count > 0 {
@@ -477,9 +479,9 @@ impl MidiMonitor {
             }
             
             println!("[Sacho] Monitoring active ({} MIDI, {} audio, {} video)", 
-                self.trigger_connections.len() + self.capture_connections.len(),
-                audio_count,
-                video_count);
+                midi_count, audio_count, video_count);
+        } else {
+            println!("[Sacho] No devices configured");
         }
         
         Ok(())
@@ -539,6 +541,15 @@ impl MidiMonitor {
     
     /// Manually start recording (same as MIDI trigger but without waiting for MIDI)
     pub fn manual_start_recording(&self) -> Result<(), String> {
+        // Check that at least one device is active
+        let midi_count = self.trigger_connections.len() + self.capture_connections.len();
+        let audio_count = AUDIO_STREAMS.with(|streams| streams.borrow().len());
+        let video_count = self.video_manager.lock().pipeline_count();
+        
+        if midi_count == 0 && audio_count == 0 && video_count == 0 {
+            return Err("No devices selected. Configure at least one MIDI, audio, or video device before recording.".to_string());
+        }
+        
         // Atomically check and set is_starting to prevent race conditions
         {
             let mut state = self.capture_state.lock();

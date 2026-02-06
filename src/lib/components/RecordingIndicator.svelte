@@ -16,11 +16,15 @@
   let audioCount = $derived($audioDeviceCount.selected);
   let videoCount = $derived($videoDeviceCount.selected);
   
-  // Button should be disabled during loading, stopping, or initializing
+  // No devices selected at all
+  let noDevices = $derived(midiCount === 0 && audioCount === 0 && videoCount === 0);
+  
+  // Button should be disabled during loading, stopping, initializing, or if no devices
   let buttonDisabled = $derived(
     isLoading || 
     $recordingState.status === 'stopping' || 
-    $recordingState.status === 'initializing'
+    $recordingState.status === 'initializing' ||
+    (noDevices && !$isRecording)
   );
   
   async function handleToggle() {
@@ -71,11 +75,11 @@
           {videoCount}
         </span>
       </div>
-      <div class="trigger-status" class:ready={hasTrigger} class:warning={!hasTrigger}>
+      <div class="trigger-status" class:ready={hasTrigger} class:manual={!hasTrigger && !noDevices}>
         {#if hasTrigger}
           Waiting for MIDI trigger<span class="ellipsis"></span>
-        {:else}
-          No trigger configured
+        {:else if !noDevices}
+          Manual recording ready
         {/if}
       </div>
     {/if}
@@ -174,8 +178,8 @@
     color: #5a5a5a;
   }
   
-  .trigger-status.warning {
-    color: #a65d5d;
+  .trigger-status.manual {
+    color: #5a5a5a;
   }
   
   .ellipsis {
@@ -324,8 +328,8 @@
     color: #7a7a7a;
   }
 
-  :global(body.light-mode) .trigger-status.warning {
-    color: #a04040;
+  :global(body.light-mode) .trigger-status.manual {
+    color: #7a7a7a;
   }
 
   :global(body.light-mode) .status-dot {

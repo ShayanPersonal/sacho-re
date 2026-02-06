@@ -12,7 +12,7 @@
     midiDeviceCount,
     videoDeviceCount,
     refreshDevices,
-    saveDeviceSelection,
+    deviceSaveStatus,
     toggleAudioDevice,
     toggleMidiDevice,
     toggleMidiTrigger,
@@ -74,8 +74,6 @@
   }
   
   let expandedSections = $state<Set<string>>(new Set(['audio', 'midi']));
-  let isSaving = $state(false);
-  let saveError = $state<string | null>(null);
   let filterQuery = $state('');
   let showMidiHelp = $state(false);
   let showFormatHelp = $state(false);
@@ -86,19 +84,6 @@
       expandedSections.delete(section);
     } else {
       expandedSections.add(section);
-    }
-  }
-  
-  async function handleSave() {
-    isSaving = true;
-    saveError = null;
-    try {
-      await saveDeviceSelection();
-    } catch (error) {
-      console.error('Failed to save:', error);
-      saveError = error instanceof Error ? error.message : String(error);
-    } finally {
-      isSaving = false;
     }
   }
   
@@ -113,26 +98,29 @@
   <div class="panel-header">
     <h2>Devices</h2>
     <div class="header-actions">
+      {#if $deviceSaveStatus === 'saving' || $deviceSaveStatus === 'saved' || $deviceSaveStatus === 'error'}
+        <div class="save-status" class:saving={$deviceSaveStatus === 'saving'} class:saved={$deviceSaveStatus === 'saved'} class:error={$deviceSaveStatus === 'error'}>
+          {#if $deviceSaveStatus === 'saving'}
+            <svg class="icon spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>
+            </svg>
+            Saving...
+          {:else if $deviceSaveStatus === 'saved'}
+            <svg class="icon check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            Saved
+          {:else if $deviceSaveStatus === 'error'}
+            Save failed
+          {/if}
+        </div>
+      {/if}
       <button class="action-btn" onclick={refreshDevices}>
         Refresh
       </button>
-      <button 
-        class="action-btn primary" 
-        onclick={handleSave}
-        disabled={isSaving}
-      >
-        {isSaving ? 'Saving...' : 'Save'}
-      </button>
     </div>
   </div>
-  
-  {#if saveError}
-    <div class="error-banner">
-      <span class="error-icon">⚠️</span>
-      <span class="error-text">{saveError}</span>
-      <button class="error-dismiss" onclick={() => saveError = null}>×</button>
-    </div>
-  {/if}
   
   <div class="search-bar">
     <input 
@@ -172,7 +160,7 @@
               </button>
               {#if showMidiHelp}
                 <div class="help-tooltip">
-                  When MIDI is detected on a device marked as <strong>Trigger</strong>, all devices marked as <strong>Record</strong> will start recording.
+                  When MIDI is detected on a device marked as <strong>Trigger</strong>, all devices marked as <strong>Record</strong> will automatically start being recording.
                 </div>
               {/if}
             </div>
@@ -354,41 +342,6 @@
     gap: 1rem;
   }
   
-  .error-banner {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    border-radius: 0.5rem;
-    color: #fca5a5;
-    font-size: 0.875rem;
-  }
-  
-  .error-icon {
-    flex-shrink: 0;
-  }
-  
-  .error-text {
-    flex: 1;
-  }
-  
-  .error-dismiss {
-    background: none;
-    border: none;
-    color: #fca5a5;
-    cursor: pointer;
-    font-size: 1.25rem;
-    padding: 0;
-    line-height: 1;
-    opacity: 0.7;
-  }
-  
-  .error-dismiss:hover {
-    opacity: 1;
-  }
-  
   .panel-header {
     display: flex;
     justify-content: space-between;
@@ -405,7 +358,58 @@
   
   .header-actions {
     display: flex;
+    align-items: center;
     gap: 0.5rem;
+  }
+  
+  .save-status {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    transition: all 0.2s ease;
+  }
+  
+  .save-status .icon {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+  }
+  
+  .save-status.saving {
+    background: rgba(113, 113, 122, 0.1);
+    color: #8a8a8a;
+  }
+  
+  .save-status.saving .spinner {
+    animation: spin 1s linear infinite;
+  }
+  
+  .save-status.saved {
+    background: rgba(201, 169, 98, 0.15);
+    color: #c9a962;
+    animation: fadeOut 2s ease forwards;
+    animation-delay: 1s;
+  }
+  
+  .save-status.error {
+    background: rgba(239, 68, 68, 0.1);
+    color: #fca5a5;
+  }
+  
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  
+  @keyframes fadeOut {
+    0% { opacity: 1; }
+    70% { opacity: 1; }
+    100% { opacity: 0; }
   }
   
   .action-btn {
@@ -425,21 +429,6 @@
   .action-btn:hover:not(:disabled) {
     color: #a8a8a8;
     border-color: rgba(255, 255, 255, 0.1);
-  }
-  
-  .action-btn.primary {
-    border-color: rgba(201, 169, 98, 0.3);
-    color: #c9a962;
-  }
-  
-  .action-btn.primary:hover:not(:disabled) {
-    background: rgba(201, 169, 98, 0.1);
-    border-color: rgba(201, 169, 98, 0.4);
-  }
-  
-  .action-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
   
   .search-bar input {
@@ -825,13 +814,19 @@
     border-color: rgba(0, 0, 0, 0.2);
   }
 
-  :global(body.light-mode) .action-btn.primary {
-    border-color: rgba(160, 128, 48, 0.4);
+  :global(body.light-mode) .save-status.saving {
+    background: rgba(0, 0, 0, 0.05);
+    color: #6a6a6a;
+  }
+
+  :global(body.light-mode) .save-status.saved {
+    background: rgba(160, 128, 48, 0.12);
     color: #8a6a20;
   }
 
-  :global(body.light-mode) .action-btn.primary:hover:not(:disabled) {
-    background: rgba(160, 128, 48, 0.1);
+  :global(body.light-mode) .save-status.error {
+    background: rgba(200, 60, 60, 0.1);
+    color: #a04040;
   }
 
   :global(body.light-mode) .search-bar input {
@@ -945,12 +940,6 @@
 
   :global(body.light-mode) .empty-message {
     color: #8a8a8a;
-  }
-
-  :global(body.light-mode) .error-banner {
-    background: rgba(200, 60, 60, 0.1);
-    border-color: rgba(200, 60, 60, 0.3);
-    color: #a04040;
   }
 
   :global(body.light-mode) .device-list::-webkit-scrollbar-track {

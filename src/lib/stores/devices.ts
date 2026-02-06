@@ -7,6 +7,10 @@ import { settings } from './settings';
 
 import type { VideoCodec } from '$lib/api';
 
+// Save status for device changes: 'idle' | 'saving' | 'saved' | 'error'
+export const deviceSaveStatus = writable<'idle' | 'saving' | 'saved' | 'error'>('idle');
+let deviceSaveTimeout: ReturnType<typeof setTimeout> | null = null;
+
 // Device lists
 export const audioDevices = writable<AudioDevice[]>([]);
 export const midiDevices = writable<MidiDevice[]>([]);
@@ -134,6 +138,14 @@ export async function cleanupStaleDeviceIds() {
 }
 
 export async function saveDeviceSelection() {
+  // Clear any pending fade timeout
+  if (deviceSaveTimeout) {
+    clearTimeout(deviceSaveTimeout);
+    deviceSaveTimeout = null;
+  }
+  
+  deviceSaveStatus.set('saving');
+  
   // Use the settings store as the source of truth for current config
   // This ensures we don't overwrite settings changed elsewhere (like video_encoding_mode)
   let currentConfig: Config | null = null;
@@ -171,13 +183,32 @@ export async function saveDeviceSelection() {
   };
   
   try {
+    // updateConfig is synchronous on the backend - it waits for monitor.start()
+    // to complete before returning, so when this resolves the backend is ready
     await updateConfig(newConfig);
     config.set(newConfig);
     // Also update the settings store so RecordingIndicator reflects the changes
     settings.set(newConfig);
+    
+    deviceSaveStatus.set('saved');
+    
+    // Fade back to idle after 2 seconds
+    deviceSaveTimeout = setTimeout(() => {
+      deviceSaveStatus.set('idle');
+    }, 2000);
   } catch (error) {
     console.error('Failed to save device selection:', error);
+    deviceSaveStatus.set('error');
     throw error;
+  }
+}
+
+/** Auto-save device selection (call after any toggle/change) */
+async function autoSaveDevices() {
+  try {
+    await saveDeviceSelection();
+  } catch (error) {
+    // Error is already logged in saveDeviceSelection
   }
 }
 
@@ -191,6 +222,7 @@ export function toggleAudioDevice(deviceId: string) {
     }
     return newSet;
   });
+  autoSaveDevices();
 }
 
 export function toggleMidiDevice(deviceId: string) {
@@ -203,6 +235,7 @@ export function toggleMidiDevice(deviceId: string) {
     }
     return newSet;
   });
+  autoSaveDevices();
 }
 
 export function toggleMidiTrigger(deviceId: string) {
@@ -215,6 +248,7 @@ export function toggleMidiTrigger(deviceId: string) {
     }
     return newSet;
   });
+  autoSaveDevices();
 }
 
 export function toggleVideoDevice(deviceId: string) {
@@ -227,6 +261,7 @@ export function toggleVideoDevice(deviceId: string) {
     }
     return newSet;
   });
+  autoSaveDevices();
 }
 
 /** Set the codec to use for a video device */
@@ -235,6 +270,7 @@ export function setVideoDeviceCodec(deviceId: string, codec: VideoCodec) {
     ...codecs,
     [deviceId]: codec
   }));
+  autoSaveDevices();
 }
 
 /** Get the selected codec for a video device, or undefined if using default */

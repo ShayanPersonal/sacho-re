@@ -181,10 +181,14 @@ impl VideoDemuxer for MjpegDemuxer {
         if self.pipeline.current_state() != gst::State::Playing {
             self.pipeline.set_state(gst::State::Playing)
                 .map_err(|e| VideoError::Gst(format!("Failed to set PLAYING: {:?}", e)))?;
+            
+            // Wait for the state change to complete before pulling
+            let _ = self.pipeline.state(gst::ClockTime::from_seconds(2));
         }
         
-        // Pull next sample
-        let sample = match self.pull_sample(gst::ClockTime::from_mseconds(100))? {
+        // Pull next sample (generous timeout to handle files with non-zero start PTS
+        // where the demuxer may need to scan forward)
+        let sample = match self.pull_sample(gst::ClockTime::from_seconds(2))? {
             Some(s) => s,
             None => return Ok(None),
         };

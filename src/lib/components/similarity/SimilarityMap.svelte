@@ -184,7 +184,7 @@
 
 <div class="similarity-map">
   <div class="map-header">
-    <h2>Similarity Map</h2>
+    <h2>Similarity</h2>
     <div class="map-stats">
       <span>{$similarityData.points.length} sessions</span>
       <span>•</span>

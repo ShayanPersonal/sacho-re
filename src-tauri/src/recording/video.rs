@@ -157,8 +157,9 @@ pub struct VideoCapturePipeline {
     recording_path: Option<PathBuf>,
     /// Recording start time
     recording_start: Option<Instant>,
-    /// PTS offset for current recording (to normalize timestamps)
-    pts_offset: u64,
+    /// PTS offset for current recording (to normalize timestamps to start at 0).
+    /// None until the first frame is seen, then set to that frame's PTS.
+    pts_offset: Option<u64>,
     /// Frames written during current recording
     frames_written: u64,
     /// Video dimensions
@@ -176,6 +177,10 @@ pub struct VideoCapturePipeline {
     encoding_mode: VideoEncodingMode,
     /// Pixel format for raw video capture
     pixel_format: Option<String>,
+    /// Consecutive polls where ALL frames were dropped (encoder stalled detection)
+    consecutive_full_drops: u32,
+    /// Total frames dropped during this recording
+    total_frames_dropped: u64,
 }
 
 /// Generic video file writer that handles different codecs and containers
@@ -293,11 +298,12 @@ impl VideoWriter {
         })
     }
     
-    fn write_frame(&self, frame: &BufferedFrame, pts_offset: u64) -> Result<()> {
+    fn write_frame(&self, frame: &BufferedFrame, pts_offset: Option<u64>) -> Result<()> {
+        let offset = pts_offset.unwrap_or(frame.pts);
         let mut buffer = gst::Buffer::from_slice(frame.data.clone());
         {
             let buffer_ref = buffer.get_mut().unwrap();
-            buffer_ref.set_pts(gst::ClockTime::from_nseconds(frame.pts.saturating_sub(pts_offset)));
+            buffer_ref.set_pts(gst::ClockTime::from_nseconds(frame.pts.saturating_sub(offset)));
             buffer_ref.set_duration(gst::ClockTime::from_nseconds(frame.duration));
         }
         
@@ -525,7 +531,7 @@ impl VideoCapturePipeline {
             preroll_buffer,
             recording_path: None,
             recording_start: None,
-            pts_offset: 0,
+            pts_offset: None,
             frames_written: 0,
             width: 1280,
             height: 720,
@@ -535,6 +541,8 @@ impl VideoCapturePipeline {
             raw_encoder: None,
             encoding_mode: VideoEncodingMode::Av1Hardware,
             pixel_format: None,
+            consecutive_full_drops: 0,
+            total_frames_dropped: 0,
         })
     }
     
@@ -709,7 +717,7 @@ impl VideoCapturePipeline {
             preroll_buffer,
             recording_path: None,
             recording_start: None,
-            pts_offset: 0,
+            pts_offset: None,
             frames_written: 0,
             width: 1280,
             height: 720,
@@ -719,6 +727,8 @@ impl VideoCapturePipeline {
             raw_encoder: None,
             encoding_mode,
             pixel_format: Some("NV12".to_string()),
+            consecutive_full_drops: 0,
+            total_frames_dropped: 0,
         })
     }
     
@@ -792,7 +802,11 @@ impl VideoCapturePipeline {
             .map(|f| f.wall_time.elapsed())
             .unwrap_or(Duration::ZERO);
         
-        self.pts_offset = preroll_frames.first().map(|f| f.pts).unwrap_or(0);
+        // Set PTS offset from the first pre-roll frame. If there are no pre-roll
+        // frames (e.g. recording started before buffer filled), leave as None so
+        // the first frame arriving in poll() will set it. This ensures MKV
+        // timestamps always start at 0.
+        self.pts_offset = preroll_frames.first().map(|f| f.pts);
         
         // Handle raw vs pre-encoded video differently
         if self.codec == crate::encoding::VideoCodec::Raw {
@@ -861,6 +875,8 @@ impl VideoCapturePipeline {
         self.recording_start = Some(Instant::now());
         self.frames_written = preroll_frames.len() as u64;
         self.is_recording = true;
+        self.consecutive_full_drops = 0;
+        self.total_frames_dropped = 0;
         
         println!("[Video] Started recording, pre-roll: {:?}", preroll_duration);
         
@@ -995,12 +1011,43 @@ impl VideoCapturePipeline {
             }
             
             self.frames_written += frames_sent;
+            self.total_frames_dropped += frames_dropped;
             
             if frames_dropped > 0 {
-                println!("[Video] Warning: Dropped {} frames due to encoder backpressure", frames_dropped);
+                // Track consecutive polls where ALL frames were dropped (encoder stalled)
+                if frames_sent == 0 && !frames.is_empty() {
+                    self.consecutive_full_drops += 1;
+                } else {
+                    self.consecutive_full_drops = 0;
+                }
+                
+                // Rate-limit warnings: log first, then every 30th occurrence
+                if self.total_frames_dropped == frames_dropped || self.total_frames_dropped % 30 == 0 {
+                    println!("[Video] Warning: Dropped {} frames this poll ({} total) due to encoder backpressure", 
+                        frames_dropped, self.total_frames_dropped);
+                }
+                
+                // If encoder has been completely stalled for ~5 seconds (e.g., 150 polls at ~30ms),
+                // it's dead — abort gracefully instead of leaking memory
+                if self.consecutive_full_drops > 150 {
+                    println!("[Video] ERROR: Encoder stalled for too long ({} consecutive polls with 0 frames accepted, {} total dropped). Aborting.", 
+                        self.consecutive_full_drops, self.total_frames_dropped);
+                    // Drop the encoder to clean up its resources
+                    self.raw_encoder = None;
+                    self.is_recording = false;
+                    return Err(VideoError::Pipeline("Encoder stalled, recording aborted".to_string()));
+                }
+            } else if !frames.is_empty() {
+                self.consecutive_full_drops = 0;
             }
         } else if let Some(ref writer) = self.file_writer {
             // Pre-encoded video - write directly
+            // Set pts_offset from first frame if not yet initialized (no pre-roll case)
+            if self.pts_offset.is_none() {
+                if let Some(first) = frames.first() {
+                    self.pts_offset = Some(first.pts);
+                }
+            }
             for frame in &frames {
                 writer.write_frame(frame, self.pts_offset)?;
             }
