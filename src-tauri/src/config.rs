@@ -76,7 +76,6 @@ pub struct Config {
 pub enum AudioFormat {
     Wav,
     Flac,
-    Opus,
 }
 
 /// Video encoding mode for raw video sources

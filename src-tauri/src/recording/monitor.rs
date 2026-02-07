@@ -954,7 +954,6 @@ fn stop_recording(
         let extension = match audio_format {
             crate::config::AudioFormat::Wav => "wav",
             crate::config::AudioFormat::Flac => "flac",
-            crate::config::AudioFormat::Opus => "opus",
         };
         
         let filename = if audio_data.len() == 1 {
@@ -966,7 +965,6 @@ fn stop_recording(
         let result = match audio_format {
             crate::config::AudioFormat::Wav => write_wav_file(&session_path, &filename, audio),
             crate::config::AudioFormat::Flac => write_flac_file(&session_path, &filename, audio),
-            crate::config::AudioFormat::Opus => write_opus_file(&session_path, &filename, audio),
         };
         
         match result {
@@ -1261,193 +1259,9 @@ fn write_flac_file(
     })
 }
 
-/// Write audio samples to an Opus file in an Ogg container (256 kbps)
-fn write_opus_file(
-    session_path: &PathBuf,
-    filename: &str,
-    audio: &CollectedAudio,
-) -> anyhow::Result<AudioFileInfo> {
-    use ogg::writing::{PacketWriter, PacketWriteEndInfo};
-
-    let opus_path = session_path.join(filename);
-
-    // Opus only supports specific sample rates: 8000, 12000, 16000, 24000, 48000 Hz.
-    // Resample to the nearest supported rate (almost always 48000).
-    let target_rate = nearest_opus_sample_rate(audio.sample_rate);
-    let channels = audio.channels.min(2); // Opus simple API supports mono/stereo
-
-    let samples = if audio.sample_rate != target_rate {
-        resample_linear(&audio.samples, audio.sample_rate, target_rate, audio.channels)
-    } else {
-        audio.samples.clone()
-    };
-
-    // Create Opus encoder at 256 kbps
-    let opus_channels = if channels == 1 {
-        opus::Channels::Mono
-    } else {
-        opus::Channels::Stereo
-    };
-    let mut encoder = opus::Encoder::new(target_rate, opus_channels, opus::Application::Audio)
-        .map_err(|e| anyhow::anyhow!("Opus encoder init error: {}", e))?;
-    encoder
-        .set_bitrate(opus::Bitrate::Bits(256_000))
-        .map_err(|e| anyhow::anyhow!("Opus set bitrate error: {}", e))?;
-
-    // Pre-skip: number of samples the decoder must discard at the start
-    let pre_skip = encoder
-        .get_lookahead()
-        .map_err(|e| anyhow::anyhow!("Opus get lookahead error: {}", e))? as u16;
-
-    // Frame size: 20 ms of audio per channel (960 samples at 48 kHz)
-    let frame_size = (target_rate as usize * 20) / 1000;
-    let frame_samples = frame_size * channels as usize;
-
-    let file = std::fs::File::create(&opus_path)?;
-    let mut packet_writer = PacketWriter::new(file);
-    let serial: u32 = 1;
-
-    // --- OpusHead identification header (RFC 7845 §5.1) ---
-    let opus_head = build_opus_head(channels as u8, pre_skip, audio.sample_rate);
-    packet_writer.write_packet(
-        opus_head,
-        serial,
-        PacketWriteEndInfo::EndPage,
-        0,
-    )?;
-
-    // --- OpusTags comment header (RFC 7845 §5.2) ---
-    let opus_tags = build_opus_tags();
-    packet_writer.write_packet(
-        opus_tags,
-        serial,
-        PacketWriteEndInfo::EndPage,
-        0,
-    )?;
-
-    // --- Audio data packets ---
-    let mut granule_pos: u64 = 0;
-    let mut output_buf = vec![0u8; 4000]; // Max Opus packet size
-    let mut pos = 0;
-
-    while pos < samples.len() {
-        // Prepare one frame, zero-padding the final frame if needed
-        let remaining = samples.len() - pos;
-        let input: Vec<f32> = if remaining < frame_samples {
-            let mut padded = samples[pos..].to_vec();
-            padded.resize(frame_samples, 0.0);
-            padded
-        } else {
-            samples[pos..pos + frame_samples].to_vec()
-        };
-
-        let encoded_len = encoder
-            .encode_float(&input, &mut output_buf)
-            .map_err(|e| anyhow::anyhow!("Opus encode error: {}", e))?;
-
-        granule_pos += frame_size as u64;
-
-        let is_last = pos + frame_samples >= samples.len();
-        let end_info = if is_last {
-            PacketWriteEndInfo::EndStream
-        } else {
-            PacketWriteEndInfo::NormalPacket
-        };
-
-        packet_writer.write_packet(
-            output_buf[..encoded_len].to_vec(),
-            serial,
-            end_info,
-            granule_pos + pre_skip as u64,
-        )?;
-
-        pos += frame_samples;
-    }
-
-    let size = std::fs::metadata(&opus_path)?.len();
-    let duration_secs =
-        audio.samples.len() as f64 / (audio.sample_rate as f64 * audio.channels as f64);
-
-    Ok(AudioFileInfo {
-        filename: filename.to_string(),
-        device_name: audio.device_name.clone(),
-        channels: audio.channels,
-        sample_rate: audio.sample_rate,
-        duration_secs,
-        size_bytes: size,
-    })
-}
-
-/// Build the OpusHead identification header per RFC 7845 §5.1
-fn build_opus_head(channels: u8, pre_skip: u16, original_sample_rate: u32) -> Vec<u8> {
-    let mut head = Vec::with_capacity(19);
-    head.extend_from_slice(b"OpusHead");   // Magic signature
-    head.push(1);                          // Version
-    head.push(channels);                   // Channel count
-    head.extend_from_slice(&pre_skip.to_le_bytes());           // Pre-skip
-    head.extend_from_slice(&original_sample_rate.to_le_bytes()); // Input sample rate
-    head.extend_from_slice(&0i16.to_le_bytes());               // Output gain (0 dB)
-    head.push(0);                          // Channel mapping family (0 = mono/stereo)
-    head
-}
-
-/// Build the OpusTags comment header per RFC 7845 §5.2
-fn build_opus_tags() -> Vec<u8> {
-    let vendor = b"Sacho";
-    let mut tags = Vec::new();
-    tags.extend_from_slice(b"OpusTags");
-    tags.extend_from_slice(&(vendor.len() as u32).to_le_bytes());
-    tags.extend_from_slice(vendor);
-    tags.extend_from_slice(&0u32.to_le_bytes()); // No user comments
-    tags
-}
-
-/// Return the nearest Opus-supported sample rate for the given input rate.
-/// Opus supports: 8000, 12000, 16000, 24000, 48000 Hz.
-fn nearest_opus_sample_rate(sample_rate: u32) -> u32 {
-    const OPUS_RATES: [u32; 5] = [8000, 12000, 16000, 24000, 48000];
-    *OPUS_RATES
-        .iter()
-        .min_by_key(|&&r| (r as i64 - sample_rate as i64).abs())
-        .unwrap()
-}
-
-/// Simple linear-interpolation resampler for converting between sample rates.
-/// Sufficient for lossy Opus encoding; avoids an extra dependency.
-fn resample_linear(
-    samples: &[f32],
-    from_rate: u32,
-    to_rate: u32,
-    channels: u16,
-) -> Vec<f32> {
-    if from_rate == to_rate {
-        return samples.to_vec();
-    }
-    let ch = channels as usize;
-    let num_frames = samples.len() / ch;
-    let ratio = to_rate as f64 / from_rate as f64;
-    let new_num_frames = (num_frames as f64 * ratio).ceil() as usize;
-    let mut output = Vec::with_capacity(new_num_frames * ch);
-
-    for i in 0..new_num_frames {
-        let src_pos = i as f64 / ratio;
-        let idx = src_pos.floor() as usize;
-        let frac = (src_pos - idx as f64) as f32;
-        let idx1 = idx.min(num_frames - 1);
-        let idx2 = (idx + 1).min(num_frames - 1);
-
-        for c in 0..ch {
-            let s1 = samples[idx1 * ch + c];
-            let s2 = samples[idx2 * ch + c];
-            output.push(s1 + (s2 - s1) * frac);
-        }
-    }
-    output
-}
-
 /// Pad an audio file with silence to extend its duration
 /// For WAV files, we append silence samples
-/// For FLAC/Opus files, we skip padding (would require decode/re-encode)
+/// For FLAC files, we skip padding (would require decode/re-encode)
 fn pad_audio_file(
     session_path: &PathBuf,
     audio_info: &mut AudioFileInfo,
@@ -1489,10 +1303,6 @@ fn pad_audio_file(
         // For FLAC, we would need to decode, add silence, and re-encode
         // This is expensive and not implemented yet
         println!("[Sacho] FLAC padding not implemented, audio may be shorter than video");
-    } else if audio_info.filename.ends_with(".opus") {
-        // For Opus, we would need to decode, add silence, and re-encode
-        // This is expensive and not implemented yet
-        println!("[Sacho] Opus padding not implemented, audio may be shorter than video");
     }
     
     Ok(())
