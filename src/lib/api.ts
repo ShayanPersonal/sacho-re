@@ -126,12 +126,18 @@ export interface VideoFileInfo {
 }
 
 export type VideoEncodingMode = 'av1' | 'vp9' | 'vp8' | 'raw';
+export type AudioBitDepth = 'int16' | 'int24' | 'float32';
+export type AudioSampleRate = 'passthrough' | 'rate44100' | 'rate48000' | 'rate88200' | 'rate96000' | 'rate192000';
 
 export interface Config {
   storage_path: string;
   idle_timeout_secs: number;
   pre_roll_secs: number;
   audio_format: 'wav' | 'flac';
+  wav_bit_depth: AudioBitDepth;
+  wav_sample_rate: AudioSampleRate;
+  flac_bit_depth: AudioBitDepth;
+  flac_sample_rate: AudioSampleRate;
   video_encoding_mode: VideoEncodingMode;
   dark_mode: boolean;
   auto_start: boolean;

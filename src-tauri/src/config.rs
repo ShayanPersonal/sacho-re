@@ -24,6 +24,22 @@ pub struct Config {
     /// Audio format for recordings
     pub audio_format: AudioFormat,
     
+    /// WAV bit depth
+    #[serde(default)]
+    pub wav_bit_depth: AudioBitDepth,
+    
+    /// WAV sample rate
+    #[serde(default)]
+    pub wav_sample_rate: AudioSampleRate,
+    
+    /// FLAC bit depth (Int16 or Int24 only; Float32 not supported)
+    #[serde(default)]
+    pub flac_bit_depth: AudioBitDepth,
+    
+    /// FLAC sample rate
+    #[serde(default)]
+    pub flac_sample_rate: AudioSampleRate,
+    
     /// Video encoding mode for raw video sources
     /// Pre-encoded sources (like MJPEG from webcams) are passed through without re-encoding
     #[serde(default)]
@@ -78,6 +94,62 @@ pub enum AudioFormat {
     Flac,
 }
 
+/// Audio bit depth for recorded files
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioBitDepth {
+    /// 16-bit integer
+    Int16,
+    /// 24-bit integer
+    Int24,
+    /// 32-bit float (WAV only)
+    Float32,
+}
+
+impl Default for AudioBitDepth {
+    fn default() -> Self {
+        Self::Int24
+    }
+}
+
+/// Audio sample rate for recorded files
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioSampleRate {
+    /// Use the device's native sample rate
+    Passthrough,
+    /// 44.1 kHz
+    Rate44100,
+    /// 48 kHz
+    Rate48000,
+    /// 88.2 kHz
+    Rate88200,
+    /// 96 kHz
+    Rate96000,
+    /// 192 kHz
+    Rate192000,
+}
+
+impl Default for AudioSampleRate {
+    fn default() -> Self {
+        Self::Passthrough
+    }
+}
+
+impl AudioSampleRate {
+    /// Get the target sample rate in Hz, or None for passthrough
+    pub fn target_rate(&self) -> Option<u32> {
+        match self {
+            AudioSampleRate::Passthrough => None,
+            AudioSampleRate::Rate44100 => Some(44100),
+            AudioSampleRate::Rate48000 => Some(48000),
+            AudioSampleRate::Rate88200 => Some(88200),
+            AudioSampleRate::Rate96000 => Some(96000),
+            AudioSampleRate::Rate192000 => Some(192000),
+        }
+    }
+}
+
 /// Video encoding mode for raw video sources
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -116,6 +188,10 @@ impl Default for Config {
             idle_timeout_secs: 5,
             pre_roll_secs: 2, // Default to 2 seconds of pre-roll
             audio_format: AudioFormat::Wav,
+            wav_bit_depth: AudioBitDepth::default(),
+            wav_sample_rate: AudioSampleRate::default(),
+            flac_bit_depth: AudioBitDepth::default(),
+            flac_sample_rate: AudioSampleRate::default(),
             video_encoding_mode: VideoEncodingMode::default(),
             dark_mode: false,
             auto_start: true,

@@ -943,7 +943,13 @@ fn stop_recording(
     
     // Write audio files based on configured format
     let config = app_handle.state::<RwLock<Config>>();
-    let audio_format = config.read().audio_format.clone();
+    let config_read = config.read();
+    let audio_format = config_read.audio_format.clone();
+    let (bit_depth, sample_rate) = match audio_format {
+        crate::config::AudioFormat::Wav => (config_read.wav_bit_depth.clone(), config_read.wav_sample_rate.clone()),
+        crate::config::AudioFormat::Flac => (config_read.flac_bit_depth.clone(), config_read.flac_sample_rate.clone()),
+    };
+    drop(config_read);
     
     let mut audio_files = Vec::new();
     for (i, audio) in audio_data.iter().enumerate() {
@@ -963,8 +969,8 @@ fn stop_recording(
         };
         
         let result = match audio_format {
-            crate::config::AudioFormat::Wav => write_wav_file(&session_path, &filename, audio),
-            crate::config::AudioFormat::Flac => write_flac_file(&session_path, &filename, audio),
+            crate::config::AudioFormat::Wav => write_wav_file(&session_path, &filename, audio, &bit_depth, &sample_rate),
+            crate::config::AudioFormat::Flac => write_flac_file(&session_path, &filename, audio, &bit_depth, &sample_rate),
         };
         
         match result {
@@ -1165,37 +1171,114 @@ fn write_variable_length(data: &mut Vec<u8>, mut value: u32) {
     data.extend(bytes);
 }
 
+/// Prepare audio samples: resample if a specific target rate is configured.
+/// Returns the (possibly resampled) samples and the output sample rate.
+fn prepare_audio_samples(
+    audio: &CollectedAudio,
+    sample_rate_setting: &crate::config::AudioSampleRate,
+) -> (Vec<f32>, u32) {
+    match sample_rate_setting.target_rate() {
+        Some(target_rate) if target_rate != audio.sample_rate => {
+            let resampled = resample_linear(&audio.samples, audio.sample_rate, target_rate, audio.channels);
+            (resampled, target_rate)
+        }
+        _ => (audio.samples.clone(), audio.sample_rate),
+    }
+}
+
+/// Linear-interpolation resampler for converting between sample rates.
+fn resample_linear(
+    samples: &[f32],
+    from_rate: u32,
+    to_rate: u32,
+    channels: u16,
+) -> Vec<f32> {
+    if from_rate == to_rate {
+        return samples.to_vec();
+    }
+    let ch = channels as usize;
+    let num_frames = samples.len() / ch;
+    let ratio = to_rate as f64 / from_rate as f64;
+    let new_num_frames = (num_frames as f64 * ratio).ceil() as usize;
+    let mut output = Vec::with_capacity(new_num_frames * ch);
+
+    for i in 0..new_num_frames {
+        let src_pos = i as f64 / ratio;
+        let idx = src_pos.floor() as usize;
+        let frac = (src_pos - idx as f64) as f32;
+        let idx1 = idx.min(num_frames - 1);
+        let idx2 = (idx + 1).min(num_frames - 1);
+
+        for c in 0..ch {
+            let s1 = samples[idx1 * ch + c];
+            let s2 = samples[idx2 * ch + c];
+            output.push(s1 + (s2 - s1) * frac);
+        }
+    }
+    output
+}
+
 /// Write audio samples to a WAV file
 fn write_wav_file(
     session_path: &PathBuf, 
     filename: &str, 
-    audio: &CollectedAudio
+    audio: &CollectedAudio,
+    bit_depth: &crate::config::AudioBitDepth,
+    sample_rate_setting: &crate::config::AudioSampleRate,
 ) -> anyhow::Result<AudioFileInfo> {
+    let (samples, output_rate) = prepare_audio_samples(audio, sample_rate_setting);
     let wav_path = session_path.join(filename);
     
-    let spec = hound::WavSpec {
-        channels: audio.channels,
-        sample_rate: audio.sample_rate,
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
-    };
-    
-    let mut writer = hound::WavWriter::create(&wav_path, spec)?;
-    
-    for sample in &audio.samples {
-        writer.write_sample(*sample)?;
+    match bit_depth {
+        crate::config::AudioBitDepth::Float32 => {
+            let spec = hound::WavSpec {
+                channels: audio.channels,
+                sample_rate: output_rate,
+                bits_per_sample: 32,
+                sample_format: hound::SampleFormat::Float,
+            };
+            let mut writer = hound::WavWriter::create(&wav_path, spec)?;
+            for &s in &samples {
+                writer.write_sample(s)?;
+            }
+            writer.finalize()?;
+        }
+        crate::config::AudioBitDepth::Int24 => {
+            let spec = hound::WavSpec {
+                channels: audio.channels,
+                sample_rate: output_rate,
+                bits_per_sample: 24,
+                sample_format: hound::SampleFormat::Int,
+            };
+            let mut writer = hound::WavWriter::create(&wav_path, spec)?;
+            for &s in &samples {
+                writer.write_sample((s.clamp(-1.0, 1.0) * 8_388_607.0) as i32)?;
+            }
+            writer.finalize()?;
+        }
+        crate::config::AudioBitDepth::Int16 => {
+            let spec = hound::WavSpec {
+                channels: audio.channels,
+                sample_rate: output_rate,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            };
+            let mut writer = hound::WavWriter::create(&wav_path, spec)?;
+            for &s in &samples {
+                writer.write_sample((s.clamp(-1.0, 1.0) * 32_767.0) as i16)?;
+            }
+            writer.finalize()?;
+        }
     }
     
-    writer.finalize()?;
-    
     let size = std::fs::metadata(&wav_path)?.len();
-    let duration_secs = audio.samples.len() as f64 / (audio.sample_rate as f64 * audio.channels as f64);
+    let duration_secs = samples.len() as f64 / (output_rate as f64 * audio.channels as f64);
     
     Ok(AudioFileInfo {
         filename: filename.to_string(),
         device_name: audio.device_name.clone(),
         channels: audio.channels,
-        sample_rate: audio.sample_rate,
+        sample_rate: output_rate,
         duration_secs,
         size_bytes: size,
     })
@@ -1205,18 +1288,26 @@ fn write_wav_file(
 fn write_flac_file(
     session_path: &PathBuf, 
     filename: &str, 
-    audio: &CollectedAudio
+    audio: &CollectedAudio,
+    bit_depth: &crate::config::AudioBitDepth,
+    sample_rate_setting: &crate::config::AudioSampleRate,
 ) -> anyhow::Result<AudioFileInfo> {
     use flacenc::component::BitRepr;
     use flacenc::error::Verify;
     use flacenc::bitsink::ByteSink;
     
+    let (samples, output_rate) = prepare_audio_samples(audio, sample_rate_setting);
     let flac_path = session_path.join(filename);
     
-    // Convert f32 samples to i32 (24-bit range for professional quality)
-    let samples_i32: Vec<i32> = audio.samples
+    let (scale, bits): (f64, usize) = match bit_depth {
+        crate::config::AudioBitDepth::Int16 => (32_767.0, 16),
+        crate::config::AudioBitDepth::Int24 => (8_388_607.0, 24),
+        crate::config::AudioBitDepth::Float32 => (2_147_483_647.0, 32),
+    };
+    
+    let samples_i32: Vec<i32> = samples
         .iter()
-        .map(|&s| (s.clamp(-1.0, 1.0) * 8_388_607.0) as i32)
+        .map(|&s| (s.clamp(-1.0, 1.0) as f64 * scale) as i32)
         .collect();
     
     // Create FLAC encoder config
@@ -1228,8 +1319,8 @@ fn write_flac_file(
     let source = flacenc::source::MemSource::from_samples(
         &samples_i32,
         audio.channels as usize,
-        24, // bits per sample
-        audio.sample_rate as usize,
+        bits,
+        output_rate as usize,
     );
     
     // Encode to FLAC stream
@@ -1247,13 +1338,13 @@ fn write_flac_file(
     std::fs::write(&flac_path, sink.as_slice())?;
     
     let size = std::fs::metadata(&flac_path)?.len();
-    let duration_secs = audio.samples.len() as f64 / (audio.sample_rate as f64 * audio.channels as f64);
+    let duration_secs = samples.len() as f64 / (output_rate as f64 * audio.channels as f64);
     
     Ok(AudioFileInfo {
         filename: filename.to_string(),
         device_name: audio.device_name.clone(),
         channels: audio.channels,
-        sample_rate: audio.sample_rate,
+        sample_rate: output_rate,
         duration_secs,
         size_bytes: size,
     })

@@ -7,6 +7,7 @@
   // Local editable copy
   let localSettings = $state<Config | null>(null);
   let showRawVideoHelp = $state(false);
+  let showAudioAdvanced = $state(false);
   let encoderAvailability = $state<EncoderAvailability | null>(null);
   
   $effect(() => {
@@ -208,7 +209,53 @@
             <option value="flac">FLAC (lossless, smaller files)</option>
           </select>
         </div>
-        
+        <button class="advanced-toggle" onclick={() => showAudioAdvanced = !showAudioAdvanced}>
+          More settings ({localSettings.audio_format.toUpperCase()})
+          <svg class="toggle-chevron" class:open={showAudioAdvanced} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+        {#if showAudioAdvanced}
+          <div class="advanced-audio-section">
+            <p class="advanced-note">Leave as default if unsure.</p>
+            <div class="advanced-audio-row">
+              <div class="advanced-audio-field">
+                <label>
+                  <span class="setting-label">Bit Depth</span>
+                </label>
+                {#if localSettings.audio_format === 'wav'}
+                  <select bind:value={localSettings.wav_bit_depth} onchange={autoSave}>
+                    <option value="int16">16-bit</option>
+                    <option value="int24">24-bit (default)</option>
+                    <option value="float32">32-bit float</option>
+                  </select>
+                {:else}
+                  <select bind:value={localSettings.flac_bit_depth} onchange={autoSave}>
+                    <option value="int16">16-bit</option>
+                    <option value="int24">24-bit (default)</option>
+                    <option value="float32">32-bit (new, possible compatibility issues)</option>
+                  </select>
+                {/if}
+              </div>
+              <div class="advanced-audio-field">
+                <label>
+                  <span class="setting-label">Sample Rate</span>
+                </label>
+                {#if localSettings.audio_format === 'wav'}
+                  <select bind:value={localSettings.wav_sample_rate} onchange={autoSave}>
+                    <option value="passthrough">Device Native (default)</option>
+
+                  </select>
+                {:else}
+                  <select bind:value={localSettings.flac_sample_rate} onchange={autoSave}>
+                    <option value="passthrough">Device Native (default)</option>
+
+                  </select>
+                {/if}
+              </div>
+            </div>
+          </div>
+        {/if}
 
       </section>
       
@@ -400,6 +447,70 @@
     color: #6a6a6a;
     font-style: italic;
     margin: 0.5rem 0 0 0;
+  }
+
+  .advanced-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    background: none;
+    border: none;
+    color: #6a6a6a;
+    font-family: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 0.25rem 0;
+    transition: color 0.15s ease;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .advanced-toggle:hover {
+    color: #a8a8a8;
+  }
+
+  .toggle-chevron {
+    width: 12px;
+    height: 12px;
+    transition: transform 0.2s ease;
+  }
+
+  .toggle-chevron.open {
+    transform: rotate(180deg);
+  }
+
+  .advanced-audio-section {
+    padding: 0.75rem;
+    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 0.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .advanced-note {
+    font-size: 0.6875rem;
+    color: #5a5a5a;
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  .advanced-audio-row {
+    display: flex;
+    gap: 0.75rem;
+  }
+
+  .advanced-audio-field {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .advanced-audio-field select {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
   }
   
   .setting-row input[type="number"],
@@ -613,6 +724,23 @@
   }
 
   :global(body.light-mode) .setting-recommendation {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .advanced-toggle {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .advanced-toggle:hover {
+    color: #4a4a4a;
+  }
+
+  :global(body.light-mode) .advanced-audio-section {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .advanced-note {
     color: #7a7a7a;
   }
 
