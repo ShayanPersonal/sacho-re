@@ -294,6 +294,18 @@ export async function getConfig(): Promise<Config> {
   const config = await invoke<Config>('get_config');
   // Initialize autostart tracking
   previousAutoStart = config.auto_start;
+
+  // Ensure OS-level autostart matches config on startup
+  try {
+    if (config.auto_start) {
+      await enableAutostart();
+    } else {
+      await disableAutostart();
+    }
+  } catch (e) {
+    console.error('Failed to sync autostart on init:', e);
+  }
+
   return config;
 }
 
