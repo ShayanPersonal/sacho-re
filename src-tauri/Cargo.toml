@@ -36,8 +36,7 @@ midir = "0.10"
 # MIDI file writing and parsing
 midly = "0.5"
 
-# Audio file writing
-hound = "3.5"
+# Audio file writing (GStreamer flacenc + wavenc)
 
 # Video capture with GStreamer, FLAC audio encoding
 gstreamer = "0.24"

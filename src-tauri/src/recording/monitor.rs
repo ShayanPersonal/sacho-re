@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
 use std::io::Write;
-use std::collections::VecDeque;
 use parking_lot::{RwLock, Mutex};
 use midir::{MidiInput, MidiInputConnection};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -20,12 +19,222 @@ use crate::recording::video::VideoCaptureManager;
 use crate::session::{SessionMetadata, SessionDatabase, MidiFileInfo, AudioFileInfo};
 use crate::notifications;
 
-/// Audio buffer for a device
-pub struct AudioBuffer {
-    pub device_name: String,
-    pub samples: VecDeque<f32>,
-    pub sample_rate: u32,
-    pub channels: u16,
+/// Streaming audio writer that pipes samples to disk via GStreamer.
+/// Pipeline: appsrc(F32LE) ! audioconvert ! audioresample ! capsfilter ! encoder(flacenc/wavenc) ! filesink
+pub struct AudioStreamWriter {
+    pipeline: gstreamer::Pipeline,
+    appsrc: gstreamer_app::AppSrc,
+    file_path: PathBuf,
+    filename: String,
+    device_name: String,
+    channels: u16,
+    /// Native input sample rate from cpal
+    native_rate: u32,
+    /// Output sample rate (after resampling, or native if passthrough)
+    output_rate: u32,
+    /// Total frames pushed (for PTS / duration calculation)
+    frames_pushed: u64,
+}
+
+impl AudioStreamWriter {
+    /// Create and start a new streaming audio writer.
+    pub fn new(
+        session_path: &PathBuf,
+        filename: &str,
+        device_name: &str,
+        channels: u16,
+        native_rate: u32,
+        audio_format: &crate::config::AudioFormat,
+        bit_depth: &crate::config::AudioBitDepth,
+        sample_rate_setting: &crate::config::AudioSampleRate,
+    ) -> anyhow::Result<Self> {
+        use gstreamer as gst;
+        use gstreamer::prelude::*;
+        use gstreamer_app as gst_app;
+        use gstreamer_audio as gst_audio;
+        
+        let file_path = session_path.join(filename);
+        let output_rate = sample_rate_setting.target_rate().unwrap_or(native_rate);
+        
+        // Input caps: F32LE at the device's native rate
+        let input_info = gst_audio::AudioInfo::builder(gst_audio::AudioFormat::F32le, native_rate, channels as u32)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to create input audio info: {}", e))?;
+        
+        // Target format for the capsfilter (depends on format + bit_depth)
+        let target_format = match (audio_format, bit_depth) {
+            (crate::config::AudioFormat::Wav, crate::config::AudioBitDepth::Int16) => gst_audio::AudioFormat::S16le,
+            (crate::config::AudioFormat::Wav, crate::config::AudioBitDepth::Int24) => gst_audio::AudioFormat::S24le,
+            (crate::config::AudioFormat::Wav, crate::config::AudioBitDepth::Float32) => gst_audio::AudioFormat::F32le,
+            (crate::config::AudioFormat::Flac, crate::config::AudioBitDepth::Int16) => gst_audio::AudioFormat::S16le,
+            (crate::config::AudioFormat::Flac, crate::config::AudioBitDepth::Int24) => gst_audio::AudioFormat::S2432le,
+            (crate::config::AudioFormat::Flac, crate::config::AudioBitDepth::Float32) => gst_audio::AudioFormat::S32le,
+        };
+        
+        // Target caps for the capsfilter (format + rate + channel-mask)
+        let target_info = gst_audio::AudioInfo::builder(target_format, output_rate, channels as u32)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to create target audio info: {}", e))?;
+        
+        // Build pipeline elements
+        let pipeline = gst::Pipeline::new();
+        
+        let appsrc = gst_app::AppSrc::builder()
+            .name("src")
+            .caps(&input_info.to_caps().map_err(|e| anyhow::anyhow!("Failed to create input caps: {}", e))?)
+            .format(gst::Format::Time)
+            .build();
+        
+        let audioconvert = gst::ElementFactory::make("audioconvert")
+            .name("convert")
+            .build()
+            .map_err(|_| anyhow::anyhow!("Failed to create audioconvert element"))?;
+        
+        let audioresample = gst::ElementFactory::make("audioresample")
+            .name("resample")
+            .build()
+            .map_err(|_| anyhow::anyhow!("Failed to create audioresample element"))?;
+        
+        let capsfilter = gst::ElementFactory::make("capsfilter")
+            .name("filter")
+            .property("caps", target_info.to_caps().map_err(|e| anyhow::anyhow!("Failed to create target caps: {}", e))?)
+            .build()
+            .map_err(|_| anyhow::anyhow!("Failed to create capsfilter element"))?;
+        
+        // Encoder: flacenc or wavenc
+        let encoder_name = match audio_format {
+            crate::config::AudioFormat::Flac => "flacenc",
+            crate::config::AudioFormat::Wav => "wavenc",
+        };
+        let encoder = gst::ElementFactory::make(encoder_name)
+            .name("encoder")
+            .build()
+            .map_err(|_| anyhow::anyhow!("Failed to create {} element", encoder_name))?;
+        
+        // For 32-bit FLAC, disable the Subset restriction (Subset limits to 24-bit max)
+        if matches!(audio_format, crate::config::AudioFormat::Flac)
+            && matches!(bit_depth, crate::config::AudioBitDepth::Float32)
+        {
+            encoder.set_property("streamable-subset", false);
+        }
+        
+        let filesink = gst::ElementFactory::make("filesink")
+            .name("sink")
+            .property("location", file_path.to_str().unwrap_or("output"))
+            .build()
+            .map_err(|_| anyhow::anyhow!("Failed to create filesink element"))?;
+        
+        // Assemble and link
+        pipeline.add_many([appsrc.upcast_ref(), &audioconvert, &audioresample, &capsfilter, &encoder, &filesink])
+            .map_err(|e| anyhow::anyhow!("Failed to add elements to pipeline: {}", e))?;
+        
+        gst::Element::link_many([appsrc.upcast_ref(), &audioconvert, &audioresample, &capsfilter, &encoder, &filesink])
+            .map_err(|e| anyhow::anyhow!("Failed to link pipeline elements: {}", e))?;
+        
+        // Start the pipeline
+        pipeline.set_state(gst::State::Playing)
+            .map_err(|e| anyhow::anyhow!("Failed to start audio pipeline: {}", e))?;
+        
+        println!("[Sacho] Audio streaming started: {} -> {} ({}Hz {}ch -> {}Hz {})",
+            device_name, filename, native_rate, channels, output_rate, encoder_name);
+        
+        Ok(Self {
+            pipeline,
+            appsrc,
+            file_path,
+            filename: filename.to_string(),
+            device_name: device_name.to_string(),
+            channels,
+            native_rate,
+            output_rate,
+            frames_pushed: 0,
+        })
+    }
+    
+    /// Push interleaved f32 samples to the pipeline.
+    pub fn push_samples(&mut self, data: &[f32]) {
+        use gstreamer as gst;
+        
+        if data.is_empty() {
+            return;
+        }
+        
+        let num_frames = data.len() / self.channels as usize;
+        
+        // Calculate PTS and duration based on frames pushed so far
+        let pts_ns = self.frames_pushed * 1_000_000_000 / self.native_rate as u64;
+        let duration_ns = num_frames as u64 * 1_000_000_000 / self.native_rate as u64;
+        
+        // Convert f32 samples to F32LE bytes
+        let bytes: Vec<u8> = data.iter().copied().flat_map(f32::to_le_bytes).collect();
+        
+        let mut buffer = gst::Buffer::from_slice(bytes);
+        {
+            let buf_ref = buffer.get_mut().unwrap();
+            buf_ref.set_pts(gst::ClockTime::from_nseconds(pts_ns));
+            buf_ref.set_duration(gst::ClockTime::from_nseconds(duration_ns));
+        }
+        
+        if let Err(e) = self.appsrc.push_buffer(buffer) {
+            println!("[Sacho] Audio push error for {}: {}", self.device_name, e);
+        }
+        
+        self.frames_pushed += num_frames as u64;
+    }
+    
+    /// Push silence for padding (e.g., to match video duration).
+    pub fn push_silence(&mut self, duration_secs: f64) {
+        let num_frames = (duration_secs * self.native_rate as f64) as usize;
+        let total_samples = num_frames * self.channels as usize;
+        let silence = vec![0.0f32; total_samples];
+        self.push_samples(&silence);
+    }
+    
+    /// Finalize the stream: send EOS, wait for completion, return file info.
+    pub fn finish(self) -> anyhow::Result<AudioFileInfo> {
+        use gstreamer as gst;
+        use gstreamer::prelude::*;
+        
+        // Signal end of stream
+        self.appsrc.end_of_stream()
+            .map_err(|e| anyhow::anyhow!("Failed to send EOS: {}", e))?;
+        
+        // Wait for the pipeline to finish processing
+        let bus = self.pipeline.bus().unwrap();
+        for msg in bus.iter_timed(gst::ClockTime::from_seconds(30)) {
+            match msg.view() {
+                gst::MessageView::Eos(..) => break,
+                gst::MessageView::Error(err) => {
+                    self.pipeline.set_state(gst::State::Null).ok();
+                    return Err(anyhow::anyhow!(
+                        "Audio encoding error for {}: {} ({})",
+                        self.device_name,
+                        err.error(),
+                        err.debug().unwrap_or_default()
+                    ));
+                }
+                _ => {}
+            }
+        }
+        
+        self.pipeline.set_state(gst::State::Null).ok();
+        
+        let size = std::fs::metadata(&self.file_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let duration_secs = self.frames_pushed as f64 / self.native_rate as f64;
+        
+        println!("[Sacho] Audio stream finished: {} ({:.1}s, {} bytes)", self.filename, duration_secs, size);
+        
+        Ok(AudioFileInfo {
+            filename: self.filename,
+            device_name: self.device_name,
+            channels: self.channels,
+            sample_rate: self.output_rate,
+            duration_secs,
+            size_bytes: size,
+        })
+    }
 }
 
 /// Shared state for recording capture
@@ -36,7 +245,8 @@ pub struct CaptureState {
     pub session_path: Option<PathBuf>,
     pub start_time: Option<Instant>,
     pub midi_events: Vec<(String, TimestampedMidiEvent)>, // (device_name, event)
-    pub audio_buffers: Vec<AudioBuffer>,
+    /// Streaming audio writers (one per device, Some when recording)
+    pub audio_writers: Vec<Option<AudioStreamWriter>>,
     /// Pre-roll buffer for MIDI events (used when not recording)
     pub midi_preroll: MidiPrerollBuffer,
     /// Pre-roll buffers for audio (one per device, used when not recording)
@@ -56,7 +266,7 @@ impl CaptureState {
             session_path: None,
             start_time: None,
             midi_events: Vec::new(),
-            audio_buffers: Vec::new(),
+            audio_writers: Vec::new(),
             midi_preroll: MidiPrerollBuffer::new(pre_roll_secs),
             audio_prerolls: Vec::new(),
             pre_roll_secs,
@@ -78,7 +288,7 @@ impl Default for CaptureState {
             session_path: None,
             start_time: None,
             midi_events: Vec::new(),
-            audio_buffers: Vec::new(),
+            audio_writers: Vec::new(),
             midi_preroll: MidiPrerollBuffer::new(2),
             audio_prerolls: Vec::new(),
             pre_roll_secs: 2,
@@ -340,17 +550,9 @@ impl MidiMonitor {
                             let sample_rate = supported_config.sample_rate().0;
                             let channels = supported_config.channels();
                             
-                            // Create audio buffer AND pre-roll buffer for this device
+                            // Create pre-roll buffer and writer slot for this device
                             let buffer_index = {
                                 let mut state = self.capture_state.lock();
-                                
-                                // Main recording buffer
-                                state.audio_buffers.push(AudioBuffer {
-                                    device_name: device_name.clone(),
-                                    samples: VecDeque::new(),
-                                    sample_rate,
-                                    channels,
-                                });
                                 
                                 // Pre-roll buffer (captures audio before trigger)
                                 state.audio_prerolls.push(AudioPrerollBuffer::new(
@@ -360,7 +562,10 @@ impl MidiMonitor {
                                     pre_roll_secs,
                                 ));
                                 
-                                state.audio_buffers.len() - 1
+                                // Writer slot (None until recording starts)
+                                state.audio_writers.push(None);
+                                
+                                state.audio_prerolls.len() - 1
                             };
                             
                             let capture_state = self.capture_state.clone();
@@ -377,9 +582,9 @@ impl MidiMonitor {
                                             preroll.push_samples(data);
                                         }
                                     } else {
-                                        // Recording is active, store in main buffer
-                                        if let Some(buffer) = state.audio_buffers.get_mut(buffer_index) {
-                                            buffer.samples.extend(data.iter().copied());
+                                        // Recording is active, stream to disk via GStreamer
+                                        if let Some(Some(writer)) = state.audio_writers.get_mut(buffer_index) {
+                                            writer.push_samples(data);
                                         }
                                     }
                                 },
@@ -546,9 +751,9 @@ impl MidiMonitor {
         // Stop video capture
         self.video_manager.lock().stop();
         
-        // Clear audio buffers and pre-roll buffers
+        // Clear audio writers and pre-roll buffers
         let mut state = self.capture_state.lock();
-        state.audio_buffers.clear();
+        state.audio_writers.clear();
         state.audio_prerolls.clear();
     }
     
@@ -794,24 +999,57 @@ fn start_recording(
             state.midi_events.push((device_name, event));
         }
         
-        // Drain audio pre-roll buffers into main buffers
-        // Pre-roll audio goes BEFORE any new samples
-        // Note: Audio samples collected after trigger_instant will be added during recording
-        // SYNC FIX: Only drain samples matching the sync duration (not full audio buffer)
+        // Create streaming audio writers and drain pre-roll into them
+        // Read audio format config
+        let audio_format = config_read.audio_format.clone();
+        let (bit_depth, sample_rate_setting) = match audio_format {
+            crate::config::AudioFormat::Wav => (config_read.wav_bit_depth.clone(), config_read.wav_sample_rate.clone()),
+            crate::config::AudioFormat::Flac => (config_read.flac_bit_depth.clone(), config_read.flac_sample_rate.clone()),
+        };
+        
+        let extension = match audio_format {
+            crate::config::AudioFormat::Wav => "wav",
+            crate::config::AudioFormat::Flac => "flac",
+        };
+        
+        let num_audio_devices = state.audio_prerolls.len();
         let mut audio_preroll_samples = 0;
-        for i in 0..state.audio_prerolls.len() {
+        
+        for i in 0..num_audio_devices {
+            // Drain pre-roll samples
             let preroll_samples = if let Some(sync_dur) = sync_preroll_duration {
-                // Drain only the samples that match the sync duration
                 state.audio_prerolls[i].drain_duration(sync_dur)
             } else {
                 state.audio_prerolls[i].drain()
             };
             audio_preroll_samples += preroll_samples.len();
             
-            if let Some(buffer) = state.audio_buffers.get_mut(i) {
-                // Clear main buffer and add pre-roll samples first
-                buffer.samples.clear();
-                buffer.samples.extend(preroll_samples.into_iter());
+            // Build filename
+            let filename = if num_audio_devices == 1 {
+                format!("recording.{}", extension)
+            } else {
+                format!("recording_{}.{}", i + 1, extension)
+            };
+            
+            // Create streaming writer using device info from preroll buffer
+            let dev_name = state.audio_prerolls[i].device_name().to_string();
+            let native_rate = state.audio_prerolls[i].sample_rate();
+            let channels = state.audio_prerolls[i].channels();
+            
+            match AudioStreamWriter::new(
+                &session_path, &filename, &dev_name, channels, native_rate,
+                &audio_format, &bit_depth, &sample_rate_setting,
+            ) {
+                Ok(mut writer) => {
+                    // Push drained pre-roll samples into the streaming writer
+                    if !preroll_samples.is_empty() {
+                        writer.push_samples(&preroll_samples);
+                    }
+                    state.audio_writers[i] = Some(writer);
+                }
+                Err(e) => {
+                    println!("[Sacho] Failed to create audio writer for {}: {}", dev_name, e);
+                }
             }
         }
         
@@ -860,14 +1098,6 @@ fn start_recording(
     println!("[Sacho] Recording started: {:?}", session_path);
 }
 
-/// Collected audio data from a buffer
-struct CollectedAudio {
-    device_name: String,
-    samples: Vec<f32>,
-    sample_rate: u32,
-    channels: u16,
-}
-
 /// Stop recording and save files
 fn stop_recording(
     app_handle: &AppHandle, 
@@ -875,7 +1105,7 @@ fn stop_recording(
     video_manager: &Arc<Mutex<VideoCaptureManager>>,
 ) {
     // First, extract what we need from capture_state
-    let (session_path, midi_events, audio_data, duration_secs) = {
+    let (session_path, midi_events, audio_writers, duration_secs) = {
         let mut state = capture_state.lock();
         if !state.is_recording {
             return;
@@ -888,29 +1118,17 @@ fn stop_recording(
         let path = state.session_path.take();
         let events = std::mem::take(&mut state.midi_events);
         
-        // Collect audio samples from buffers (aligned to frame boundary)
-        let audio: Vec<CollectedAudio> = state.audio_buffers.iter_mut().map(|buf| {
-            // Ensure sample count is a multiple of channels to prevent WAV write errors
-            let total = buf.samples.len();
-            let aligned = (total / buf.channels as usize) * buf.channels as usize;
-            if aligned < total {
-                // Truncate to drop partial frame
-                buf.samples.truncate(aligned);
-            }
-            CollectedAudio {
-                device_name: buf.device_name.clone(),
-                samples: buf.samples.drain(..).collect(),
-                sample_rate: buf.sample_rate,
-                channels: buf.channels,
-            }
-        }).collect();
+        // Take audio writers out of the state (replace with None)
+        let writers: Vec<Option<AudioStreamWriter>> = state.audio_writers.iter_mut()
+            .map(|w| w.take())
+            .collect();
         
         state.is_recording = false;
         state.is_starting = false;
         state.start_time = None;
         state.midi_timestamp_offset_us = 0;
         
-        (path, events, audio, duration)
+        (path, events, writers, duration)
     };
     
     let Some(session_path) = session_path else {
@@ -944,8 +1162,9 @@ fn stop_recording(
         mgr.stop_recording()
     };
     
+    let writer_count = audio_writers.iter().filter(|w| w.is_some()).count();
     println!("[Sacho] Stopping recording, {} MIDI events, {} audio streams, {} video files", 
-        midi_events.len(), audio_data.len(), video_files.len());
+        midi_events.len(), writer_count, video_files.len());
     
     // Write MIDI files (one per device)
     let midi_files = if !midi_events.is_empty() {
@@ -954,75 +1173,37 @@ fn stop_recording(
         Vec::new()
     };
     
-    // Write audio files based on configured format
-    let config = app_handle.state::<RwLock<Config>>();
-    let config_read = config.read();
-    let audio_format = config_read.audio_format.clone();
-    let (bit_depth, sample_rate) = match audio_format {
-        crate::config::AudioFormat::Wav => (config_read.wav_bit_depth.clone(), config_read.wav_sample_rate.clone()),
-        crate::config::AudioFormat::Flac => (config_read.flac_bit_depth.clone(), config_read.flac_sample_rate.clone()),
-    };
-    drop(config_read);
-    
-    let mut audio_files = Vec::new();
-    for (i, audio) in audio_data.iter().enumerate() {
-        if audio.samples.is_empty() {
-            continue;
-        }
-        
-        let extension = match audio_format {
-            crate::config::AudioFormat::Wav => "wav",
-            crate::config::AudioFormat::Flac => "flac",
-        };
-        
-        let filename = if audio_data.len() == 1 {
-            format!("recording.{}", extension)
-        } else {
-            format!("recording_{}.{}", i + 1, extension)
-        };
-        
-        let result = match audio_format {
-            crate::config::AudioFormat::Wav => write_wav_file(&session_path, &filename, audio, &bit_depth, &sample_rate),
-            crate::config::AudioFormat::Flac => write_flac_file(&session_path, &filename, audio, &bit_depth, &sample_rate),
-        };
-        
-        match result {
-            Ok(info) => {
-                println!("[Sacho] Wrote audio: {} ({} samples)", filename, audio.samples.len());
-                audio_files.push(info);
-            }
-            Err(e) => {
-                println!("[Sacho] Failed to write audio {}: {}", filename, e);
-            }
-        }
-    }
-    
-    // Calculate max duration across all streams for padding
-    let audio_max_duration = audio_files.iter()
-        .map(|f| f.duration_secs)
-        .fold(0.0f64, |a, b| a.max(b));
-    
+    // Calculate max video duration for potential audio padding
     let video_max_duration = video_files.iter()
         .map(|f| f.duration_secs)
         .fold(0.0f64, |a, b| a.max(b));
     
-    let target_duration = duration_secs.max(audio_max_duration).max(video_max_duration);
+    let target_duration = duration_secs.max(video_max_duration);
     
-    // Pad audio files if needed (append silence to match target duration)
-    for audio_info in audio_files.iter_mut() {
-        if audio_info.duration_secs < target_duration - 0.1 {
-            let padding_secs = target_duration - audio_info.duration_secs;
-            if let Err(e) = pad_audio_file(&session_path, audio_info, padding_secs) {
-                println!("[Sacho] Failed to pad audio file {}: {}", audio_info.filename, e);
-            } else {
-                println!("[Sacho] Padded audio {} with {:.2}s of silence", 
-                    audio_info.filename, padding_secs);
+    // Finalize audio writers: pad if needed, then finish (EOS + flush to disk)
+    let mut audio_files = Vec::new();
+    for writer_opt in audio_writers.into_iter() {
+        if let Some(mut writer) = writer_opt {
+            // Pad with silence if video is longer
+            let writer_duration = writer.frames_pushed as f64 / writer.native_rate as f64;
+            if writer_duration < target_duration - 0.1 {
+                let padding_secs = target_duration - writer_duration;
+                writer.push_silence(padding_secs);
+                println!("[Sacho] Padded audio {} with {:.2}s of silence", writer.filename, padding_secs);
+            }
+            
+            match writer.finish() {
+                Ok(info) => audio_files.push(info),
+                Err(e) => println!("[Sacho] Failed to finalize audio: {}", e),
             }
         }
     }
     
-    // Update overall duration to match the longest stream
-    let duration_secs = target_duration;
+    // Update overall duration to include audio
+    let audio_max_duration = audio_files.iter()
+        .map(|f| f.duration_secs)
+        .fold(0.0f64, |a, b| a.max(b));
+    let duration_secs = target_duration.max(audio_max_duration);
     
     // Clear remaining recording state (session path and devices)
     {
@@ -1184,299 +1365,3 @@ fn write_variable_length(data: &mut Vec<u8>, mut value: u32) {
     data.extend(bytes);
 }
 
-/// Prepare audio samples: resample if a specific target rate is configured.
-/// Returns the (possibly resampled) samples and the output sample rate.
-fn prepare_audio_samples(
-    audio: &CollectedAudio,
-    sample_rate_setting: &crate::config::AudioSampleRate,
-) -> (Vec<f32>, u32) {
-    match sample_rate_setting.target_rate() {
-        Some(target_rate) if target_rate != audio.sample_rate => {
-            let resampled = resample_linear(&audio.samples, audio.sample_rate, target_rate, audio.channels);
-            (resampled, target_rate)
-        }
-        _ => (audio.samples.clone(), audio.sample_rate),
-    }
-}
-
-/// Linear-interpolation resampler for converting between sample rates.
-fn resample_linear(
-    samples: &[f32],
-    from_rate: u32,
-    to_rate: u32,
-    channels: u16,
-) -> Vec<f32> {
-    if from_rate == to_rate {
-        return samples.to_vec();
-    }
-    let ch = channels as usize;
-    let num_frames = samples.len() / ch;
-    let ratio = to_rate as f64 / from_rate as f64;
-    let new_num_frames = (num_frames as f64 * ratio).ceil() as usize;
-    let mut output = Vec::with_capacity(new_num_frames * ch);
-
-    for i in 0..new_num_frames {
-        let src_pos = i as f64 / ratio;
-        let idx = src_pos.floor() as usize;
-        let frac = (src_pos - idx as f64) as f32;
-        let idx1 = idx.min(num_frames - 1);
-        let idx2 = (idx + 1).min(num_frames - 1);
-
-        for c in 0..ch {
-            let s1 = samples[idx1 * ch + c];
-            let s2 = samples[idx2 * ch + c];
-            output.push(s1 + (s2 - s1) * frac);
-        }
-    }
-    output
-}
-
-/// Write audio samples to a WAV file
-fn write_wav_file(
-    session_path: &PathBuf, 
-    filename: &str, 
-    audio: &CollectedAudio,
-    bit_depth: &crate::config::AudioBitDepth,
-    sample_rate_setting: &crate::config::AudioSampleRate,
-) -> anyhow::Result<AudioFileInfo> {
-    let (samples, output_rate) = prepare_audio_samples(audio, sample_rate_setting);
-    let wav_path = session_path.join(filename);
-    
-    match bit_depth {
-        crate::config::AudioBitDepth::Float32 => {
-            let spec = hound::WavSpec {
-                channels: audio.channels,
-                sample_rate: output_rate,
-                bits_per_sample: 32,
-                sample_format: hound::SampleFormat::Float,
-            };
-            let mut writer = hound::WavWriter::create(&wav_path, spec)?;
-            for &s in &samples {
-                writer.write_sample(s)?;
-            }
-            writer.finalize()?;
-        }
-        crate::config::AudioBitDepth::Int24 => {
-            let spec = hound::WavSpec {
-                channels: audio.channels,
-                sample_rate: output_rate,
-                bits_per_sample: 24,
-                sample_format: hound::SampleFormat::Int,
-            };
-            let mut writer = hound::WavWriter::create(&wav_path, spec)?;
-            for &s in &samples {
-                writer.write_sample((s.clamp(-1.0, 1.0) * 8_388_607.0) as i32)?;
-            }
-            writer.finalize()?;
-        }
-        crate::config::AudioBitDepth::Int16 => {
-            let spec = hound::WavSpec {
-                channels: audio.channels,
-                sample_rate: output_rate,
-                bits_per_sample: 16,
-                sample_format: hound::SampleFormat::Int,
-            };
-            let mut writer = hound::WavWriter::create(&wav_path, spec)?;
-            for &s in &samples {
-                writer.write_sample((s.clamp(-1.0, 1.0) * 32_767.0) as i16)?;
-            }
-            writer.finalize()?;
-        }
-    }
-    
-    let size = std::fs::metadata(&wav_path)?.len();
-    let duration_secs = samples.len() as f64 / (output_rate as f64 * audio.channels as f64);
-    
-    Ok(AudioFileInfo {
-        filename: filename.to_string(),
-        device_name: audio.device_name.clone(),
-        channels: audio.channels,
-        sample_rate: output_rate,
-        duration_secs,
-        size_bytes: size,
-    })
-}
-
-/// Write audio samples to a FLAC file using GStreamer's flacenc element
-fn write_flac_file(
-    session_path: &PathBuf, 
-    filename: &str, 
-    audio: &CollectedAudio,
-    bit_depth: &crate::config::AudioBitDepth,
-    sample_rate_setting: &crate::config::AudioSampleRate,
-) -> anyhow::Result<AudioFileInfo> {
-    use gstreamer as gst;
-    use gstreamer::prelude::*;
-    use gstreamer_app as gst_app;
-    use gstreamer_audio as gst_audio;
-    
-    let (samples, output_rate) = prepare_audio_samples(audio, sample_rate_setting);
-    let flac_path = session_path.join(filename);
-    
-    // Build the raw sample bytes and GStreamer audio format based on bit depth
-    let (raw_bytes, gst_format): (Vec<u8>, gst_audio::AudioFormat) = match bit_depth {
-        crate::config::AudioBitDepth::Int16 => {
-            let bytes: Vec<u8> = samples.iter()
-                .map(|&s| (s.clamp(-1.0, 1.0) * 32_767.0) as i16)
-                .flat_map(|v| v.to_le_bytes())
-                .collect();
-            (bytes, gst_audio::AudioFormat::S16le)
-        }
-        crate::config::AudioBitDepth::Int24 => {
-            // Use S24_32LE: 24-bit samples stored in 32-bit containers
-            let bytes: Vec<u8> = samples.iter()
-                .map(|&s| (s.clamp(-1.0, 1.0) as f64 * 8_388_607.0) as i32)
-                .flat_map(|v| v.to_le_bytes())
-                .collect();
-            (bytes, gst_audio::AudioFormat::S2432le)
-        }
-        crate::config::AudioBitDepth::Float32 => {
-            let bytes: Vec<u8> = samples.iter()
-                .map(|&s| (s.clamp(-1.0, 1.0) as f64 * 2_147_483_647.0) as i32)
-                .flat_map(|v| v.to_le_bytes())
-                .collect();
-            (bytes, gst_audio::AudioFormat::S32le)
-        }
-    };
-    
-    // Build GStreamer pipeline: appsrc ! flacenc ! filesink
-    let pipeline = gst::Pipeline::new();
-    
-    // Use AudioInfo to build caps — this correctly sets channel-mask
-    // (required by flacenc for stereo/multi-channel audio)
-    let audio_info = gst_audio::AudioInfo::builder(gst_format, output_rate, audio.channels as u32)
-        .build()
-        .map_err(|e| anyhow::anyhow!("Failed to create audio info: {}", e))?;
-    
-    let appsrc = gst_app::AppSrc::builder()
-        .name("src")
-        .caps(&audio_info.to_caps().map_err(|e| anyhow::anyhow!("Failed to create audio caps: {}", e))?)
-        .format(gst::Format::Time)
-        .build();
-    
-    let flacenc = gst::ElementFactory::make("flacenc")
-        .name("encoder")
-        .build()
-        .map_err(|_| anyhow::anyhow!("Failed to create GStreamer flacenc element. Is the FLAC plugin installed?"))?;
-    
-    // For 32-bit FLAC, disable the Subset restriction (Subset limits to 24-bit max)
-    if matches!(bit_depth, crate::config::AudioBitDepth::Float32) {
-        flacenc.set_property("streamable-subset", false);
-    }
-    
-    let filesink = gst::ElementFactory::make("filesink")
-        .name("sink")
-        .property("location", flac_path.to_str().unwrap_or("output.flac"))
-        .build()
-        .map_err(|_| anyhow::anyhow!("Failed to create GStreamer filesink element"))?;
-    
-    pipeline.add_many([appsrc.upcast_ref(), &flacenc, &filesink])
-        .map_err(|e| anyhow::anyhow!("Failed to add elements to pipeline: {}", e))?;
-    
-    gst::Element::link_many([appsrc.upcast_ref(), &flacenc, &filesink])
-        .map_err(|e| anyhow::anyhow!("Failed to link pipeline elements: {}", e))?;
-    
-    // Start the pipeline
-    pipeline.set_state(gst::State::Playing)
-        .map_err(|e| anyhow::anyhow!("Failed to start FLAC pipeline: {}", e))?;
-    
-    // Push the audio data as a single buffer
-    let num_frames = samples.len() / audio.channels as usize;
-    let duration = gst::ClockTime::from_nseconds(
-        (num_frames as u64 * 1_000_000_000) / output_rate as u64
-    );
-    
-    let mut buffer = gst::Buffer::from_slice(raw_bytes);
-    {
-        let buf_ref = buffer.get_mut().unwrap();
-        buf_ref.set_pts(gst::ClockTime::ZERO);
-        buf_ref.set_duration(duration);
-    }
-    
-    appsrc.push_buffer(buffer)
-        .map_err(|e| anyhow::anyhow!("Failed to push audio buffer: {}", e))?;
-    
-    // Signal end of stream
-    appsrc.end_of_stream()
-        .map_err(|e| anyhow::anyhow!("Failed to send EOS: {}", e))?;
-    
-    // Wait for the pipeline to finish processing
-    let bus = pipeline.bus().unwrap();
-    for msg in bus.iter_timed(gst::ClockTime::from_seconds(30)) {
-        match msg.view() {
-            gst::MessageView::Eos(..) => break,
-            gst::MessageView::Error(err) => {
-                pipeline.set_state(gst::State::Null).ok();
-                return Err(anyhow::anyhow!(
-                    "FLAC encoding error: {} ({})",
-                    err.error(),
-                    err.debug().unwrap_or_default()
-                ));
-            }
-            _ => {}
-        }
-    }
-    
-    pipeline.set_state(gst::State::Null).ok();
-    
-    let size = std::fs::metadata(&flac_path)?.len();
-    let duration_secs = samples.len() as f64 / (output_rate as f64 * audio.channels as f64);
-    
-    Ok(AudioFileInfo {
-        filename: filename.to_string(),
-        device_name: audio.device_name.clone(),
-        channels: audio.channels,
-        sample_rate: output_rate,
-        duration_secs,
-        size_bytes: size,
-    })
-}
-
-/// Pad an audio file with silence to extend its duration
-/// For WAV files, we append silence samples
-/// For FLAC files, we skip padding (would require decode/re-encode)
-fn pad_audio_file(
-    session_path: &PathBuf,
-    audio_info: &mut AudioFileInfo,
-    padding_secs: f64,
-) -> anyhow::Result<()> {
-    let file_path = session_path.join(&audio_info.filename);
-    
-    // Calculate number of silence samples needed
-    let silence_samples = (padding_secs * audio_info.sample_rate as f64 * audio_info.channels as f64) as usize;
-    
-    if audio_info.filename.ends_with(".wav") {
-        // For WAV, we can read, extend, and rewrite
-        let mut reader = hound::WavReader::open(&file_path)?;
-        let spec = reader.spec();
-        
-        // Collect existing samples
-        let mut samples: Vec<f32> = reader.samples::<f32>()
-            .filter_map(|s| s.ok())
-            .collect();
-        
-        // Add silence
-        samples.extend(std::iter::repeat(0.0f32).take(silence_samples));
-        
-        drop(reader); // Close the reader before writing
-        
-        // Rewrite file with extended content
-        let mut writer = hound::WavWriter::create(&file_path, spec)?;
-        for sample in &samples {
-            writer.write_sample(*sample)?;
-        }
-        writer.finalize()?;
-        
-        // Update audio info
-        let new_size = std::fs::metadata(&file_path)?.len();
-        audio_info.duration_secs += padding_secs;
-        audio_info.size_bytes = new_size;
-        
-    } else if audio_info.filename.ends_with(".flac") {
-        // For FLAC, we would need to decode, add silence, and re-encode
-        // This is expensive and not implemented yet
-        println!("[Sacho] FLAC padding not implemented, audio may be shorter than video");
-    }
-    
-    Ok(())
-}
