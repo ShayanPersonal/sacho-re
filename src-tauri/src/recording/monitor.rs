@@ -190,13 +190,15 @@ impl MidiMonitor {
                     let capture_state = self.capture_state.clone();
                     let video_manager = self.video_manager.clone();
                     let port_name_clone = port_name.clone();
+                    // Only store MIDI events if this trigger device is also selected for recording
+                    let also_record = config.selected_midi_devices.contains(&device_id);
                     
                     match midi_in.connect(
                         port,
                         "sacho-trigger",
                         move |timestamp_us, message, _| {
-                            // Store event (to pre-roll buffer if not fully recording, to main buffer otherwise)
-                            {
+                            // Only store events if this device is also marked for recording
+                            if also_record {
                                 let mut state = capture_state.lock();
                                 
                                 // Use pre-roll if not recording OR if recording is starting (video init)

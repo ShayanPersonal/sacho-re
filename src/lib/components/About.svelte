@@ -57,7 +57,7 @@
             </svg>
           </span>
           <span class="feature-label">Trigger Recording</span>
-          <span class="feature-desc">Automatic MIDI, audio, and video recording when a performance is detected.</span>
+          <span class="feature-desc">Automatic MIDI, audio, and video recording when a musical performance is detected.</span>
         </div>
         <div class="feature">
           <span class="feature-icon">

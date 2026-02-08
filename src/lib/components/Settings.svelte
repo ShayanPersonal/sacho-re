@@ -273,9 +273,9 @@
                   </div>
                   <p class="preset-description">
                     {#if getCurrentPresetLevel() <= 3}
-                      Smoother recordings on less powerful systems.
+                      Smaller files. Smoother recordings on less powerful systems.
                     {:else}
-                      Higher quality output, requires a more powerful system.
+                      Larger files. Higher quality video. Requires a more powerful system.
                     {/if}
                   </p>
                 </div>

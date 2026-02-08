@@ -275,7 +275,7 @@
               </button>
               {#if showFormatHelp}
                 <div class="help-tooltip format-tooltip">
-                  Video sources may provide pre-encoded streams (like MJPEG) which use less system resources. Raw streams need to be encoded by your system (configured in <b>Settings</b>).
+                  Video sources may provide pre-encoded streams (like MJPEG) which use less system resources. Raw streams need to be encoded by your system (configured in <b>Settings</b>). Encoding raw streams may result in smaller files and better quality video.
                 </div>
               {/if}
             </div>
