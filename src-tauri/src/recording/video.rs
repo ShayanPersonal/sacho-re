@@ -181,6 +181,8 @@ pub struct VideoCapturePipeline {
     consecutive_full_drops: u32,
     /// Total frames dropped during this recording
     total_frames_dropped: u64,
+    /// Encoder quality preset level (1–5)
+    preset_level: u8,
 }
 
 /// Generic video file writer that handles different codecs and containers
@@ -543,6 +545,7 @@ impl VideoCapturePipeline {
             pixel_format: None,
             consecutive_full_drops: 0,
             total_frames_dropped: 0,
+            preset_level: crate::encoding::DEFAULT_PRESET,
         })
     }
     
@@ -729,6 +732,7 @@ impl VideoCapturePipeline {
             pixel_format: Some("NV12".to_string()),
             consecutive_full_drops: 0,
             total_frames_dropped: 0,
+            preset_level: crate::encoding::DEFAULT_PRESET,
         })
     }
     
@@ -820,10 +824,9 @@ impl VideoCapturePipeline {
             
             // Raw video - use async encoder
             let encoder_config = EncoderConfig {
-                bitrate: 0, // Auto
                 keyframe_interval: self.fps * 2, // Keyframe every 2 seconds
-                preset: "p4".to_string(), // Balanced preset
                 target_codec,
+                preset_level: self.preset_level,
             };
             
             // Create encoder with buffer size of ~2 seconds of frames for backpressure
@@ -967,6 +970,12 @@ impl VideoCapturePipeline {
         self.preroll_buffer.lock().duration()
     }
     
+    /// Drain all frames from the pre-roll buffer.
+    /// Used by the auto-select system to feed frames to a test encoder.
+    pub fn drain_preroll_frames(&self) -> Vec<BufferedFrame> {
+        self.preroll_buffer.lock().drain()
+    }
+    
     /// Set pre-roll duration
     pub fn set_preroll_duration(&self, secs: u32) {
         self.preroll_buffer.lock().set_duration(secs);
@@ -1074,6 +1083,8 @@ pub struct VideoCaptureManager {
     is_recording: bool,
     /// Encoding mode for raw video
     encoding_mode: VideoEncodingMode,
+    /// Encoder quality preset level (1–5)
+    preset_level: u8,
 }
 
 impl VideoCaptureManager {
@@ -1089,12 +1100,22 @@ impl VideoCaptureManager {
             pre_roll_secs,
             is_recording: false,
             encoding_mode: VideoEncodingMode::Av1,
+            preset_level: crate::encoding::DEFAULT_PRESET,
         }
     }
     
     /// Set the encoding mode for raw video
     pub fn set_encoding_mode(&mut self, mode: VideoEncodingMode) {
         self.encoding_mode = mode;
+    }
+    
+    /// Set the encoder quality preset level (1–5) for raw video encoding.
+    /// Updates existing pipelines so the next recording uses the new level.
+    pub fn set_preset_level(&mut self, level: u8) {
+        self.preset_level = level.clamp(crate::encoding::MIN_PRESET, crate::encoding::MAX_PRESET);
+        for (_, pipeline) in self.pipelines.iter_mut() {
+            pipeline.preset_level = self.preset_level;
+        }
     }
     
     /// Start capturing from specified devices with their codecs
@@ -1128,6 +1149,7 @@ impl VideoCaptureManager {
             
             match pipeline_result {
                 Ok(mut pipeline) => {
+                    pipeline.preset_level = self.preset_level;
                     if let Err(e) = pipeline.start() {
                         println!("[Video] Failed to start pipeline for {}: {}", device_id, e);
                         continue;

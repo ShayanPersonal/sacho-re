@@ -142,6 +142,7 @@ pub fn run() {
             commands::get_video_frames_batch,
             commands::get_video_frame_timestamps,
             commands::get_encoder_availability,
+            commands::auto_select_encoder_preset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sacho");

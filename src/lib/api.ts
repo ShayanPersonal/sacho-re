@@ -149,6 +149,8 @@ export interface Config {
   selected_video_devices: string[];
   /** Selected codec per video device (device_id -> codec) */
   video_device_codecs: Record<string, VideoCodec>;
+  /** Encoder quality preset level per encoding mode (e.g. { av1: 3, vp9: 4, vp8: 3 }) */
+  encoder_preset_levels: Record<string, number>;
   device_presets: DevicePreset[];
   current_preset: string | null;
 }
@@ -236,6 +238,27 @@ export interface EncoderAvailability {
 
 export async function getEncoderAvailability(): Promise<EncoderAvailability> {
   return invoke('get_encoder_availability');
+}
+
+// ============================================================================
+// Auto-select Encoder Preset
+// ============================================================================
+
+export interface AutoSelectProgress {
+  /** The preset level currently being tested (5 down to 1) */
+  testing_level: number;
+  /** Total levels available */
+  total_levels: number;
+  /** Human-readable status message */
+  message: string;
+}
+
+/** Run encoder auto-selection to find the best preset for the current system.
+ *  Returns the best preset level (1-5).
+ *  Emits 'auto-select-progress' events during the test.
+ */
+export async function autoSelectEncoderPreset(): Promise<number> {
+  return invoke('auto_select_encoder_preset');
 }
 
 // ============================================================================

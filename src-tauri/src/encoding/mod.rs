@@ -9,6 +9,7 @@
 // 5. Update recording pipeline in recording/video.rs
 
 pub mod encoder;
+pub mod presets;
 
 pub use encoder::{
     AsyncVideoEncoder, EncoderConfig, EncoderError, EncoderStats,
@@ -18,6 +19,7 @@ pub use encoder::{
     has_av1_encoder, has_vp8_encoder, has_vp9_encoder,
     get_recommended_encoding_mode,
 };
+pub use presets::{DEFAULT_PRESET, MIN_PRESET, MAX_PRESET};
 
 use serde::{Deserialize, Serialize};
 

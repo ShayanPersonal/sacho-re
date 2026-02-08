@@ -78,23 +78,21 @@ pub struct EncodedFrame {
 /// Configuration for video encoding
 #[derive(Clone, Debug)]
 pub struct EncoderConfig {
-    /// Target bitrate in bits per second (0 = automatic)
-    pub bitrate: u32,
     /// Keyframe interval in frames (0 = automatic)
     pub keyframe_interval: u32,
-    /// Preset (encoder-specific, e.g., "p1" to "p7" for NVENC)
-    pub preset: String,
     /// Target codec for encoding
     pub target_codec: VideoCodec,
+    /// Quality preset level (1 = lightest, 5 = maximum quality)
+    /// See [`super::presets`] for per-encoder parameter mappings.
+    pub preset_level: u8,
 }
 
 impl Default for EncoderConfig {
     fn default() -> Self {
         Self {
-            bitrate: 0, // Automatic
             keyframe_interval: 60, // Every 2 seconds at 30fps
-            preset: "p4".to_string(), // NVENC default (balanced)
             target_codec: VideoCodec::Av1,
+            preset_level: super::presets::DEFAULT_PRESET,
         }
     }
 }
@@ -967,6 +965,9 @@ impl AsyncVideoEncoder {
     }
     
     /// Create the AV1 encoder element based on hardware type
+    ///
+    /// Encoder parameters are configured by the preset system
+    /// ([`super::presets::apply_preset`]) based on `config.preset_level`.
     fn create_av1_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
         let encoder_name = hw_type.av1_encoder_element()
             .ok_or_else(|| EncoderError::NotAvailable(format!(
@@ -977,66 +978,14 @@ impl AsyncVideoEncoder {
             .build()
             .map_err(|e| EncoderError::NotAvailable(format!("Failed to create {}: {}", encoder_name, e)))?;
         
-        // Set encoder properties based on type
-        match hw_type {
-            HardwareEncoderType::Nvenc => {
-                // NVENC-specific settings
-                // Preset: p1 (fastest) to p7 (best quality)
-                if !config.preset.is_empty() {
-                    if let Ok(preset_num) = config.preset.trim_start_matches('p').parse::<i32>() {
-                        encoder.set_property_from_str("preset", &format!("p{}", preset_num.clamp(1, 7)));
-                    }
-                }
-                // Rate control - NVENC uses kbps for bitrate
-                if config.bitrate > 0 {
-                    encoder.set_property("bitrate", config.bitrate / 1000);
-                }
-                // GOP size - must be i32, not u32
-                if config.keyframe_interval > 0 {
-                    encoder.set_property("gop-size", config.keyframe_interval as i32);
-                }
-            }
-            HardwareEncoderType::Amf => {
-                if config.bitrate > 0 {
-                    encoder.set_property("bitrate", config.bitrate / 1000);
-                }
-            }
-            HardwareEncoderType::Qsv => {
-                if config.bitrate > 0 {
-                    encoder.set_property("bitrate", config.bitrate / 1000);
-                }
-            }
-            HardwareEncoderType::VaApi => {
-                if config.bitrate > 0 {
-                    encoder.set_property("bitrate", config.bitrate / 1000);
-                }
-            }
-            HardwareEncoderType::Software => {
-                // libaom (av1enc) settings - prioritize real-time performance
-                // cpu-used: 0 (slowest) to 10 (fastest, libaom supports up to 10)
-                encoder.set_property("cpu-used", 10u32);
-                // Use multiple threads based on CPU cores
-                let num_cpus = std::thread::available_parallelism()
-                    .map(|p| p.get() as u32)
-                    .unwrap_or(4);
-                encoder.set_property("threads", num_cpus);
-                // row-mt: enable row-based multi-threading
-                encoder.set_property("row-mt", true);
-                // target-bitrate in kbps for libaom
-                if config.bitrate > 0 {
-                    encoder.set_property("target-bitrate", config.bitrate / 1000);
-                } else {
-                    // Default to 3 Mbps — AV1 is very efficient
-                    encoder.set_property("target-bitrate", 3000u32);
-                }
-                // Keyframe interval
-                if config.keyframe_interval > 0 {
-                    encoder.set_property("keyframe-max-dist", config.keyframe_interval);
-                }
-                // CBR for lower latency
-                encoder.set_property_from_str("end-usage", "cbr");
-            }
-        }
+        // Apply preset-based parameters
+        super::presets::apply_preset(
+            &encoder,
+            VideoCodec::Av1,
+            hw_type,
+            config.preset_level,
+            config.keyframe_interval,
+        );
         
         Ok(encoder)
     }
@@ -1083,6 +1032,7 @@ impl AsyncVideoEncoder {
     /// 
     /// VP8 is royalty-free, so we can use both hardware and software encoders.
     /// Hardware encoders (VA-API, QuickSync) are preferred, with libvpx as fallback.
+    /// Encoder parameters are configured by the preset system.
     fn create_vp8_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
         let encoder_name = hw_type.vp8_encoder_element()
             .ok_or_else(|| EncoderError::NotAvailable(format!(
@@ -1093,57 +1043,9 @@ impl AsyncVideoEncoder {
             .build()
             .map_err(|e| EncoderError::NotAvailable(format!("Failed to create {}: {}", encoder_name, e)))?;
         
-        // Set encoder properties based on type
+        // Validate that this hw_type actually supports VP8
         match hw_type {
-            HardwareEncoderType::VaApi => {
-                // VA-API VP8 settings
-                if config.bitrate > 0 {
-                    encoder.set_property("bitrate", config.bitrate / 1000);
-                }
-            }
-            HardwareEncoderType::Qsv => {
-                // Intel QuickSync VP8 settings
-                if config.bitrate > 0 {
-                    encoder.set_property("bitrate", config.bitrate / 1000);
-                }
-            }
-            HardwareEncoderType::Software => {
-                // libvpx vp8enc settings - prioritize real-time performance
-                // deadline: 1=realtime (fastest, drops quality to maintain speed)
-                encoder.set_property_from_str("deadline", "1");
-                // cpu-used: 0-16, higher = faster encoding (less algorithmic effort)
-                // 16 is maximum speed — essential for real-time on slower CPUs
-                encoder.set_property("cpu-used", 16i32);
-                // threads: use available CPU cores for parallel encoding
-                let num_cpus = std::thread::available_parallelism()
-                    .map(|p| p.get() as i32)
-                    .unwrap_or(4)
-                    .min(16); // libvpx max threads is 16
-                encoder.set_property("threads", num_cpus);
-                // target-bitrate in bits per second
-                if config.bitrate > 0 {
-                    encoder.set_property("target-bitrate", config.bitrate as i32);
-                } else {
-                    // Default to 4 Mbps — lower than before to reduce encoder load.
-                    // VP8 at 4 Mbps still looks good for webcam footage.
-                    encoder.set_property("target-bitrate", 4_000_000i32);
-                }
-                // Keyframe interval
-                if config.keyframe_interval > 0 {
-                    encoder.set_property("keyframe-max-dist", config.keyframe_interval as i32);
-                }
-                // CBR (constant bitrate) is faster to encode than VBR and avoids
-                // the encoder buffering extra frames for rate-control lookahead
-                encoder.set_property_from_str("end-usage", "cbr");
-                // Small buffer to minimize latency (in milliseconds)
-                encoder.set_property("buffer-size", 500i32);
-                encoder.set_property("buffer-initial-size", 300i32);
-                encoder.set_property("buffer-optimal-size", 400i32);
-                // Static threshold: skip encoding blocks that don't change much
-                // (reduces CPU for typical webcam footage with static backgrounds)
-                encoder.set_property("static-threshold", 100i32);
-            }
-            // These encoder types don't support VP8
+            HardwareEncoderType::VaApi | HardwareEncoderType::Qsv | HardwareEncoderType::Software => {}
             _ => {
                 return Err(EncoderError::NotAvailable(format!(
                     "VP8 encoding is not available with {}.",
@@ -1151,6 +1053,15 @@ impl AsyncVideoEncoder {
                 )));
             }
         }
+        
+        // Apply preset-based parameters
+        super::presets::apply_preset(
+            &encoder,
+            VideoCodec::Vp8,
+            hw_type,
+            config.preset_level,
+            config.keyframe_interval,
+        );
         
         Ok(encoder)
     }
@@ -1197,6 +1108,7 @@ impl AsyncVideoEncoder {
     /// 
     /// VP9 is royalty-free, so we can use both hardware and software encoders.
     /// Hardware encoders (QuickSync, VA-API) are preferred, with libvpx as fallback.
+    /// Encoder parameters are configured by the preset system.
     fn create_vp9_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
         let encoder_name = hw_type.vp9_encoder_element()
             .ok_or_else(|| EncoderError::NotAvailable(format!(
@@ -1207,55 +1119,9 @@ impl AsyncVideoEncoder {
             .build()
             .map_err(|e| EncoderError::NotAvailable(format!("Failed to create {}: {}", encoder_name, e)))?;
         
-        // Set encoder properties based on type
+        // Validate that this hw_type actually supports VP9
         match hw_type {
-            HardwareEncoderType::Qsv => {
-                // Intel QuickSync VP9 settings
-                if config.bitrate > 0 {
-                    encoder.set_property("bitrate", config.bitrate / 1000);
-                }
-            }
-            HardwareEncoderType::VaApi => {
-                // VA-API VP9 settings
-                if config.bitrate > 0 {
-                    encoder.set_property("bitrate", config.bitrate / 1000);
-                }
-            }
-            HardwareEncoderType::Software => {
-                // libvpx vp9enc settings - prioritize real-time performance
-                // deadline: 1=realtime
-                encoder.set_property_from_str("deadline", "1");
-                // cpu-used: 0-8 for VP9 (VP9 max is 8, not 16 like VP8)
-                // 8 is maximum speed
-                encoder.set_property("cpu-used", 8i32);
-                // threads: use available CPU cores for parallel encoding
-                let num_cpus = std::thread::available_parallelism()
-                    .map(|p| p.get() as i32)
-                    .unwrap_or(4)
-                    .min(16);
-                encoder.set_property("threads", num_cpus);
-                // row-mt: enable row-based multi-threading for better parallelism
-                encoder.set_property("row-mt", true);
-                // target-bitrate in bits per second
-                if config.bitrate > 0 {
-                    encoder.set_property("target-bitrate", config.bitrate as i32);
-                } else {
-                    // Default to 3 Mbps — VP9 is more efficient than VP8
-                    encoder.set_property("target-bitrate", 3_000_000i32);
-                }
-                // Keyframe interval
-                if config.keyframe_interval > 0 {
-                    encoder.set_property("keyframe-max-dist", config.keyframe_interval as i32);
-                }
-                // CBR for lower latency (no lookahead buffering)
-                encoder.set_property_from_str("end-usage", "cbr");
-                // Small buffer to minimize latency
-                encoder.set_property("buffer-size", 500i32);
-                encoder.set_property("buffer-initial-size", 300i32);
-                encoder.set_property("buffer-optimal-size", 400i32);
-                encoder.set_property("static-threshold", 100i32);
-            }
-            // These encoder types don't support VP9
+            HardwareEncoderType::Qsv | HardwareEncoderType::VaApi | HardwareEncoderType::Software => {}
             _ => {
                 return Err(EncoderError::NotAvailable(format!(
                     "VP9 encoding is not available with {}.",
@@ -1263,6 +1129,15 @@ impl AsyncVideoEncoder {
                 )));
             }
         }
+        
+        // Apply preset-based parameters
+        super::presets::apply_preset(
+            &encoder,
+            VideoCodec::Vp9,
+            hw_type,
+            config.preset_level,
+            config.keyframe_interval,
+        );
         
         Ok(encoder)
     }

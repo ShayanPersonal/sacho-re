@@ -1,14 +1,77 @@
 <script lang="ts">
   import { settings, saveSettings, saveSettingsDebounced, saveStatus } from '$lib/stores/settings';
   import { open } from '@tauri-apps/plugin-dialog';
-  import type { Config, EncoderAvailability } from '$lib/api';
-  import { getEncoderAvailability } from '$lib/api';
+  import type { Config, EncoderAvailability, AutoSelectProgress } from '$lib/api';
+  import { getEncoderAvailability, autoSelectEncoderPreset } from '$lib/api';
+  import { listen } from '@tauri-apps/api/event';
+  import { onMount } from 'svelte';
   
   // Local editable copy
   let localSettings = $state<Config | null>(null);
   let showRawVideoHelp = $state(false);
   let showAudioAdvanced = $state(false);
+  let showEncoderAdvanced = $state(false);
   let encoderAvailability = $state<EncoderAvailability | null>(null);
+  
+  // Auto-select state
+  let autoSelectRunning = $state(false);
+  let autoSelectProgress = $state<AutoSelectProgress | null>(null);
+  let autoSelectError = $state<string | null>(null);
+  
+  // Preset labels
+  const presetLabels: Record<number, string> = {
+    1: 'Lightest',
+    2: 'Light',
+    3: 'Balanced',
+    4: 'Quality',
+    5: 'Maximum',
+  };
+  
+  // Listen for auto-select progress events
+  onMount(() => {
+    const unlisten = listen<AutoSelectProgress>('auto-select-progress', (event) => {
+      autoSelectProgress = event.payload;
+    });
+    return () => { unlisten.then(fn => fn()); };
+  });
+  
+  // Get current preset level for the selected encoding mode
+  function getCurrentPresetLevel(): number {
+    if (!localSettings) return 3;
+    const mode = localSettings.video_encoding_mode;
+    if (mode === 'raw') return 3;
+    return localSettings.encoder_preset_levels?.[mode] ?? 3;
+  }
+  
+  // Set preset level for the selected encoding mode
+  function setPresetLevel(level: number) {
+    if (!localSettings) return;
+    const mode = localSettings.video_encoding_mode;
+    if (mode === 'raw') return;
+    if (!localSettings.encoder_preset_levels) {
+      localSettings.encoder_preset_levels = {};
+    }
+    localSettings.encoder_preset_levels[mode] = level;
+    autoSave();
+  }
+  
+  // Run auto-select
+  async function runAutoSelect() {
+    if (autoSelectRunning) return;
+    autoSelectRunning = true;
+    autoSelectProgress = null;
+    autoSelectError = null;
+    
+    try {
+      const bestLevel = await autoSelectEncoderPreset();
+      setPresetLevel(bestLevel);
+    } catch (e) {
+      autoSelectError = typeof e === 'string' ? e : (e as Error).message || 'Auto-select failed';
+    } finally {
+      autoSelectRunning = false;
+      autoSelectProgress = null;
+    }
+  }
   
   $effect(() => {
     if ($settings && !localSettings) {
@@ -179,6 +242,72 @@
               {/if}
             </p>
           {/if}
+          {#if localSettings.video_encoding_mode !== 'raw' && encoderAvailability && (encoderAvailability.av1_available || encoderAvailability.vp9_available || encoderAvailability.vp8_available)}
+            <button class="advanced-toggle" onclick={() => showEncoderAdvanced = !showEncoderAdvanced}>
+              Advanced
+              <svg class="toggle-chevron" class:open={showEncoderAdvanced} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+            {#if showEncoderAdvanced}
+              <div class="encoder-advanced-section">
+                <div class="preset-slider-group">
+                  <div class="preset-header">
+                    <span class="setting-label">Encoder Preset</span>
+                    <span class="preset-value">{getCurrentPresetLevel()} — {presetLabels[getCurrentPresetLevel()] ?? 'Balanced'}</span>
+                  </div>
+                  <div class="preset-slider-row">
+                    <span class="preset-endpoint">Lightest</span>
+                    <input
+                      type="range"
+                      min="1"
+                      max="5"
+                      step="1"
+                      value={getCurrentPresetLevel()}
+                      oninput={(e) => setPresetLevel(parseInt((e.target as HTMLInputElement).value))}
+                      class="preset-slider"
+                      disabled={autoSelectRunning}
+                    />
+                    <span class="preset-endpoint">Maximum</span>
+                  </div>
+                  <p class="preset-description">
+                    {#if getCurrentPresetLevel() <= 3}
+                      Smoother recordings on less powerful systems.
+                    {:else}
+                      Higher quality output, requires a more powerful system.
+                    {/if}
+                  </p>
+                </div>
+                <div class="auto-select-group">
+                  <button
+                    class="auto-select-btn"
+                    onclick={runAutoSelect}
+                    disabled={autoSelectRunning}
+                  >
+                    {#if autoSelectRunning}
+                      <svg class="icon spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+                        <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>
+                      </svg>
+                      {#if autoSelectProgress}
+                        {autoSelectProgress.message}
+                      {:else}
+                        Starting...
+                      {/if}
+                    {:else}
+                      Auto-select
+                    {/if}
+                  </button>
+                  <p class="auto-select-description">
+                    Tests each preset on your video sources to find the best one your system can handle without choppiness. Takes up to a minute.
+                  </p>
+                  {#if autoSelectError}
+                    <p class="auto-select-error">{autoSelectError}</p>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+          {/if}
         </div>
       </section>
       
@@ -210,50 +339,72 @@
           </select>
         </div>
         <button class="advanced-toggle" onclick={() => showAudioAdvanced = !showAudioAdvanced}>
-          More settings ({localSettings.audio_format.toUpperCase()})
+          Advanced
           <svg class="toggle-chevron" class:open={showAudioAdvanced} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9"></polyline>
           </svg>
         </button>
         {#if showAudioAdvanced}
           <div class="advanced-audio-section">
-            <p class="advanced-note">Leave as default if unsure.</p>
-            <div class="advanced-audio-row">
-              <div class="advanced-audio-field">
-                <label>
-                  <span class="setting-label">Bit Depth</span>
-                </label>
-                {#if localSettings.audio_format === 'wav'}
-                  <select bind:value={localSettings.wav_bit_depth} onchange={autoSave}>
-                    <option value="int16">16-bit</option>
-                    <option value="int24">24-bit (default)</option>
-                    <option value="float32">32-bit float</option>
-                  </select>
-                {:else}
-                  <select bind:value={localSettings.flac_bit_depth} onchange={autoSave}>
-                    <option value="int16">16-bit</option>
-                    <option value="int24">24-bit (default)</option>
-                    <option value="float32">32-bit (new, possible compatibility issues)</option>
-                  </select>
-                {/if}
+            <div class="advanced-audio-field">
+              <div class="advanced-field-header">
+                <span class="setting-label">Bit Depth</span>
+                <span class="advanced-field-value">
+                  {#if localSettings.audio_format === 'wav'}
+                    {localSettings.wav_bit_depth === 'int16' ? '16-bit' : localSettings.wav_bit_depth === 'int24' ? '24-bit' : '32-bit float'}
+                  {:else}
+                    {localSettings.flac_bit_depth === 'int16' ? '16-bit' : localSettings.flac_bit_depth === 'int24' ? '24-bit' : '32-bit'}
+                  {/if}
+                </span>
               </div>
-              <div class="advanced-audio-field">
-                <label>
-                  <span class="setting-label">Sample Rate</span>
-                </label>
-                {#if localSettings.audio_format === 'wav'}
-                  <select bind:value={localSettings.wav_sample_rate} onchange={autoSave}>
-                    <option value="passthrough">Device Native (default)</option>
-
-                  </select>
+              {#if localSettings.audio_format === 'wav'}
+                <select bind:value={localSettings.wav_bit_depth} onchange={autoSave}>
+                  <option value="int16">16-bit</option>
+                  <option value="int24">24-bit (default)</option>
+                  <option value="float32">32-bit float</option>
+                </select>
+              {:else}
+                <select bind:value={localSettings.flac_bit_depth} onchange={autoSave}>
+                  <option value="int16">16-bit</option>
+                  <option value="int24">24-bit (default)</option>
+                  <option value="float32">32-bit (limited compatibility)</option>
+                </select>
+              {/if}
+              <p class="advanced-field-description">
+                {#if (localSettings.audio_format === 'wav' ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === 'int16'}
+                  CD quality. Smallest files, compatible everywhere.
+                {:else if (localSettings.audio_format === 'wav' ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === 'int24'}
+                  Studio quality. Recommended for most recordings.
                 {:else}
-                  <select bind:value={localSettings.flac_sample_rate} onchange={autoSave}>
-                    <option value="passthrough">Device Native (default)</option>
-
-                  </select>
+                  Maximum dynamic range.{localSettings.audio_format === 'flac' ? ' Some players may not support this.' : ''}
                 {/if}
-              </div>
+              </p>
             </div>
+            <!--<div class="advanced-audio-divider"></div>
+            <div class="advanced-audio-field">
+              <div class="advanced-field-header">
+                <span class="setting-label">Sample Rate</span>
+                <span class="advanced-field-value">
+                  {#if localSettings.audio_format === 'wav'}
+                    {localSettings.wav_sample_rate === 'passthrough' ? 'Device Native' : localSettings.wav_sample_rate.replace('rate', '').replace(/(\d+)/, (_, n) => (parseInt(n) / 1000).toFixed(parseInt(n) % 1000 ? 1 : 0)) + ' kHz'}
+                  {:else}
+                    {localSettings.flac_sample_rate === 'passthrough' ? 'Device Native' : localSettings.flac_sample_rate.replace('rate', '').replace(/(\d+)/, (_, n) => (parseInt(n) / 1000).toFixed(parseInt(n) % 1000 ? 1 : 0)) + ' kHz'}
+                  {/if}
+                </span>
+              </div>
+              {#if localSettings.audio_format === 'wav'}
+                <select bind:value={localSettings.wav_sample_rate} onchange={autoSave}>
+                  <option value="passthrough">Device Native (default)</option>
+                </select>
+              {:else}
+                <select bind:value={localSettings.flac_sample_rate} onchange={autoSave}>
+                  <option value="passthrough">Device Native (default)</option>
+                </select>
+              {/if}
+              <p class="advanced-field-description">
+                Records at whatever sample rate your audio device uses. No resampling.
+              </p>
+            </div>-->
           </div>
         {/if}
 
@@ -489,20 +640,7 @@
     gap: 0.75rem;
   }
 
-  .advanced-note {
-    font-size: 0.6875rem;
-    color: #5a5a5a;
-    line-height: 1.5;
-    margin: 0;
-  }
-
-  .advanced-audio-row {
-    display: flex;
-    gap: 0.75rem;
-  }
-
   .advanced-audio-field {
-    flex: 1;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -511,6 +649,46 @@
   .advanced-audio-field select {
     width: 100%;
     padding: 0.5rem 0.75rem;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.25rem;
+    color: #e8e6e3;
+    font-family: inherit;
+    font-size: 0.8125rem;
+  }
+
+  .advanced-audio-field select:focus {
+    outline: none;
+    border-color: rgba(201, 169, 98, 0.4);
+  }
+
+  .advanced-audio-field select option {
+    background: #1a1a1a;
+    color: #e8e6e3;
+  }
+
+  .advanced-field-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .advanced-field-value {
+    font-size: 0.75rem;
+    color: #c9a962;
+    font-weight: 500;
+  }
+
+  .advanced-field-description {
+    font-size: 0.6875rem;
+    color: #5a5a5a;
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  .advanced-audio-divider {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.04);
   }
   
   .setting-row input[type="number"],
@@ -584,6 +762,163 @@
   
   .encoder-info strong {
     color: #a8a8a8;
+  }
+  
+  .encoder-advanced-section {
+    padding: 0.75rem;
+    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 0.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  
+  .preset-slider-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  
+  .preset-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  .preset-value {
+    font-size: 0.75rem;
+    color: #c9a962;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  
+  .preset-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  .preset-endpoint {
+    font-size: 0.6875rem;
+    color: #5a5a5a;
+    white-space: nowrap;
+    min-width: 52px;
+  }
+  
+  .preset-endpoint:last-child {
+    text-align: right;
+  }
+  
+  .preset-slider {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  
+  .preset-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #c9a962;
+    cursor: pointer;
+    border: 2px solid rgba(0, 0, 0, 0.3);
+    transition: transform 0.1s ease;
+  }
+  
+  .preset-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+  }
+  
+  .preset-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #c9a962;
+    cursor: pointer;
+    border: 2px solid rgba(0, 0, 0, 0.3);
+  }
+  
+  .preset-slider:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  
+  .preset-slider:disabled::-webkit-slider-thumb {
+    cursor: not-allowed;
+  }
+  
+  .preset-description {
+    font-size: 0.6875rem;
+    color: #5a5a5a;
+    line-height: 1.5;
+    margin: 0;
+  }
+  
+  .auto-select-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    padding-top: 0.375rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  
+  .auto-select-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    background: transparent;
+    border: 1px solid rgba(201, 169, 98, 0.25);
+    border-radius: 0.25rem;
+    color: #c9a962;
+    font-family: inherit;
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    width: 100%;
+  }
+  
+  .auto-select-btn:hover:not(:disabled) {
+    background: rgba(201, 169, 98, 0.08);
+    border-color: rgba(201, 169, 98, 0.4);
+  }
+  
+  .auto-select-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.8;
+    border-color: rgba(201, 169, 98, 0.15);
+  }
+  
+  .auto-select-btn .spinner {
+    animation: spin 1s linear infinite;
+  }
+  
+  .auto-select-description {
+    font-size: 0.6875rem;
+    color: #5a5a5a;
+    line-height: 1.5;
+    margin: 0;
+  }
+  
+  .auto-select-error {
+    font-size: 0.6875rem;
+    color: #c96262;
+    line-height: 1.5;
+    margin: 0;
+    padding: 0.375rem 0.5rem;
+    background: rgba(201, 98, 98, 0.08);
+    border: 1px solid rgba(201, 98, 98, 0.2);
+    border-radius: 0.25rem;
   }
   
   .path-input {
@@ -740,8 +1075,31 @@
     border-color: rgba(0, 0, 0, 0.08);
   }
 
-  :global(body.light-mode) .advanced-note {
+  :global(body.light-mode) .advanced-audio-field select {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(0, 0, 0, 0.15);
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .advanced-audio-field select:focus {
+    border-color: rgba(160, 128, 48, 0.5);
+  }
+
+  :global(body.light-mode) .advanced-audio-field select option {
+    background: #ffffff;
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .advanced-field-value {
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode) .advanced-field-description {
     color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .advanced-audio-divider {
+    background: rgba(0, 0, 0, 0.08);
   }
 
   :global(body.light-mode) .setting-row input[type="number"],
@@ -833,5 +1191,60 @@
 
   :global(body.light-mode) .setting-label-with-help > span:first-child {
     color: #3a3a3a;
+  }
+
+  :global(body.light-mode) .encoder-advanced-section {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .preset-value {
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode) .preset-endpoint {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .preset-slider {
+    background: rgba(0, 0, 0, 0.1);
+  }
+
+  :global(body.light-mode) .preset-slider::-webkit-slider-thumb {
+    background: #a08030;
+    border-color: rgba(255, 255, 255, 0.5);
+  }
+
+  :global(body.light-mode) .preset-slider::-moz-range-thumb {
+    background: #a08030;
+    border-color: rgba(255, 255, 255, 0.5);
+  }
+
+  :global(body.light-mode) .preset-description {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .auto-select-group {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .auto-select-btn {
+    border-color: rgba(160, 128, 48, 0.3);
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode) .auto-select-btn:hover:not(:disabled) {
+    background: rgba(160, 128, 48, 0.08);
+    border-color: rgba(160, 128, 48, 0.5);
+  }
+
+  :global(body.light-mode) .auto-select-description {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .auto-select-error {
+    color: #a04040;
+    background: rgba(160, 64, 64, 0.08);
+    border-color: rgba(160, 64, 64, 0.2);
   }
 </style>

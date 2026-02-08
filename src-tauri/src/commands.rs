@@ -250,14 +250,17 @@ pub fn update_config(
     new_config: Config,
 ) -> Result<(), String> {
     // Check if device-related settings changed before updating
-    let device_settings_changed = {
+    let (device_settings_changed, preset_or_mode_changed) = {
         let current = config.read();
-        current.selected_midi_devices != new_config.selected_midi_devices
+        let dev_changed = current.selected_midi_devices != new_config.selected_midi_devices
             || current.trigger_midi_devices != new_config.trigger_midi_devices
             || current.selected_video_devices != new_config.selected_video_devices
             || current.video_device_codecs != new_config.video_device_codecs
             || current.selected_audio_devices != new_config.selected_audio_devices
-            || current.pre_roll_secs != new_config.pre_roll_secs
+            || current.pre_roll_secs != new_config.pre_roll_secs;
+        let preset_changed = current.encoder_preset_levels != new_config.encoder_preset_levels
+            || current.video_encoding_mode != new_config.video_encoding_mode;
+        (dev_changed, preset_changed)
     };
     
     // If devices changed, check if we're currently recording
@@ -286,6 +289,11 @@ pub fn update_config(
     
     // Save to disk
     new_config.save(&app).map_err(|e| e.to_string())?;
+    
+    // Sync preset level to video manager if it changed (no restart needed)
+    if preset_or_mode_changed && !device_settings_changed {
+        sync_preset_level_to_video_manager(&monitor, &new_config);
+    }
     
     // Restart monitor if device-related settings changed
     // This is synchronous to ensure we're in a valid state before returning
@@ -673,6 +681,28 @@ pub struct EncoderAvailability {
     pub recommended_default: String,
 }
 
+/// Update the encoder preset level on the video manager without restarting.
+/// Called from `update_config` when only the preset level changes.
+fn sync_preset_level_to_video_manager(
+    monitor: &Arc<Mutex<MidiMonitor>>,
+    config: &Config,
+) {
+    let encoding_mode_key = match &config.video_encoding_mode {
+        crate::config::VideoEncodingMode::Av1 => "av1",
+        crate::config::VideoEncodingMode::Vp9 => "vp9",
+        crate::config::VideoEncodingMode::Vp8 => "vp8",
+        crate::config::VideoEncodingMode::Raw => "vp8",
+    };
+    let level = config.encoder_preset_levels
+        .get(encoding_mode_key)
+        .copied()
+        .unwrap_or(crate::encoding::DEFAULT_PRESET);
+    
+    let monitor = monitor.lock();
+    let video_mgr = monitor.video_manager();
+    video_mgr.lock().set_preset_level(level);
+}
+
 #[tauri::command]
 pub fn get_encoder_availability() -> EncoderAvailability {
     use crate::encoding::{
@@ -716,4 +746,335 @@ pub fn get_encoder_availability() -> EncoderAvailability {
             crate::config::VideoEncodingMode::Raw => "raw".to_string(),
         },
     }
+}
+
+// ============================================================================
+// Auto-select Encoder Preset
+// ============================================================================
+
+/// Progress update emitted during auto-select
+#[derive(Debug, Clone, Serialize)]
+pub struct AutoSelectProgress {
+    /// The preset level currently being tested (5 down to 1)
+    pub testing_level: u8,
+    /// Total levels to test
+    pub total_levels: u8,
+    /// Status message
+    pub message: String,
+}
+
+/// Run the video encoding pipeline with each preset level to find the best one
+/// that doesn't drop frames. Starts at level 5 (maximum quality) and steps down.
+///
+/// Emits `auto-select-progress` events during the test.
+///
+/// This command temporarily stops video capture pipelines to gain exclusive
+/// access to the camera device, then restarts them when done. MIDI and audio
+/// monitoring continue uninterrupted.
+#[tauri::command]
+pub async fn auto_select_encoder_preset(
+    app: tauri::AppHandle,
+    config: State<'_, RwLock<Config>>,
+    recording_state: State<'_, RwLock<RecordingState>>,
+    monitor: State<'_, Arc<Mutex<MidiMonitor>>>,
+    device_manager: State<'_, RwLock<DeviceManager>>,
+) -> Result<u8, String> {
+    use crate::encoding::VideoCodec;
+    
+    // 1. Check we're not recording
+    {
+        let state = recording_state.read();
+        if state.status == RecordingStatus::Recording {
+            return Err("Cannot auto-select while recording".to_string());
+        }
+        if state.status == RecordingStatus::Stopping {
+            return Err("Recording is stopping, please wait".to_string());
+        }
+    }
+    
+    // 2. Read config
+    let (selected_video_devices, encoding_mode, video_device_codecs) = {
+        let cfg = config.read();
+        (
+            cfg.selected_video_devices.clone(),
+            cfg.video_encoding_mode.clone(),
+            cfg.video_device_codecs.clone(),
+        )
+    };
+    
+    // Check encoding mode is valid for testing
+    if encoding_mode == crate::config::VideoEncodingMode::Raw {
+        return Err("Cannot auto-select for raw mode (no encoding)".to_string());
+    }
+    
+    // Find first selected video device that uses raw codec (needs encoding)
+    let test_device = {
+        let devices = device_manager.read();
+        selected_video_devices.iter().find_map(|device_id| {
+            let device = devices.video_devices.iter().find(|d| &d.id == device_id)?;
+            let override_codec = video_device_codecs.get(device_id).copied();
+            let preferred = device.preferred_codec();
+            let codec = override_codec
+                .filter(|c| device.supported_codecs.contains(c))
+                .or(preferred)?;
+            
+            // Only test devices that use raw video (need encoding)
+            if codec == VideoCodec::Raw {
+                Some((device_id.clone(), device.name.clone()))
+            } else {
+                None
+            }
+        })
+    };
+    
+    let (device_id, device_name) = test_device.ok_or_else(|| {
+        "No raw video devices selected. Auto-select only works with devices using raw video that requires encoding.".to_string()
+    })?;
+    
+    // 3. Set status to initializing to prevent recording attempts
+    {
+        let mut state = recording_state.write();
+        state.status = RecordingStatus::Initializing;
+    }
+    let _ = app.emit("recording-state-changed", "initializing");
+    
+    // 4. Get the video manager from the monitor and stop video pipelines only.
+    //    This releases the camera without touching audio/MIDI (which use TLS).
+    let video_manager = {
+        let mon = monitor.lock();
+        mon.video_manager()
+    };
+    
+    // Save the info needed to restart pipelines later
+    let restart_info = {
+        let cfg = config.read();
+        let devices = device_manager.read();
+        let codec_overrides = &cfg.video_device_codecs;
+        
+        let info: Vec<(String, String, VideoCodec)> = cfg.selected_video_devices
+            .iter()
+            .filter_map(|dev_id| {
+                let device = devices.video_devices.iter().find(|d| &d.id == dev_id)?;
+                let override_codec = codec_overrides.get(dev_id).copied();
+                let preferred = device.preferred_codec();
+                let codec = override_codec
+                    .filter(|c| device.supported_codecs.contains(c))
+                    .or(preferred)?;
+                Some((dev_id.clone(), device.name.clone(), codec))
+            })
+            .collect();
+        
+        let enc_mode = cfg.video_encoding_mode.clone();
+        let enc_key = match &enc_mode {
+            crate::config::VideoEncodingMode::Av1 => "av1",
+            crate::config::VideoEncodingMode::Vp9 => "vp9",
+            crate::config::VideoEncodingMode::Vp8 => "vp8",
+            crate::config::VideoEncodingMode::Raw => "vp8",
+        };
+        let preset = cfg.encoder_preset_levels.get(enc_key).copied()
+            .unwrap_or(crate::encoding::DEFAULT_PRESET);
+        let pre_roll = cfg.pre_roll_secs.min(5);
+        
+        (info, enc_mode, preset, pre_roll)
+    };
+    
+    // Stop video pipelines (releases camera)
+    video_manager.lock().stop();
+    
+    // 5. Run the auto-select test (this is the long-running part)
+    let result = run_auto_select_test(
+        &app,
+        &device_id,
+        &device_name,
+        &encoding_mode,
+    ).await;
+    
+    // 6. Restart video pipelines regardless of test result
+    {
+        let (ref devices_info, ref enc_mode, preset, pre_roll) = restart_info;
+        let mut mgr = video_manager.lock();
+        mgr.set_preroll_duration(pre_roll);
+        mgr.set_encoding_mode(enc_mode.clone());
+        // Use the auto-selected preset if successful, otherwise keep the old one
+        let final_preset = result.as_ref().copied().unwrap_or(preset);
+        mgr.set_preset_level(final_preset);
+        if !devices_info.is_empty() {
+            if let Err(e) = mgr.start(devices_info) {
+                println!("[AutoSelect] Warning: Failed to restart video pipelines: {}", e);
+            }
+        }
+    }
+    
+    // 7. Set status back to idle
+    {
+        let mut state = recording_state.write();
+        state.status = RecordingStatus::Idle;
+    }
+    let _ = app.emit("recording-state-changed", "idle");
+    
+    result
+}
+
+/// Core auto-select test logic. Creates a test pipeline and encoder for each
+/// preset level, measures frame drops over 10 seconds per level.
+async fn run_auto_select_test(
+    app: &tauri::AppHandle,
+    device_id: &str,
+    device_name: &str,
+    encoding_mode: &crate::config::VideoEncodingMode,
+) -> Result<u8, String> {
+    use crate::recording::video::VideoCapturePipeline;
+    use crate::encoding::{AsyncVideoEncoder, EncoderConfig, RawVideoFrame, MAX_PRESET, MIN_PRESET};
+    use std::time::{Duration, Instant};
+    
+    let target_codec = match encoding_mode {
+        crate::config::VideoEncodingMode::Av1 => crate::encoding::VideoCodec::Av1,
+        crate::config::VideoEncodingMode::Vp9 => crate::encoding::VideoCodec::Vp9,
+        crate::config::VideoEncodingMode::Vp8 => crate::encoding::VideoCodec::Vp8,
+        crate::config::VideoEncodingMode::Raw => {
+            return Err("Cannot test raw mode".to_string());
+        }
+    };
+    
+    // Extract device index from device_id
+    let device_index = device_id
+        .strip_prefix("webcam-")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+    
+    // Create a test capture pipeline
+    println!("[AutoSelect] Creating test capture pipeline for {} ({})", device_name, device_id);
+    let mut capture = VideoCapturePipeline::new_webcam_raw(
+        device_index,
+        device_name,
+        2, // minimal pre-roll
+        encoding_mode.clone(),
+    ).map_err(|e| format!("Failed to create test pipeline: {}", e))?;
+    
+    // Start capture
+    capture.start().map_err(|e| format!("Failed to start test capture: {}", e))?;
+    
+    // Wait for frames to start arriving (up to 5 seconds)
+    println!("[AutoSelect] Waiting for video frames...");
+    let wait_start = Instant::now();
+    loop {
+        if wait_start.elapsed() > Duration::from_secs(5) {
+            let _ = capture.stop();
+            return Err("Timeout waiting for video frames from camera".to_string());
+        }
+        if capture.preroll_duration() > Duration::from_millis(100) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    println!("[AutoSelect] Frames arriving, starting tests");
+    
+    let test_duration = Duration::from_secs(10);
+    let drop_threshold = 2u64;
+    let mut best_level = MIN_PRESET; // Fallback to lightest
+    
+    // Test from most intensive to lightest
+    for level in (MIN_PRESET..=MAX_PRESET).rev() {
+        // Emit progress
+        let _ = app.emit("auto-select-progress", AutoSelectProgress {
+            testing_level: level,
+            total_levels: MAX_PRESET,
+            message: format!("Testing preset {} ({})...", level, crate::encoding::presets::preset_label(level)),
+        });
+        
+        println!("[AutoSelect] Testing preset level {} ({})...", level, crate::encoding::presets::preset_label(level));
+        
+        // Create a temp file for the test encoder
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!("sacho_autoselect_test_{}.webm", level));
+        
+        // Create encoder with this preset
+        let encoder_config = EncoderConfig {
+            keyframe_interval: capture.fps * 2,
+            target_codec,
+            preset_level: level,
+        };
+        
+        let encoder = match AsyncVideoEncoder::new(
+            temp_file.clone(),
+            capture.width,
+            capture.height,
+            capture.fps,
+            encoder_config,
+            (capture.fps * 2) as usize,
+        ) {
+            Ok(enc) => enc,
+            Err(e) => {
+                println!("[AutoSelect] Failed to create encoder for level {}: {}", level, e);
+                let _ = std::fs::remove_file(&temp_file);
+                continue;
+            }
+        };
+        
+        // Feed frames for the test duration
+        let test_start = Instant::now();
+        let mut total_sent = 0u64;
+        let mut total_dropped = 0u64;
+        let poll_interval = Duration::from_millis(10);
+        let pixel_format = "NV12".to_string();
+        
+        while test_start.elapsed() < test_duration {
+            // Drain frames from the pre-roll buffer
+            let frames = capture.drain_preroll_frames();
+            
+            for frame in &frames {
+                let raw_frame = RawVideoFrame {
+                    data: frame.data.clone(),
+                    pts: frame.pts,
+                    duration: frame.duration,
+                    width: capture.width,
+                    height: capture.height,
+                    format: frame.pixel_format.clone().unwrap_or_else(|| pixel_format.clone()),
+                    capture_time: frame.wall_time,
+                };
+                
+                match encoder.try_send_frame(raw_frame) {
+                    Ok(true) => total_sent += 1,
+                    Ok(false) => total_dropped += 1,
+                    Err(e) => {
+                        println!("[AutoSelect] Encoder error at level {}: {}", level, e);
+                        total_dropped += 1;
+                    }
+                }
+            }
+            
+            // Early exit if we've already exceeded the threshold
+            if total_dropped >= drop_threshold {
+                break;
+            }
+            
+            tokio::time::sleep(poll_interval).await;
+        }
+        
+        // Finish the encoder (gracefully)
+        drop(encoder);
+        
+        // Clean up temp file
+        let _ = std::fs::remove_file(&temp_file);
+        let temp_tmp = temp_dir.join(format!("sacho_autoselect_test_{}.webm.tmp", level));
+        let _ = std::fs::remove_file(&temp_tmp);
+        
+        println!("[AutoSelect] Level {}: sent={}, dropped={} (threshold={})", 
+            level, total_sent, total_dropped, drop_threshold);
+        
+        if total_dropped < drop_threshold {
+            best_level = level;
+            println!("[AutoSelect] Level {} passed! Selecting as best preset.", level);
+            break;
+        } else {
+            println!("[AutoSelect] Level {} had too many drops, trying lower.", level);
+        }
+    }
+    
+    // Stop capture
+    let _ = capture.stop();
+    
+    println!("[AutoSelect] Best preset level: {} ({})", best_level, crate::encoding::presets::preset_label(best_level));
+    
+    Ok(best_level)
 }

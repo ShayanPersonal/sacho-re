@@ -80,6 +80,12 @@ pub struct Config {
     #[serde(default)]
     pub video_device_codecs: HashMap<String, VideoCodec>,
     
+    /// Encoder quality preset level per encoding mode (1=lightest, 5=highest quality)
+    /// Keys are the encoding mode names: "av1", "vp9", "vp8"
+    /// See [`crate::encoding::presets`] for per-encoder parameter details.
+    #[serde(default)]
+    pub encoder_preset_levels: HashMap<String, u8>,
+    
     /// Device presets
     pub device_presets: Vec<DevicePreset>,
     
@@ -203,6 +209,7 @@ impl Default for Config {
             trigger_midi_devices: Vec::new(),
             selected_video_devices: Vec::new(),
             video_device_codecs: HashMap::new(),
+            encoder_preset_levels: HashMap::new(),
             device_presets: Vec::new(),
             current_preset: None,
         }
