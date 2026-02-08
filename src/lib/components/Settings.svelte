@@ -5,6 +5,7 @@
   import { getEncoderAvailability, autoSelectEncoderPreset } from '$lib/api';
   import { listen } from '@tauri-apps/api/event';
   import { onMount } from 'svelte';
+    import { recordingState } from '$lib/stores/recording';
   
   // Local editable copy
   let localSettings = $state<Config | null>(null);
@@ -215,13 +216,13 @@
           </div>
           <select bind:value={localSettings.video_encoding_mode} onchange={autoSave}>
             {#if encoderAvailability?.av1_available}
-              <option value="av1">AV1 ({encoderAvailability.av1_encoder_name + (encoderAvailability.av1_hardware ? '' : ' - slow')})</option>
+              <option value="av1">AV1 ({encoderAvailability.av1_encoder_name + (encoderAvailability.av1_hardware ? '' : ' - requires configuration')})</option>
             {/if}
             {#if encoderAvailability?.vp9_available}
-              <option value="vp9">VP9 ({encoderAvailability.vp9_encoder_name + (encoderAvailability.vp9_hardware ? '' : ' - slow')})</option>
+              <option value="vp9">VP9 ({encoderAvailability.vp9_encoder_name + (encoderAvailability.vp9_hardware ? '' : ' - requires configuration')})</option>
             {/if}
             {#if encoderAvailability?.vp8_available}
-              <option value="vp8">VP8 ({encoderAvailability.vp8_encoder_name + (encoderAvailability.vp8_hardware ? '' : ' - slow')})</option>
+              <option value="vp8">VP8 ({encoderAvailability.vp8_encoder_name + (encoderAvailability.vp8_hardware ? '' : ' - requires configuration')})</option>
             {/if}
             {#if !encoderAvailability?.av1_available && !encoderAvailability?.vp9_available && !encoderAvailability?.vp8_available}
               <option value="" disabled>No encoders available</option>
@@ -232,13 +233,13 @@
           {:else if encoderAvailability}
             <p class="encoder-info">
               {#if encoderAvailability.av1_hardware || encoderAvailability.vp9_hardware || encoderAvailability.vp8_hardware}
-                Your device supports hardware acceleration for {[
+                Your system supports hardware acceleration for {[
                   encoderAvailability.av1_hardware ? 'AV1' : null,
                   encoderAvailability.vp9_hardware ? 'VP9' : null,
                   encoderAvailability.vp8_hardware ? 'VP8' : null
-                ].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' and $1')}. We recommend using <strong>{encoderAvailability.av1_hardware ? 'AV1' : encoderAvailability.vp9_hardware ? 'VP9' : 'VP8'}</strong> for the best experience.
+                ].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' and $1')}. We recommend using <strong>{encoderAvailability.av1_hardware ? 'AV1' : encoderAvailability.vp9_hardware ? 'VP9' : 'VP8'}</strong> for the best experience. Use the Advanced menu if you experience choppiness.
               {:else}
-                Your device does not support hardware acceleration for any available codec. We recommend using <strong>VP8</strong> for the best experience.
+                Your system does not support hardware acceleration for any available codec. We recommend using <strong>VP8</strong> for the best experience. Use the Advanced menu if you experience choppiness.
               {/if}
             </p>
           {/if}
@@ -253,7 +254,7 @@
               <div class="encoder-advanced-section">
                 <div class="preset-slider-group">
                   <div class="preset-header">
-                    <span class="setting-label">Encoder Preset</span>
+                    <span class="setting-label">Encoder Preset ({localSettings.video_encoding_mode.toUpperCase()})</span>
                     <span class="preset-value">{getCurrentPresetLevel()} — {presetLabels[getCurrentPresetLevel()] ?? 'Balanced'}</span>
                   </div>
                   <div class="preset-slider-row">
@@ -337,18 +338,17 @@
             <option value="wav">WAV (lossless, largest files)</option>
             <option value="flac">FLAC (lossless, smaller files)</option>
           </select>
-        </div>
-        <button class="advanced-toggle" onclick={() => showAudioAdvanced = !showAudioAdvanced}>
-          Advanced
-          <svg class="toggle-chevron" class:open={showAudioAdvanced} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
-        </button>
-        {#if showAudioAdvanced}
+          <button class="advanced-toggle" onclick={() => showAudioAdvanced = !showAudioAdvanced}>
+            Advanced
+            <svg class="toggle-chevron" class:open={showAudioAdvanced} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          {#if showAudioAdvanced}
           <div class="advanced-audio-section">
             <div class="advanced-audio-field">
               <div class="advanced-field-header">
-                <span class="setting-label">Bit Depth</span>
+                <span class="setting-label">Bit Depth ({localSettings.audio_format.toUpperCase()})</span>
                 <span class="advanced-field-value">
                   {#if localSettings.audio_format === 'wav'}
                     {localSettings.wav_bit_depth === 'int16' ? '16-bit' : localSettings.wav_bit_depth === 'int24' ? '24-bit' : '32-bit float'}
@@ -372,11 +372,11 @@
               {/if}
               <p class="advanced-field-description">
                 {#if (localSettings.audio_format === 'wav' ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === 'int16'}
-                  CD quality. Smallest files, compatible everywhere.
+                  Smallest files. Not optimal if your audio has high dynamic range (both very quiet and very loud sections in the same recording).
                 {:else if (localSettings.audio_format === 'wav' ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === 'int24'}
-                  Studio quality. Recommended for most recordings.
+                  Studio quality - wide compatibility.
                 {:else}
-                  Maximum dynamic range.{localSettings.audio_format === 'flac' ? ' Some players may not support this.' : ''}
+                  {localSettings.audio_format === 'flac' ? ' New - some programs may not support 32-bit FLAC recordings.' : 'Best if your audio source is also 32-bit float.'}
                 {/if}
               </p>
             </div>
@@ -406,7 +406,8 @@
               </p>
             </div>-->
           </div>
-        {/if}
+          {/if}
+        </div>
 
       </section>
       
@@ -431,7 +432,7 @@
             />
             <span class="setting-label">Start at system startup <i>(recommended)</i></span>
           </label>
-           <p class="setting-recommendation">This ensures the application will start up again if your device restarts (such as for system updates). <b>On password-protected devices, you may have to log back in before the app starts.</b></p>
+           <p class="setting-recommendation">This ensures the application will start up again if your system restarts (such as for system updates). <b>On password-protected systems, you may have to log back in before the app starts.</b></p>
           <p class="setting-recommendation">To stop the application from running in the background, right-click the tray icon and select Quit. Note that your performances will not be recorded until the application is started again.</p>
         </div>
       </section>
@@ -900,6 +901,9 @@
   }
   
   .auto-select-btn .spinner {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
     animation: spin 1s linear infinite;
   }
   

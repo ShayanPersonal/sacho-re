@@ -828,7 +828,7 @@ pub async fn auto_select_encoder_preset(
     };
     
     let (device_id, device_name) = test_device.ok_or_else(|| {
-        "No raw video devices selected. Auto-select only works with devices using raw video that requires encoding.".to_string()
+        "No raw video streams selected. Auto-select only works with devices streaming raw video that requires encoding.".to_string()
     })?;
     
     // 3. Set status to initializing to prevent recording attempts
