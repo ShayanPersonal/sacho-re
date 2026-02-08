@@ -578,139 +578,117 @@ pub fn flac_file_needs_repair(file_path: &PathBuf) -> bool {
     total_samples == 0
 }
 
-/// Repair a FLAC file by scanning frames to determine total samples and patching STREAMINFO.
+/// Repair a FLAC file by using GStreamer to determine the accurate duration,
+/// then patching total_samples in the STREAMINFO block.
 /// Returns (channels, sample_rate, duration_secs, size_bytes).
 pub fn repair_flac_file(file_path: &PathBuf) -> anyhow::Result<(u16, u32, f64, u64)> {
     use std::io::Read;
+    use gstreamer as gst;
+    use gstreamer::prelude::*;
     
-    let mut file = std::fs::OpenOptions::new()
-        .read(true).write(true).open(file_path)?;
-    let file_size = file.metadata()?.len();
+    let file_size = std::fs::metadata(file_path)?.len();
     
     if file_size < 42 {
         return Err(anyhow::anyhow!("File too small to be a valid FLAC file"));
     }
     
-    // Read and verify fLaC marker
-    let mut marker = [0u8; 4];
-    file.read_exact(&mut marker)?;
-    if &marker != b"fLaC" {
-        return Err(anyhow::anyhow!("Not a valid FLAC file"));
-    }
-    
-    // Read STREAMINFO block header
-    let mut block_header = [0u8; 4];
-    file.read_exact(&mut block_header)?;
-    let block_type = block_header[0] & 0x7F;
-    if block_type != 0 {
-        return Err(anyhow::anyhow!("First metadata block is not STREAMINFO"));
-    }
-    
-    // Read STREAMINFO data (34 bytes)
-    let mut streaminfo = [0u8; 34];
-    file.read_exact(&mut streaminfo)?;
-    
-    // Extract info from STREAMINFO
-    let min_block_size = u16::from_be_bytes([streaminfo[0], streaminfo[1]]);
-    let max_block_size = u16::from_be_bytes([streaminfo[2], streaminfo[3]]);
-    
-    // Sample rate is in bytes 10-12 (20 bits)
-    let sample_rate = ((streaminfo[10] as u32) << 12)
-        | ((streaminfo[11] as u32) << 4)
-        | ((streaminfo[12] as u32) >> 4);
-    
-    // Channels is in byte 12 bits 3-1 (3 bits, value is channels-1)
-    let channels = ((streaminfo[12] >> 1) & 0x07) as u16 + 1;
-    
-    // Bits per sample is in bytes 12-13 (5 bits: 1 bit from byte 12, 4 bits from byte 13)
-    let _bps = (((streaminfo[12] & 0x01) as u16) << 4) | ((streaminfo[13] >> 4) as u16) + 1;
-    
-    // Estimate total samples from file size and block sizes
-    // For proper repair we'd scan all frames, but a good estimate uses
-    // the average block size and file overhead
-    let avg_block_size = if min_block_size == max_block_size {
-        min_block_size as u64
-    } else {
-        ((min_block_size as u64 + max_block_size as u64) / 2).max(1)
-    };
-    
-    // Rough estimate: scan the file to count FLAC frame sync codes (0xFFF8 or 0xFFF9)
-    // For accuracy, we use the file size minus metadata overhead
-    let metadata_end = 4 + 4 + 34; // fLaC + block_header + streaminfo (minimum)
-    
-    // Skip remaining metadata blocks to find start of audio frames
-    let mut audio_start = metadata_end as u64;
-    let is_last = (block_header[0] & 0x80) != 0;
-    if !is_last {
-        // Skip remaining metadata blocks
-        file.seek(SeekFrom::Start(audio_start))?;
-        loop {
-            let mut bh = [0u8; 4];
-            if file.read_exact(&mut bh).is_err() { break; }
-            let last = (bh[0] & 0x80) != 0;
-            let len = ((bh[1] as u32) << 16) | ((bh[2] as u32) << 8) | (bh[3] as u32);
-            audio_start += 4 + len as u64;
-            file.seek(SeekFrom::Start(audio_start))?;
-            if last { break; }
-        }
-    }
-    
-    // Count frames by scanning for sync codes
-    let audio_data_size = file_size - audio_start;
-    let mut total_samples: u64 = 0;
-    let mut buf = vec![0u8; 65536.min(audio_data_size as usize)];
-    let mut frame_count: u64 = 0;
-    
-    file.seek(SeekFrom::Start(audio_start))?;
-    let mut prev_byte: Option<u8> = None;
-    
-    loop {
-        let n = match file.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(_) => break,
-        };
+    // Step 1: Read STREAMINFO to get sample_rate and channels
+    let (sample_rate, channels) = {
+        let mut file = std::fs::File::open(file_path)?;
         
-        for i in 0..n {
-            if let Some(pb) = prev_byte {
-                // FLAC frame sync: 0xFFF8 or 0xFFF9 (14 bits = 1, 1 bit reserved, 1 bit blocking strategy)
-                if pb == 0xFF && (buf[i] & 0xFC) == 0xF8 {
-                    frame_count += 1;
+        let mut marker = [0u8; 4];
+        file.read_exact(&mut marker)?;
+        if &marker != b"fLaC" {
+            return Err(anyhow::anyhow!("Not a valid FLAC file"));
+        }
+        
+        let mut block_header = [0u8; 4];
+        file.read_exact(&mut block_header)?;
+        if (block_header[0] & 0x7F) != 0 {
+            return Err(anyhow::anyhow!("First metadata block is not STREAMINFO"));
+        }
+        
+        let mut streaminfo = [0u8; 34];
+        file.read_exact(&mut streaminfo)?;
+        
+        let sr = ((streaminfo[10] as u32) << 12)
+            | ((streaminfo[11] as u32) << 4)
+            | ((streaminfo[12] as u32) >> 4);
+        let ch = ((streaminfo[12] >> 1) & 0x07) as u16 + 1;
+        
+        (sr, ch)
+    };
+    
+    // Step 2: Use GStreamer flacparse to get accurate duration by parsing all frames
+    let pipeline_str = format!(
+        "filesrc location=\"{}\" ! flacparse ! fakesink",
+        file_path.to_string_lossy().replace('\\', "/")
+    );
+    
+    let pipeline = gst::parse::launch(&pipeline_str)
+        .map_err(|e| anyhow::anyhow!("Failed to create FLAC parse pipeline: {}", e))?;
+    let pipeline = pipeline.dynamic_cast::<gst::Pipeline>()
+        .map_err(|_| anyhow::anyhow!("Failed to cast to pipeline"))?;
+    
+    pipeline.set_state(gst::State::Playing)
+        .map_err(|e| anyhow::anyhow!("Failed to start FLAC parse: {}", e))?;
+    
+    let bus = pipeline.bus().unwrap();
+    let mut duration_secs = 0.0;
+    
+    for msg in bus.iter_timed(gst::ClockTime::from_seconds(60)) {
+        match msg.view() {
+            gst::MessageView::Eos(..) => {
+                // Query duration after all frames have been parsed
+                if let Some(dur) = pipeline.query_duration::<gst::ClockTime>() {
+                    duration_secs = dur.nseconds() as f64 / 1_000_000_000.0;
                 }
+                break;
             }
-            prev_byte = Some(buf[i]);
+            gst::MessageView::Error(err) => {
+                pipeline.set_state(gst::State::Null).ok();
+                return Err(anyhow::anyhow!(
+                    "FLAC parse error: {} ({})",
+                    err.error(),
+                    err.debug().unwrap_or_default()
+                ));
+            }
+            _ => {}
         }
     }
     
-    // Estimate total samples from frame count and block size
-    if frame_count > 0 {
-        total_samples = frame_count * avg_block_size;
-    }
+    pipeline.set_state(gst::State::Null).ok();
     
-    // Patch total_samples in STREAMINFO
-    // Byte 13 lower 4 bits = total_samples upper 4 bits
-    // Bytes 14-17 = total_samples lower 32 bits
-    let ts_hi = ((total_samples >> 32) & 0x0F) as u8;
-    let ts_lo = (total_samples & 0xFFFFFFFF) as u32;
-    
-    file.seek(SeekFrom::Start(4 + 4 + 13))?; // offset to byte 13 of streaminfo
-    let mut byte13 = [0u8; 1];
-    file.read_exact(&mut byte13)?;
-    byte13[0] = (byte13[0] & 0xF0) | ts_hi;
-    
-    file.seek(SeekFrom::Start(4 + 4 + 13))?;
-    file.write_all(&byte13)?;
-    file.write_all(&ts_lo.to_be_bytes())?;
-    file.flush()?;
-    
-    let duration_secs = if sample_rate > 0 {
-        total_samples as f64 / sample_rate as f64
+    // Step 3: Calculate total_samples and patch STREAMINFO
+    let total_samples = if sample_rate > 0 {
+        (duration_secs * sample_rate as f64).round() as u64
     } else {
-        0.0
+        0
     };
     
-    println!("[Sacho] Repaired FLAC file: {} ({}Hz, {}ch, {:.1}s, ~{} frames)",
-        file_path.display(), sample_rate, channels, duration_secs, frame_count);
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .read(true).write(true).open(file_path)?;
+        
+        // Patch total_samples in STREAMINFO
+        // Byte 13 (offset 4+4+13=21): lower 4 bits = total_samples upper 4 bits
+        // Bytes 14-17 (offset 22-25) = total_samples lower 32 bits
+        let ts_hi = ((total_samples >> 32) & 0x0F) as u8;
+        let ts_lo = (total_samples & 0xFFFFFFFF) as u32;
+        
+        file.seek(SeekFrom::Start(4 + 4 + 13))?; // offset to byte 13 of streaminfo
+        let mut byte13 = [0u8; 1];
+        file.read_exact(&mut byte13)?;
+        byte13[0] = (byte13[0] & 0xF0) | ts_hi;
+        
+        file.seek(SeekFrom::Start(4 + 4 + 13))?;
+        file.write_all(&byte13)?;
+        file.write_all(&ts_lo.to_be_bytes())?;
+        file.flush()?;
+    }
+    
+    println!("[Sacho] Repaired FLAC file: {} ({}Hz, {}ch, {:.1}s, {} total samples)",
+        file_path.display(), sample_rate, channels, duration_secs, total_samples);
     
     Ok((channels, sample_rate, duration_secs, file_size))
 }
