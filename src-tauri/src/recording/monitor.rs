@@ -354,6 +354,10 @@ impl MidiStreamWriter {
     }
 }
 
+// ============================================================================
+// File integrity checking and repair
+// ============================================================================
+
 /// Check if a MIDI file has a valid MTrk header length.
 /// Returns true if the file needs repair (header length doesn't match actual data).
 pub fn midi_file_needs_repair(file_path: &PathBuf) -> bool {
@@ -433,6 +437,413 @@ pub fn repair_midi_file_on_disk(file_path: &PathBuf) -> anyhow::Result<usize> {
         file_path.display(), new_file_size, event_count);
     
     Ok(event_count)
+}
+
+/// Check if a WAV file has a valid RIFF header (chunk sizes match file size).
+/// WAV structure: RIFF[4] size[4] WAVE[4] ... fmt [4] ... data[4] size[4] ...
+pub fn wav_file_needs_repair(file_path: &PathBuf) -> bool {
+    use std::io::Read;
+    
+    let Ok(mut file) = std::fs::File::open(file_path) else { return false; };
+    let Ok(meta) = file.metadata() else { return false; };
+    let file_size = meta.len();
+    
+    if file_size < 44 { return false; } // Minimum WAV header
+    
+    let mut header = [0u8; 12];
+    if file.read_exact(&mut header).is_err() { return false; }
+    if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" { return false; }
+    
+    let stored_riff_size = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+    let expected_riff_size = (file_size - 8) as u32;
+    
+    stored_riff_size != expected_riff_size
+}
+
+/// Repair a WAV file by fixing the RIFF and data chunk sizes.
+/// Returns (channels, sample_rate, duration_secs, size_bytes).
+pub fn repair_wav_file(file_path: &PathBuf) -> anyhow::Result<(u16, u32, f64, u64)> {
+    use std::io::Read;
+    
+    let mut file = std::fs::OpenOptions::new()
+        .read(true).write(true).open(file_path)?;
+    let file_size = file.metadata()?.len();
+    
+    if file_size < 44 {
+        return Err(anyhow::anyhow!("File too small to be a valid WAV file"));
+    }
+    
+    // Read and verify RIFF header
+    let mut header = [0u8; 12];
+    file.read_exact(&mut header)?;
+    if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" {
+        return Err(anyhow::anyhow!("Not a valid WAV file"));
+    }
+    
+    // Scan chunks to find fmt and data
+    let mut channels: u16 = 0;
+    let mut sample_rate: u32 = 0;
+    let mut bits_per_sample: u16 = 0;
+    let mut data_chunk_offset: u64 = 0;
+    
+    let mut pos: u64 = 12;
+    loop {
+        file.seek(SeekFrom::Start(pos))?;
+        let mut chunk_header = [0u8; 8];
+        if file.read_exact(&mut chunk_header).is_err() { break; }
+        
+        let chunk_id = &chunk_header[0..4];
+        let chunk_size = u32::from_le_bytes([chunk_header[4], chunk_header[5], chunk_header[6], chunk_header[7]]);
+        
+        if chunk_id == b"fmt " {
+            let mut fmt = [0u8; 16];
+            file.read_exact(&mut fmt)?;
+            channels = u16::from_le_bytes([fmt[2], fmt[3]]);
+            sample_rate = u32::from_le_bytes([fmt[4], fmt[5], fmt[6], fmt[7]]);
+            bits_per_sample = u16::from_le_bytes([fmt[14], fmt[15]]);
+        } else if chunk_id == b"data" {
+            data_chunk_offset = pos;
+            break;
+        }
+        
+        // Move to next chunk (chunk size + 8 for header, padded to even)
+        pos += 8 + chunk_size as u64;
+        if chunk_size % 2 != 0 { pos += 1; } // WAV chunks are 2-byte aligned
+    }
+    
+    if data_chunk_offset == 0 || channels == 0 {
+        return Err(anyhow::anyhow!("Could not find fmt/data chunks"));
+    }
+    
+    // Calculate correct sizes
+    let data_size = (file_size - data_chunk_offset - 8) as u32;
+    let riff_size = (file_size - 8) as u32;
+    
+    // Patch RIFF size (bytes 4-7)
+    file.seek(SeekFrom::Start(4))?;
+    file.write_all(&riff_size.to_le_bytes())?;
+    
+    // Patch data chunk size (4 bytes after "data" tag)
+    file.seek(SeekFrom::Start(data_chunk_offset + 4))?;
+    file.write_all(&data_size.to_le_bytes())?;
+    file.flush()?;
+    
+    // Calculate duration
+    let bytes_per_sample = bits_per_sample as u32 / 8;
+    let bytes_per_frame = bytes_per_sample * channels as u32;
+    let duration_secs = if bytes_per_frame > 0 && sample_rate > 0 {
+        data_size as f64 / (sample_rate as f64 * bytes_per_frame as f64)
+    } else {
+        0.0
+    };
+    
+    println!("[Sacho] Repaired WAV file: {} ({}Hz, {}ch, {:.1}s)",
+        file_path.display(), sample_rate, channels, duration_secs);
+    
+    Ok((channels, sample_rate, duration_secs, file_size))
+}
+
+/// Check if a FLAC file has an unfinalized STREAMINFO block (total_samples == 0).
+pub fn flac_file_needs_repair(file_path: &PathBuf) -> bool {
+    use std::io::Read;
+    
+    let Ok(mut file) = std::fs::File::open(file_path) else { return false; };
+    let Ok(meta) = file.metadata() else { return false; };
+    if meta.len() < 42 { return false; } // fLaC marker + STREAMINFO block
+    
+    // Read fLaC marker
+    let mut marker = [0u8; 4];
+    if file.read_exact(&mut marker).is_err() { return false; }
+    if &marker != b"fLaC" { return false; }
+    
+    // Read STREAMINFO block header (1 byte type + 3 bytes length)
+    let mut block_header = [0u8; 4];
+    if file.read_exact(&mut block_header).is_err() { return false; }
+    
+    // STREAMINFO is always block type 0
+    let block_type = block_header[0] & 0x7F;
+    if block_type != 0 { return false; }
+    
+    // Read STREAMINFO data (34 bytes)
+    let mut streaminfo = [0u8; 34];
+    if file.read_exact(&mut streaminfo).is_err() { return false; }
+    
+    // Total samples is stored in bytes 14-17 (upper 4 bits of byte 13 + bytes 14-17)
+    // Layout: byte 13 has [4 bits sample_size_minus1 | 4 bits total_samples_hi]
+    // bytes 14-17 have total_samples_lo (32 bits)
+    let total_samples_hi = (streaminfo[13] & 0x0F) as u64;
+    let total_samples_lo = u32::from_be_bytes([streaminfo[14], streaminfo[15], streaminfo[16], streaminfo[17]]) as u64;
+    let total_samples = (total_samples_hi << 32) | total_samples_lo;
+    
+    total_samples == 0
+}
+
+/// Repair a FLAC file by scanning frames to determine total samples and patching STREAMINFO.
+/// Returns (channels, sample_rate, duration_secs, size_bytes).
+pub fn repair_flac_file(file_path: &PathBuf) -> anyhow::Result<(u16, u32, f64, u64)> {
+    use std::io::Read;
+    
+    let mut file = std::fs::OpenOptions::new()
+        .read(true).write(true).open(file_path)?;
+    let file_size = file.metadata()?.len();
+    
+    if file_size < 42 {
+        return Err(anyhow::anyhow!("File too small to be a valid FLAC file"));
+    }
+    
+    // Read and verify fLaC marker
+    let mut marker = [0u8; 4];
+    file.read_exact(&mut marker)?;
+    if &marker != b"fLaC" {
+        return Err(anyhow::anyhow!("Not a valid FLAC file"));
+    }
+    
+    // Read STREAMINFO block header
+    let mut block_header = [0u8; 4];
+    file.read_exact(&mut block_header)?;
+    let block_type = block_header[0] & 0x7F;
+    if block_type != 0 {
+        return Err(anyhow::anyhow!("First metadata block is not STREAMINFO"));
+    }
+    
+    // Read STREAMINFO data (34 bytes)
+    let mut streaminfo = [0u8; 34];
+    file.read_exact(&mut streaminfo)?;
+    
+    // Extract info from STREAMINFO
+    let min_block_size = u16::from_be_bytes([streaminfo[0], streaminfo[1]]);
+    let max_block_size = u16::from_be_bytes([streaminfo[2], streaminfo[3]]);
+    
+    // Sample rate is in bytes 10-12 (20 bits)
+    let sample_rate = ((streaminfo[10] as u32) << 12)
+        | ((streaminfo[11] as u32) << 4)
+        | ((streaminfo[12] as u32) >> 4);
+    
+    // Channels is in byte 12 bits 3-1 (3 bits, value is channels-1)
+    let channels = ((streaminfo[12] >> 1) & 0x07) as u16 + 1;
+    
+    // Bits per sample is in bytes 12-13 (5 bits: 1 bit from byte 12, 4 bits from byte 13)
+    let _bps = (((streaminfo[12] & 0x01) as u16) << 4) | ((streaminfo[13] >> 4) as u16) + 1;
+    
+    // Estimate total samples from file size and block sizes
+    // For proper repair we'd scan all frames, but a good estimate uses
+    // the average block size and file overhead
+    let avg_block_size = if min_block_size == max_block_size {
+        min_block_size as u64
+    } else {
+        ((min_block_size as u64 + max_block_size as u64) / 2).max(1)
+    };
+    
+    // Rough estimate: scan the file to count FLAC frame sync codes (0xFFF8 or 0xFFF9)
+    // For accuracy, we use the file size minus metadata overhead
+    let metadata_end = 4 + 4 + 34; // fLaC + block_header + streaminfo (minimum)
+    
+    // Skip remaining metadata blocks to find start of audio frames
+    let mut audio_start = metadata_end as u64;
+    let is_last = (block_header[0] & 0x80) != 0;
+    if !is_last {
+        // Skip remaining metadata blocks
+        file.seek(SeekFrom::Start(audio_start))?;
+        loop {
+            let mut bh = [0u8; 4];
+            if file.read_exact(&mut bh).is_err() { break; }
+            let last = (bh[0] & 0x80) != 0;
+            let len = ((bh[1] as u32) << 16) | ((bh[2] as u32) << 8) | (bh[3] as u32);
+            audio_start += 4 + len as u64;
+            file.seek(SeekFrom::Start(audio_start))?;
+            if last { break; }
+        }
+    }
+    
+    // Count frames by scanning for sync codes
+    let audio_data_size = file_size - audio_start;
+    let mut total_samples: u64 = 0;
+    let mut buf = vec![0u8; 65536.min(audio_data_size as usize)];
+    let mut frame_count: u64 = 0;
+    
+    file.seek(SeekFrom::Start(audio_start))?;
+    let mut prev_byte: Option<u8> = None;
+    
+    loop {
+        let n = match file.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => break,
+        };
+        
+        for i in 0..n {
+            if let Some(pb) = prev_byte {
+                // FLAC frame sync: 0xFFF8 or 0xFFF9 (14 bits = 1, 1 bit reserved, 1 bit blocking strategy)
+                if pb == 0xFF && (buf[i] & 0xFC) == 0xF8 {
+                    frame_count += 1;
+                }
+            }
+            prev_byte = Some(buf[i]);
+        }
+    }
+    
+    // Estimate total samples from frame count and block size
+    if frame_count > 0 {
+        total_samples = frame_count * avg_block_size;
+    }
+    
+    // Patch total_samples in STREAMINFO
+    // Byte 13 lower 4 bits = total_samples upper 4 bits
+    // Bytes 14-17 = total_samples lower 32 bits
+    let ts_hi = ((total_samples >> 32) & 0x0F) as u8;
+    let ts_lo = (total_samples & 0xFFFFFFFF) as u32;
+    
+    file.seek(SeekFrom::Start(4 + 4 + 13))?; // offset to byte 13 of streaminfo
+    let mut byte13 = [0u8; 1];
+    file.read_exact(&mut byte13)?;
+    byte13[0] = (byte13[0] & 0xF0) | ts_hi;
+    
+    file.seek(SeekFrom::Start(4 + 4 + 13))?;
+    file.write_all(&byte13)?;
+    file.write_all(&ts_lo.to_be_bytes())?;
+    file.flush()?;
+    
+    let duration_secs = if sample_rate > 0 {
+        total_samples as f64 / sample_rate as f64
+    } else {
+        0.0
+    };
+    
+    println!("[Sacho] Repaired FLAC file: {} ({}Hz, {}ch, {:.1}s, ~{} frames)",
+        file_path.display(), sample_rate, channels, duration_secs, frame_count);
+    
+    Ok((channels, sample_rate, duration_secs, file_size))
+}
+
+/// Check if a Matroska/WebM file is unfinalized (missing duration or has zero segment size).
+pub fn video_file_needs_repair(file_path: &PathBuf) -> bool {
+    use std::io::Read;
+    
+    let Ok(mut file) = std::fs::File::open(file_path) else { return false; };
+    let Ok(meta) = file.metadata() else { return false; };
+    if meta.len() < 32 { return false; }
+    
+    // EBML header starts with 0x1A45DFA3
+    let mut header = [0u8; 4];
+    if file.read_exact(&mut header).is_err() { return false; }
+    if header != [0x1A, 0x45, 0xDF, 0xA3] { return false; }
+    
+    // Read the file looking for Segment Duration element (0x4489)
+    // A quick heuristic: scan the first 1KB for the Duration element
+    file.seek(SeekFrom::Start(0)).ok();
+    let scan_size = meta.len().min(4096) as usize;
+    let mut buf = vec![0u8; scan_size];
+    if file.read_exact(&mut buf).is_err() { return false; }
+    
+    // Look for Duration element ID (0x44 0x89) followed by a float
+    for i in 0..buf.len().saturating_sub(12) {
+        if buf[i] == 0x44 && buf[i + 1] == 0x89 {
+            // Found Duration element. Check if the float value is 0.0
+            // The size byte follows, then the float data
+            if i + 2 < buf.len() {
+                let size = buf[i + 2];
+                if size == 0x88 && i + 11 < buf.len() {
+                    // 8-byte float (most common)
+                    let val = f64::from_be_bytes([
+                        buf[i+3], buf[i+4], buf[i+5], buf[i+6],
+                        buf[i+7], buf[i+8], buf[i+9], buf[i+10]
+                    ]);
+                    return val == 0.0;
+                } else if size == 0x84 && i + 7 < buf.len() {
+                    // 4-byte float
+                    let val = f32::from_be_bytes([buf[i+3], buf[i+4], buf[i+5], buf[i+6]]);
+                    return val == 0.0;
+                }
+            }
+            return false; // Found duration element, value is non-zero
+        }
+    }
+    
+    // No Duration element found at all - needs repair
+    true
+}
+
+/// Repair a video file (WebM/MKV) by remuxing through GStreamer to fix container metadata.
+/// The remuxed file replaces the original.
+/// Returns (duration_secs, size_bytes).
+pub fn repair_video_file(file_path: &PathBuf) -> anyhow::Result<(f64, u64)> {
+    use gstreamer as gst;
+    use gstreamer::prelude::*;
+    
+    let extension = file_path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("mkv");
+    
+    // Create a temp file for the remuxed output
+    let temp_path = file_path.with_extension(format!("{}.repair.tmp", extension));
+    
+    // Choose the right muxer based on extension
+    let muxer_name = match extension {
+        "webm" => "webmmux",
+        "mkv" => "matroskamux",
+        "mp4" => "mp4mux",
+        _ => "matroskamux",
+    };
+    
+    // Build pipeline: filesrc ! parsebin ! muxer ! filesink
+    // parsebin auto-detects the input format and demuxes/parses streams
+    let pipeline_str = format!(
+        "filesrc location=\"{}\" ! matroskademux name=demux ! queue ! {} name=mux ! filesink location=\"{}\"",
+        file_path.to_string_lossy().replace('\\', "/"),
+        muxer_name,
+        temp_path.to_string_lossy().replace('\\', "/"),
+    );
+    
+    let pipeline = gst::parse::launch(&pipeline_str)
+        .map_err(|e| anyhow::anyhow!("Failed to create remux pipeline: {}", e))?;
+    
+    let pipeline = pipeline.dynamic_cast::<gst::Pipeline>()
+        .map_err(|_| anyhow::anyhow!("Failed to cast to pipeline"))?;
+    
+    // Start and wait for completion
+    pipeline.set_state(gst::State::Playing)
+        .map_err(|e| anyhow::anyhow!("Failed to start remux: {}", e))?;
+    
+    let bus = pipeline.bus().unwrap();
+    let mut duration_secs = 0.0;
+    
+    for msg in bus.iter_timed(gst::ClockTime::from_seconds(120)) {
+        match msg.view() {
+            gst::MessageView::Eos(..) => {
+                // Query duration before stopping
+                if let Some(dur) = pipeline.query_duration::<gst::ClockTime>() {
+                    duration_secs = dur.nseconds() as f64 / 1_000_000_000.0;
+                }
+                break;
+            }
+            gst::MessageView::Error(err) => {
+                pipeline.set_state(gst::State::Null).ok();
+                // Clean up temp file
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(anyhow::anyhow!(
+                    "Video remux error: {} ({})",
+                    err.error(),
+                    err.debug().unwrap_or_default()
+                ));
+            }
+            _ => {}
+        }
+    }
+    
+    pipeline.set_state(gst::State::Null).ok();
+    
+    // Replace original with remuxed file
+    if temp_path.exists() {
+        std::fs::rename(&temp_path, file_path)
+            .map_err(|e| anyhow::anyhow!("Failed to replace original video: {}", e))?;
+    }
+    
+    let size = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
+    
+    println!("[Sacho] Repaired video file: {} ({:.1}s, {} bytes)",
+        file_path.display(), duration_secs, size);
+    
+    Ok((duration_secs, size))
 }
 
 /// Shared state for recording capture
@@ -1323,6 +1734,32 @@ fn start_recording(
         devices.extend(state.active_video_devices.clone());
         devices
     };
+    
+    // Write initial metadata so the session is discoverable even if the app crashes
+    let session_id = session_path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    
+    let initial_metadata = SessionMetadata {
+        id: session_id,
+        timestamp: chrono::Utc::now(),
+        duration_secs: 0.0,
+        path: session_path.clone(),
+        audio_files: Vec::new(),
+        midi_files: Vec::new(),
+        video_files: Vec::new(),
+        tags: Vec::new(),
+        notes: String::new(),
+        is_favorite: false,
+        midi_features: None,
+        similarity_coords: None,
+        cluster_id: None,
+    };
+    
+    if let Err(e) = crate::session::save_metadata(&initial_metadata) {
+        println!("[Sacho] Failed to write initial metadata: {}", e);
+    }
     
     // Send desktop notification
     if config_read.notify_recording_start {

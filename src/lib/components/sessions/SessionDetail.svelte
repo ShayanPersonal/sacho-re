@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { SessionMetadata } from '$lib/api';
-  import { formatDuration, formatDate, readSessionFile, checkVideoCodec, repairMidi } from '$lib/api';
-  import { toggleSessionFavorite, updateNotes } from '$lib/stores/sessions';
+  import { formatDuration, formatDate, readSessionFile, checkVideoCodec, repairSession } from '$lib/api';
+  import { toggleSessionFavorite, updateNotes, selectedSession } from '$lib/stores/sessions';
   import { revealItemInDir } from '@tauri-apps/plugin-opener';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { onMount, onDestroy } from 'svelte';
@@ -52,23 +52,17 @@
   // More menu state
   let moreMenuOpen = $state(false);
   
-  // MIDI repair state
+  // Session repair state (interrupted recordings with corrupt MIDI headers)
   let isRepairing = $state(false);
   let hasInterruptedMidi = $derived(session.midi_files.some(f => f.needs_repair));
   
-  async function handleRepairMidi() {
+  async function handleRepairSession() {
     isRepairing = true;
     try {
-      for (const midiFile of session.midi_files) {
-        if (midiFile.needs_repair) {
-          const repaired = await repairMidi(session.id, midiFile.filename);
-          midiFile.event_count = repaired.event_count;
-          midiFile.size_bytes = repaired.size_bytes;
-          midiFile.needs_repair = false;
-        }
-      }
+      const repaired = await repairSession(session.id);
+      selectedSession.set(repaired);
     } catch (e) {
-      console.error('Failed to repair MIDI:', e);
+      console.error('Failed to repair session:', e);
     } finally {
       isRepairing = false;
     }
@@ -615,10 +609,10 @@
         <svg class="interrupted-icon" viewBox="0 0 24 24" fill="currentColor">
           <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
         </svg>
-        <span class="interrupted-text">This recording may have been interrupted. MIDI data was recovered but needs repair.</span>
+        <span class="interrupted-text">This recording may have been interrupted. Click Repair to recover files.</span>
         <button 
           class="repair-btn" 
-          onclick={handleRepairMidi}
+          onclick={handleRepairSession}
           disabled={isRepairing}
         >
           {isRepairing ? 'Repairing...' : 'Repair'}

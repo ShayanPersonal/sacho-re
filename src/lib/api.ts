@@ -294,8 +294,8 @@ export async function deleteSession(sessionId: string): Promise<void> {
   return invoke('delete_session', { sessionId });
 }
 
-export async function repairMidi(sessionId: string, filename: string): Promise<MidiFileInfo> {
-  return invoke('repair_midi', { sessionId, filename });
+export async function repairSession(sessionId: string): Promise<SessionMetadata> {
+  return invoke('repair_session', { sessionId });
 }
 
 export async function readSessionFile(sessionPath: string, filename: string): Promise<Uint8Array> {
