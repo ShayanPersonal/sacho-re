@@ -424,7 +424,7 @@
   }
 
   :global(body.light-mode .help-tooltip strong) {
-    color: #a08030;
+    color: #2a2a2a;
   }
 
   /* Browse and action buttons */

@@ -208,7 +208,7 @@
               </button>
               {#if showRawVideoHelp}
                 <div class="help-tooltip">
-                  If you select a video device that's tagged as <strong>raw</strong>, your computer is responsible for encoding the video - including during pre-roll recording. Depending on your choice, this uses system resources such as <strong>RAM</strong>, <strong>CPU</strong>, and <strong>GPU</strong>.
+                  If you select a video device that's tagged as <strong>raw</strong>, your system must encode the video. Depending on your choice, this uses system resources such as <strong>CPU</strong> and <strong>GPU</strong>.
                 </div>
               {/if}
             </span>
@@ -237,7 +237,7 @@
                   encoderAvailability.av1_hardware ? 'AV1' : null,
                   encoderAvailability.vp9_hardware ? 'VP9' : null,
                   encoderAvailability.vp8_hardware ? 'VP8' : null
-                ].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' and $1')}. We recommend using <strong>{encoderAvailability.av1_hardware ? 'AV1' : encoderAvailability.vp9_hardware ? 'VP9' : 'VP8'}</strong> for the best experience. Use the Advanced menu if you experience choppiness.
+                ].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' and $1')}. We recommend using <strong>{encoderAvailability.av1_hardware ? 'AV1' : encoderAvailability.vp9_hardware ? 'VP9' : 'VP8'}</strong> for the best experience.
               {:else}
                 Your system does not support hardware acceleration for any available codec. We recommend using <strong>VP8</strong> for the best experience. Use the Advanced menu if you experience choppiness.
               {/if}
@@ -374,9 +374,9 @@
                 {#if (localSettings.audio_format === 'wav' ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === 'int16'}
                   Smallest files. Not optimal if your audio has high dynamic range (both very quiet and very loud sections in the same recording).
                 {:else if (localSettings.audio_format === 'wav' ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === 'int24'}
-                  Studio quality - wide compatibility.
+                  Studio quality. Wide compatibility.
                 {:else}
-                  {localSettings.audio_format === 'flac' ? ' New - some programs may not support 32-bit FLAC recordings.' : 'Best if your audio source is also 32-bit float.'}
+                  {localSettings.audio_format === 'flac' ? ' New - some programs may not support 32-bit FLAC recordings.' : 'Good if the audio source is also 32-bit float.'}
                 {/if}
               </p>
             </div>
@@ -1166,17 +1166,6 @@
   :global(body.light-mode) .help-btn:hover {
     background: rgba(0, 0, 0, 0.12);
     color: #4a4a4a;
-  }
-
-  :global(body.light-mode) .help-tooltip {
-    background: #ffffff;
-    border-color: rgba(0, 0, 0, 0.12);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-    color: #5a5a5a;
-  }
-
-  :global(body.light-mode) .help-tooltip strong {
-    color: #a08030;
   }
 
   :global(body.light-mode) .save-status.saving {
