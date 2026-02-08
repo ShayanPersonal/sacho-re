@@ -298,7 +298,7 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
         ("jpeg",             "MJPEG encoding/decoding"),
         ("videoparsersbad",  "Video parsers (jpegparse, av1parse, etc.)"),
         // GPU-specific encoders
-        ("nvcodec",          "NVIDIA NVENC (RTX 40+ for AV1, older for H264/H265)"),
+        ("nvcodec",          "NVIDIA NVENC (RTX 40+ for AV1"),
         ("amfcodec",         "AMD AMF (RX 7000+ for AV1)"),
         ("qsv",              "Intel QuickSync (Arc GPUs, recent iGPUs)"),
     ];
