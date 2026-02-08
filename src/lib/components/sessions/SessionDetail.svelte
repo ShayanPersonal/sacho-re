@@ -212,7 +212,7 @@
     }
   }
   
-  // Calculate max duration from all sources
+  // Calculate max duration from all sources (including MIDI)
   $effect(() => {
     let maxDuration = session.duration_secs;
     for (const vf of session.video_files) {
@@ -220,6 +220,9 @@
     }
     for (const af of session.audio_files) {
       maxDuration = Math.max(maxDuration, af.duration_secs);
+    }
+    if (midiData) {
+      maxDuration = Math.max(maxDuration, midiData.duration);
     }
     duration = maxDuration || 60; // Default to 60s if no duration
   });
@@ -375,6 +378,10 @@
     const time = parseFloat(input.value);
     currentTime = time;
     lastMidiTime = time;
+    
+    // Update fallback timer offset so MIDI-only playback tracks the new position
+    playStartOffset = time;
+    playStartTime = performance.now();
     
     if (videoElement) videoElement.currentTime = time;
     if (audioElement) audioElement.currentTime = time;
