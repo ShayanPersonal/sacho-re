@@ -229,10 +229,6 @@ impl VideoWriter {
             crate::encoding::ContainerFormat::Mkv => {
                 muxer.set_property("writing-app", "Sacho");
             }
-            crate::encoding::ContainerFormat::Mp4 => {
-                // mp4mux needs faststart for streaming/seeking
-                muxer.set_property("faststart", true);
-            }
             crate::encoding::ContainerFormat::WebM => {
                 // webmmux doesn't need special properties
             }

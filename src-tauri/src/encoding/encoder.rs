@@ -736,21 +736,10 @@ impl AsyncVideoEncoder {
     /// 
     /// Files created in streaming mode may not have duration in the header.
     /// This function remuxes the file to add it.
-    /// 
-    /// For MP4 files with faststart, this may not be necessary, but we still
-    /// attempt it to ensure maximum compatibility.
     fn remux_with_duration(file_path: &PathBuf) -> Result<u64> {
         let extension = file_path.extension()
             .and_then(|e| e.to_str())
             .unwrap_or("webm");
-        
-        // MP4 files with faststart/fragmentation typically don't need remuxing
-        if extension == "mp4" {
-            println!("[Encoder] MP4 file - skipping remux (faststart already applied)");
-            return std::fs::metadata(file_path)
-                .map(|m| m.len())
-                .map_err(|e| EncoderError::Io(e));
-        }
         
         println!("[Encoder] Remuxing {} to add duration header...", extension);
         

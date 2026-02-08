@@ -88,10 +88,10 @@ impl VideoCodec {
     pub fn container(&self) -> ContainerFormat {
         match self {
             VideoCodec::Mjpeg => ContainerFormat::Mkv,
-            VideoCodec::Av1 => ContainerFormat::WebM,
-            VideoCodec::Vp8 => ContainerFormat::WebM,
-            VideoCodec::Vp9 => ContainerFormat::WebM,
-            VideoCodec::Raw => ContainerFormat::WebM,
+            VideoCodec::Av1 => ContainerFormat::Mkv,
+            VideoCodec::Vp8 => ContainerFormat::Mkv,
+            VideoCodec::Vp9 => ContainerFormat::Mkv,
+            VideoCodec::Raw => ContainerFormat::Mkv,
         }
     }
     
@@ -150,8 +150,6 @@ impl VideoCodec {
 pub enum ContainerFormat {
     /// Matroska (.mkv) - flexible, supports any codec
     Mkv,
-    /// MP4 (.mp4) - widely compatible
-    Mp4,
     /// WebM (.webm) - web-optimized
     WebM,
 }
@@ -161,7 +159,6 @@ impl ContainerFormat {
     pub fn extension(&self) -> &'static str {
         match self {
             ContainerFormat::Mkv => "mkv",
-            ContainerFormat::Mp4 => "mp4",
             ContainerFormat::WebM => "webm",
         }
     }
@@ -170,7 +167,6 @@ impl ContainerFormat {
     pub fn gst_muxer(&self) -> &'static str {
         match self {
             ContainerFormat::Mkv => "matroskamux",
-            ContainerFormat::Mp4 => "mp4mux",
             ContainerFormat::WebM => "webmmux",
         }
     }
@@ -179,7 +175,6 @@ impl ContainerFormat {
     pub fn gst_demuxer(&self) -> &'static str {
         match self {
             ContainerFormat::Mkv => "matroskademux",
-            ContainerFormat::Mp4 => "qtdemux",
             ContainerFormat::WebM => "matroskademux", // WebM uses matroska demuxer
         }
     }
@@ -189,7 +184,6 @@ impl ContainerFormat {
 pub fn codec_from_extension(ext: &str) -> Option<ContainerFormat> {
     match ext.to_lowercase().as_str() {
         "mkv" => Some(ContainerFormat::Mkv),
-        "mp4" | "m4v" => Some(ContainerFormat::Mp4),
         "webm" => Some(ContainerFormat::WebM),
         _ => None,
     }

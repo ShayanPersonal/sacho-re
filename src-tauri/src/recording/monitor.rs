@@ -780,8 +780,6 @@ pub fn repair_video_file(file_path: &PathBuf) -> anyhow::Result<(f64, u64)> {
     // Choose the right muxer based on extension
     let muxer_name = match extension {
         "webm" => "webmmux",
-        "mkv" => "matroskamux",
-        "mp4" => "mp4mux",
         _ => "matroskamux",
     };
     

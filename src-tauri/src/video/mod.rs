@@ -136,7 +136,7 @@ pub fn open_video<P: AsRef<Path>>(path: P) -> Result<Box<dyn VideoDemuxer>, Vide
             let demuxer = MjpegDemuxer::open(path)?;
             Ok(Box::new(demuxer))
         }
-        "mp4" | "webm" => {
+        "webm" => {
             Err(VideoError::UnsupportedFormat(format!(
                 "{} files use native player, not custom demuxer", extension
             )))

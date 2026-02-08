@@ -187,7 +187,7 @@ pub fn get_session_detail(
             let has_media = entries.flatten().any(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
                 name.ends_with(".mid") || name.ends_with(".wav") || name.ends_with(".flac")
-                    || name.ends_with(".webm") || name.ends_with(".mkv") || name.ends_with(".mp4")
+                    || name.ends_with(".webm") || name.ends_with(".mkv")
             });
             if has_media { has_corrupt_files = true; }
         }
@@ -381,7 +381,7 @@ pub fn repair_session(
                     size_bytes: size,
                 });
             }
-        } else if fname.ends_with(".webm") || fname.ends_with(".mkv") || fname.ends_with(".mp4") {
+        } else if fname.ends_with(".webm") || fname.ends_with(".mkv") {
             // Check if video needs repair
             let needs_repair = crate::recording::monitor::video_file_needs_repair(&path);
             
@@ -395,7 +395,6 @@ pub fn repair_session(
                                 fname.trim_start_matches("video_")
                                     .trim_end_matches(".webm")
                                     .trim_end_matches(".mkv")
-                                    .trim_end_matches(".mp4")
                                     .replace('_', " ")
                             });
                         let (width, height, fps) = metadata.video_files.iter()
@@ -427,7 +426,6 @@ pub fn repair_session(
                 let device_name = fname.trim_start_matches("video_")
                     .trim_end_matches(".webm")
                     .trim_end_matches(".mkv")
-                    .trim_end_matches(".mp4")
                     .replace('_', " ");
                 video_files.push(crate::session::VideoFileInfo {
                     filename: fname,

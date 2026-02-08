@@ -123,7 +123,7 @@
     if (video.error && currentVideoFile) {
       console.log('[handleVideoError] Video error:', video.error.code, video.error.message);
       // Only switch to custom player for MKV files (MJPEG)
-      // MP4 and WebM should work with native player
+      // WebM should work with native player
       if (needsCustomPlayer(currentVideoFile.filename)) {
         useCustomPlayer = true;
         videoError = null;
