@@ -376,7 +376,7 @@
                 {:else if (localSettings.audio_format === 'wav' ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === 'int24'}
                   Studio quality. Wide compatibility.
                 {:else}
-                  {localSettings.audio_format === 'flac' ? ' New - some programs may not support 32-bit FLAC recordings.' : 'Good if the audio source is also 32-bit float.'}
+                  {localSettings.audio_format === 'flac' ? ' Very new. Many programs do not support 32-bit FLAC recordings. Use at your own risk.' : 'Good if the audio source is also 32-bit float.'}
                 {/if}
               </p>
             </div>

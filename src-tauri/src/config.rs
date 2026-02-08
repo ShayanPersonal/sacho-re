@@ -32,7 +32,7 @@ pub struct Config {
     #[serde(default)]
     pub wav_sample_rate: AudioSampleRate,
     
-    /// FLAC bit depth (Int16 or Int24 only; Float32 not supported)
+    /// FLAC bit depth (Int16, Int24, or 32-bit integer via GStreamer)
     #[serde(default)]
     pub flac_bit_depth: AudioBitDepth,
     

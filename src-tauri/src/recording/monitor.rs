@@ -1297,7 +1297,7 @@ fn write_wav_file(
     })
 }
 
-/// Write audio samples to a FLAC file using flacenc (pure Rust)
+/// Write audio samples to a FLAC file using GStreamer's flacenc element
 fn write_flac_file(
     session_path: &PathBuf, 
     filename: &str, 
@@ -1305,50 +1305,119 @@ fn write_flac_file(
     bit_depth: &crate::config::AudioBitDepth,
     sample_rate_setting: &crate::config::AudioSampleRate,
 ) -> anyhow::Result<AudioFileInfo> {
-    use flacenc::component::BitRepr;
-    use flacenc::error::Verify;
-    use flacenc::bitsink::ByteSink;
+    use gstreamer as gst;
+    use gstreamer::prelude::*;
+    use gstreamer_app as gst_app;
+    use gstreamer_audio as gst_audio;
     
     let (samples, output_rate) = prepare_audio_samples(audio, sample_rate_setting);
     let flac_path = session_path.join(filename);
     
-    let (scale, bits): (f64, usize) = match bit_depth {
-        crate::config::AudioBitDepth::Int16 => (32_767.0, 16),
-        crate::config::AudioBitDepth::Int24 => (8_388_607.0, 24),
-        crate::config::AudioBitDepth::Float32 => (2_147_483_647.0, 32),
+    // Build the raw sample bytes and GStreamer audio format based on bit depth
+    let (raw_bytes, gst_format): (Vec<u8>, gst_audio::AudioFormat) = match bit_depth {
+        crate::config::AudioBitDepth::Int16 => {
+            let bytes: Vec<u8> = samples.iter()
+                .map(|&s| (s.clamp(-1.0, 1.0) * 32_767.0) as i16)
+                .flat_map(|v| v.to_le_bytes())
+                .collect();
+            (bytes, gst_audio::AudioFormat::S16le)
+        }
+        crate::config::AudioBitDepth::Int24 => {
+            // Use S24_32LE: 24-bit samples stored in 32-bit containers
+            let bytes: Vec<u8> = samples.iter()
+                .map(|&s| (s.clamp(-1.0, 1.0) as f64 * 8_388_607.0) as i32)
+                .flat_map(|v| v.to_le_bytes())
+                .collect();
+            (bytes, gst_audio::AudioFormat::S2432le)
+        }
+        crate::config::AudioBitDepth::Float32 => {
+            let bytes: Vec<u8> = samples.iter()
+                .map(|&s| (s.clamp(-1.0, 1.0) as f64 * 2_147_483_647.0) as i32)
+                .flat_map(|v| v.to_le_bytes())
+                .collect();
+            (bytes, gst_audio::AudioFormat::S32le)
+        }
     };
     
-    let samples_i32: Vec<i32> = samples
-        .iter()
-        .map(|&s| (s.clamp(-1.0, 1.0) as f64 * scale) as i32)
-        .collect();
+    // Build GStreamer pipeline: appsrc ! flacenc ! filesink
+    let pipeline = gst::Pipeline::new();
     
-    // Create FLAC encoder config
-    let config = flacenc::config::Encoder::default()
-        .into_verified()
-        .map_err(|e| anyhow::anyhow!("FLAC config error: {:?}", e))?;
+    // Use AudioInfo to build caps — this correctly sets channel-mask
+    // (required by flacenc for stereo/multi-channel audio)
+    let audio_info = gst_audio::AudioInfo::builder(gst_format, output_rate, audio.channels as u32)
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create audio info: {}", e))?;
     
-    // Create source from samples
-    let source = flacenc::source::MemSource::from_samples(
-        &samples_i32,
-        audio.channels as usize,
-        bits,
-        output_rate as usize,
+    let appsrc = gst_app::AppSrc::builder()
+        .name("src")
+        .caps(&audio_info.to_caps().map_err(|e| anyhow::anyhow!("Failed to create audio caps: {}", e))?)
+        .format(gst::Format::Time)
+        .build();
+    
+    let flacenc = gst::ElementFactory::make("flacenc")
+        .name("encoder")
+        .build()
+        .map_err(|_| anyhow::anyhow!("Failed to create GStreamer flacenc element. Is the FLAC plugin installed?"))?;
+    
+    // For 32-bit FLAC, disable the Subset restriction (Subset limits to 24-bit max)
+    if matches!(bit_depth, crate::config::AudioBitDepth::Float32) {
+        flacenc.set_property("streamable-subset", false);
+    }
+    
+    let filesink = gst::ElementFactory::make("filesink")
+        .name("sink")
+        .property("location", flac_path.to_str().unwrap_or("output.flac"))
+        .build()
+        .map_err(|_| anyhow::anyhow!("Failed to create GStreamer filesink element"))?;
+    
+    pipeline.add_many([appsrc.upcast_ref(), &flacenc, &filesink])
+        .map_err(|e| anyhow::anyhow!("Failed to add elements to pipeline: {}", e))?;
+    
+    gst::Element::link_many([appsrc.upcast_ref(), &flacenc, &filesink])
+        .map_err(|e| anyhow::anyhow!("Failed to link pipeline elements: {}", e))?;
+    
+    // Start the pipeline
+    pipeline.set_state(gst::State::Playing)
+        .map_err(|e| anyhow::anyhow!("Failed to start FLAC pipeline: {}", e))?;
+    
+    // Push the audio data as a single buffer
+    let num_frames = samples.len() / audio.channels as usize;
+    let duration = gst::ClockTime::from_nseconds(
+        (num_frames as u64 * 1_000_000_000) / output_rate as u64
     );
     
-    // Encode to FLAC stream
-    let flac_stream = flacenc::encode_with_fixed_block_size(
-        &config,
-        source,
-        config.block_size,
-    ).map_err(|e| anyhow::anyhow!("FLAC encoding error: {:?}", e))?;
+    let mut buffer = gst::Buffer::from_slice(raw_bytes);
+    {
+        let buf_ref = buffer.get_mut().unwrap();
+        buf_ref.set_pts(gst::ClockTime::ZERO);
+        buf_ref.set_duration(duration);
+    }
     
-    // Write to ByteSink using BitRepr trait
-    let mut sink = ByteSink::new();
-    let _ = flac_stream.write(&mut sink);
+    appsrc.push_buffer(buffer)
+        .map_err(|e| anyhow::anyhow!("Failed to push audio buffer: {}", e))?;
     
-    // Write to file
-    std::fs::write(&flac_path, sink.as_slice())?;
+    // Signal end of stream
+    appsrc.end_of_stream()
+        .map_err(|e| anyhow::anyhow!("Failed to send EOS: {}", e))?;
+    
+    // Wait for the pipeline to finish processing
+    let bus = pipeline.bus().unwrap();
+    for msg in bus.iter_timed(gst::ClockTime::from_seconds(30)) {
+        match msg.view() {
+            gst::MessageView::Eos(..) => break,
+            gst::MessageView::Error(err) => {
+                pipeline.set_state(gst::State::Null).ok();
+                return Err(anyhow::anyhow!(
+                    "FLAC encoding error: {} ({})",
+                    err.error(),
+                    err.debug().unwrap_or_default()
+                ));
+            }
+            _ => {}
+        }
+    }
+    
+    pipeline.set_state(gst::State::Null).ok();
     
     let size = std::fs::metadata(&flac_path)?.len();
     let duration_secs = samples.len() as f64 / (output_rate as f64 * audio.channels as f64);

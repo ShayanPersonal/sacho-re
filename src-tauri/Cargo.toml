@@ -38,11 +38,11 @@ midly = "0.5"
 
 # Audio file writing
 hound = "3.5"
-flacenc = "0.5.1"
 
-# Video capture with GStreamer
+# Video capture with GStreamer, FLAC audio encoding
 gstreamer = "0.24"
 gstreamer-video = "0.24"
+gstreamer-audio = "0.24"
 gstreamer-app = "0.24"
 gstreamer-pbutils = "0.24"
 
