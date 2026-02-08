@@ -141,10 +141,74 @@ pub fn get_session_detail(
     
     let contents = std::fs::read_to_string(&metadata_path)
         .map_err(|e| e.to_string())?;
-    let metadata: SessionMetadata = serde_json::from_str(&contents)
+    let mut metadata: SessionMetadata = serde_json::from_str(&contents)
         .map_err(|e| e.to_string())?;
     
+    // Check MIDI file integrity (detect interrupted recordings)
+    for midi_file in &mut metadata.midi_files {
+        let midi_path = session_path.join(&midi_file.filename);
+        if midi_path.exists() {
+            midi_file.needs_repair = crate::recording::monitor::midi_file_needs_repair(&midi_path);
+        }
+    }
+    
     Ok(Some(metadata))
+}
+
+#[tauri::command]
+pub fn repair_midi(
+    config: State<'_, RwLock<Config>>,
+    session_id: String,
+    filename: String,
+) -> Result<crate::session::MidiFileInfo, String> {
+    let config = config.read();
+    let session_path = config.storage_path.join(&session_id);
+    let midi_path = session_path.join(&filename);
+    
+    if !midi_path.exists() {
+        return Err(format!("MIDI file not found: {}", filename));
+    }
+    
+    // Repair the file on disk
+    let event_count = crate::recording::monitor::repair_midi_file_on_disk(&midi_path)
+        .map_err(|e| format!("Failed to repair MIDI file: {}", e))?;
+    
+    let size = std::fs::metadata(&midi_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    
+    // Build updated MidiFileInfo
+    let repaired_info = crate::session::MidiFileInfo {
+        filename: filename.clone(),
+        device_name: String::new(), // Will be filled from existing metadata
+        event_count,
+        size_bytes: size,
+        needs_repair: false,
+    };
+    
+    // Update the metadata.json on disk
+    let metadata_path = session_path.join("metadata.json");
+    if metadata_path.exists() {
+        if let Ok(contents) = std::fs::read_to_string(&metadata_path) {
+            if let Ok(mut metadata) = serde_json::from_str::<crate::session::SessionMetadata>(&contents) {
+                // Find and update the matching MIDI file entry
+                for midi_file in &mut metadata.midi_files {
+                    if midi_file.filename == filename {
+                        midi_file.event_count = event_count;
+                        midi_file.size_bytes = size;
+                        midi_file.needs_repair = false;
+                        break;
+                    }
+                }
+                // Save updated metadata
+                if let Err(e) = crate::session::save_metadata(&metadata) {
+                    println!("[Sacho] Failed to update metadata after MIDI repair: {}", e);
+                }
+            }
+        }
+    }
+    
+    Ok(repaired_info)
 }
 
 #[tauri::command]

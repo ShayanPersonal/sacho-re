@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SessionMetadata } from '$lib/api';
-  import { formatDuration, formatDate, readSessionFile, checkVideoCodec } from '$lib/api';
+  import { formatDuration, formatDate, readSessionFile, checkVideoCodec, repairMidi } from '$lib/api';
   import { toggleSessionFavorite, updateNotes } from '$lib/stores/sessions';
   import { revealItemInDir } from '@tauri-apps/plugin-opener';
   import { convertFileSrc } from '@tauri-apps/api/core';
@@ -51,6 +51,28 @@
   
   // More menu state
   let moreMenuOpen = $state(false);
+  
+  // MIDI repair state
+  let isRepairing = $state(false);
+  let hasInterruptedMidi = $derived(session.midi_files.some(f => f.needs_repair));
+  
+  async function handleRepairMidi() {
+    isRepairing = true;
+    try {
+      for (const midiFile of session.midi_files) {
+        if (midiFile.needs_repair) {
+          const repaired = await repairMidi(session.id, midiFile.filename);
+          midiFile.event_count = repaired.event_count;
+          midiFile.size_bytes = repaired.size_bytes;
+          midiFile.needs_repair = false;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to repair MIDI:', e);
+    } finally {
+      isRepairing = false;
+    }
+  }
   
   // Sync notes when session changes
   $effect(() => {
@@ -586,6 +608,23 @@
         {formatDuration(Math.floor(duration))}
       </div>
     </div>
+    
+    <!-- Interrupted Recording Banner -->
+    {#if hasInterruptedMidi}
+      <div class="interrupted-banner">
+        <svg class="interrupted-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+        </svg>
+        <span class="interrupted-text">This recording may have been interrupted. MIDI data was recovered but needs repair.</span>
+        <button 
+          class="repair-btn" 
+          onclick={handleRepairMidi}
+          disabled={isRepairing}
+        >
+          {isRepairing ? 'Repairing...' : 'Repair'}
+        </button>
+      </div>
+    {/if}
     
     <!-- Track Controls -->
     <div class="track-controls">
@@ -1439,5 +1478,79 @@
 
   :global(body.light-mode) .more-menu-item.danger:hover {
     background: rgba(200, 60, 60, 0.1);
+  }
+
+  /* Interrupted recording banner */
+  .interrupted-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(234, 179, 8, 0.1);
+    border: 1px solid rgba(234, 179, 8, 0.25);
+    border-radius: 0.375rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .interrupted-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    color: #eab308;
+  }
+
+  .interrupted-text {
+    font-size: 0.75rem;
+    color: #eab308;
+    flex: 1;
+    line-height: 1.3;
+  }
+
+  .repair-btn {
+    flex-shrink: 0;
+    padding: 0.25rem 0.625rem;
+    font-size: 0.7rem;
+    font-weight: 500;
+    background: rgba(234, 179, 8, 0.15);
+    border: 1px solid rgba(234, 179, 8, 0.3);
+    border-radius: 0.25rem;
+    color: #eab308;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+
+  .repair-btn:hover:not(:disabled) {
+    background: rgba(234, 179, 8, 0.25);
+    border-color: rgba(234, 179, 8, 0.4);
+  }
+
+  .repair-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  :global(body.light-mode) .interrupted-banner {
+    background: rgba(180, 130, 0, 0.08);
+    border-color: rgba(180, 130, 0, 0.2);
+  }
+
+  :global(body.light-mode) .interrupted-text {
+    color: #92700c;
+  }
+
+  :global(body.light-mode) .interrupted-icon {
+    color: #92700c;
+  }
+
+  :global(body.light-mode) .repair-btn {
+    background: rgba(180, 130, 0, 0.1);
+    border-color: rgba(180, 130, 0, 0.25);
+    color: #92700c;
+  }
+
+  :global(body.light-mode) .repair-btn:hover:not(:disabled) {
+    background: rgba(180, 130, 0, 0.18);
+    border-color: rgba(180, 130, 0, 0.35);
   }
 </style>

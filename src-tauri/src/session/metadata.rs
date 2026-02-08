@@ -63,6 +63,10 @@ pub struct MidiFileInfo {
     pub device_name: String,
     pub event_count: usize,
     pub size_bytes: u64,
+    /// True if the MIDI file has a corrupt header (e.g., from an interrupted recording).
+    /// This field is computed at load time, not persisted.
+    #[serde(default)]
+    pub needs_repair: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

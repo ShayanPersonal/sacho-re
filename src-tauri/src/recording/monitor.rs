@@ -3,7 +3,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
-use std::io::Write;
+use std::io::{Write, Seek, SeekFrom};
+use std::collections::HashMap;
 use parking_lot::{RwLock, Mutex};
 use midir::{MidiInput, MidiInputConnection};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -237,6 +238,203 @@ impl AudioStreamWriter {
     }
 }
 
+/// Streaming MIDI file writer that writes events to disk incrementally.
+/// Writes SMF (Standard MIDI File) format 0 with one track.
+/// The MTrk length is a placeholder until finish() patches it.
+/// If the app crashes, repair_midi_file() can fix the header.
+pub struct MidiStreamWriter {
+    file: std::fs::File,
+    filename: String,
+    device_name: String,
+    last_tick: u64,
+    event_count: usize,
+    /// Number of track data bytes written (after the MTrk header)
+    track_data_bytes: u32,
+    ticks_per_us: f64,
+    /// Last time the file was flushed to disk
+    last_flush: Instant,
+}
+
+impl MidiStreamWriter {
+    /// MIDI timing: 480 ticks per quarter note at 120 BPM (500000 us per beat)
+    const TICKS_PER_QUARTER: u16 = 480;
+    const US_PER_QUARTER: f64 = 500_000.0;
+    
+    /// Create a new MIDI stream writer and write the file header.
+    pub fn new(session_path: &PathBuf, filename: &str, device_name: &str) -> anyhow::Result<Self> {
+        let file_path = session_path.join(filename);
+        let mut file = std::fs::File::create(&file_path)?;
+        
+        // MThd header
+        file.write_all(b"MThd")?;
+        file.write_all(&[0, 0, 0, 6])?;           // Header length
+        file.write_all(&[0, 0])?;                   // Format 0
+        file.write_all(&[0, 1])?;                   // 1 track
+        file.write_all(&Self::TICKS_PER_QUARTER.to_be_bytes())?;
+        
+        // MTrk header with placeholder length
+        file.write_all(b"MTrk")?;
+        file.write_all(&[0, 0, 0, 0])?;             // Length placeholder (patched at finish)
+        
+        file.flush()?;
+        
+        println!("[Sacho] MIDI streaming started: {} -> {}", device_name, filename);
+        
+        Ok(Self {
+            file,
+            filename: filename.to_string(),
+            device_name: device_name.to_string(),
+            last_tick: 0,
+            event_count: 0,
+            track_data_bytes: 0,
+            ticks_per_us: Self::TICKS_PER_QUARTER as f64 / Self::US_PER_QUARTER,
+            last_flush: Instant::now(),
+        })
+    }
+    
+    /// Push a single MIDI event to the file.
+    pub fn push_event(&mut self, event: &TimestampedMidiEvent) {
+        let tick = (event.timestamp_us as f64 * self.ticks_per_us) as u64;
+        let delta = tick.saturating_sub(self.last_tick);
+        self.last_tick = tick;
+        
+        // Write variable-length delta time
+        let delta_bytes = Self::encode_variable_length(delta as u32);
+        if self.file.write_all(&delta_bytes).is_err() { return; }
+        
+        // Write event data
+        if self.file.write_all(&event.data).is_err() { return; }
+        
+        self.track_data_bytes += delta_bytes.len() as u32 + event.data.len() as u32;
+        self.event_count += 1;
+        
+        // Flush periodically (every 100ms) to balance crash safety and I/O overhead
+        if self.last_flush.elapsed() >= Duration::from_millis(100) {
+            let _ = self.file.flush();
+            self.last_flush = Instant::now();
+        }
+    }
+    
+    /// Finalize: write end-of-track marker and patch the MTrk length.
+    pub fn finish(mut self) -> anyhow::Result<MidiFileInfo> {
+        // Write end-of-track: delta=0, meta event FF 2F 00
+        self.file.write_all(&[0x00, 0xFF, 0x2F, 0x00])?;
+        self.track_data_bytes += 4;
+        
+        // Patch MTrk length at byte offset 18
+        self.file.seek(SeekFrom::Start(18))?;
+        self.file.write_all(&self.track_data_bytes.to_be_bytes())?;
+        self.file.flush()?;
+        
+        let size = self.file.metadata().map(|m| m.len()).unwrap_or(0);
+        
+        println!("[Sacho] MIDI stream finished: {} ({} events, {} bytes)",
+            self.filename, self.event_count, size);
+        
+        Ok(MidiFileInfo {
+            filename: self.filename,
+            device_name: self.device_name,
+            event_count: self.event_count,
+            size_bytes: size,
+            needs_repair: false,
+        })
+    }
+    
+    /// Encode a value as MIDI variable-length quantity.
+    fn encode_variable_length(mut value: u32) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(4);
+        bytes.push((value & 0x7F) as u8);
+        value >>= 7;
+        while value > 0 {
+            bytes.push(((value & 0x7F) | 0x80) as u8);
+            value >>= 7;
+        }
+        bytes.reverse();
+        bytes
+    }
+}
+
+/// Check if a MIDI file has a valid MTrk header length.
+/// Returns true if the file needs repair (header length doesn't match actual data).
+pub fn midi_file_needs_repair(file_path: &PathBuf) -> bool {
+    use std::io::Read;
+    
+    let Ok(mut file) = std::fs::File::open(file_path) else { return false; };
+    let Ok(metadata) = file.metadata() else { return false; };
+    let file_size = metadata.len();
+    
+    // Minimum valid MIDI: 14 (MThd) + 8 (MTrk header) = 22
+    if file_size < 22 { return false; }
+    
+    // Read MThd header
+    let mut header = [0u8; 14];
+    if file.read_exact(&mut header).is_err() { return false; }
+    if &header[0..4] != b"MThd" { return false; }
+    
+    // Read MTrk header
+    let mut mtrk = [0u8; 8];
+    if file.read_exact(&mut mtrk).is_err() { return false; }
+    if &mtrk[0..4] != b"MTrk" { return false; }
+    
+    let stored_length = u32::from_be_bytes([mtrk[4], mtrk[5], mtrk[6], mtrk[7]]);
+    let actual_data_length = file_size - 22;
+    
+    stored_length as u64 != actual_data_length
+}
+
+/// Repair a MIDI file by fixing the MTrk header length and ensuring end-of-track marker.
+/// Returns the updated event count estimate.
+pub fn repair_midi_file_on_disk(file_path: &PathBuf) -> anyhow::Result<usize> {
+    use std::io::Read;
+    
+    let mut file = std::fs::OpenOptions::new()
+        .read(true).write(true).open(file_path)?;
+    let file_size = file.metadata()?.len();
+    
+    if file_size < 22 {
+        return Err(anyhow::anyhow!("File too small to be a valid MIDI file"));
+    }
+    
+    // Verify MThd and MTrk headers
+    let mut header = [0u8; 22];
+    file.read_exact(&mut header)?;
+    if &header[0..4] != b"MThd" || &header[14..18] != b"MTrk" {
+        return Err(anyhow::anyhow!("Not a valid MIDI file"));
+    }
+    
+    // Check if end-of-track marker (FF 2F 00) exists at end of file
+    let has_eot = if file_size >= 25 {
+        file.seek(SeekFrom::End(-3))?;
+        let mut tail = [0u8; 3];
+        file.read_exact(&mut tail)?;
+        tail == [0xFF, 0x2F, 0x00]
+    } else {
+        false
+    };
+    
+    if !has_eot {
+        // Append end-of-track: delta=0 + FF 2F 00
+        file.seek(SeekFrom::End(0))?;
+        file.write_all(&[0x00, 0xFF, 0x2F, 0x00])?;
+    }
+    
+    // Calculate and patch MTrk length
+    let new_file_size = file.metadata()?.len();
+    let track_data_length = (new_file_size - 22) as u32;
+    
+    file.seek(SeekFrom::Start(18))?;
+    file.write_all(&track_data_length.to_be_bytes())?;
+    file.flush()?;
+    
+    // Estimate event count from track data (each event is ~4 bytes on average)
+    let event_count = track_data_length.saturating_sub(4) as usize / 4;
+    
+    println!("[Sacho] Repaired MIDI file: {} ({} bytes, ~{} events)",
+        file_path.display(), new_file_size, event_count);
+    
+    Ok(event_count)
+}
+
 /// Shared state for recording capture
 pub struct CaptureState {
     pub is_recording: bool,
@@ -244,7 +442,8 @@ pub struct CaptureState {
     pub is_starting: bool,
     pub session_path: Option<PathBuf>,
     pub start_time: Option<Instant>,
-    pub midi_events: Vec<(String, TimestampedMidiEvent)>, // (device_name, event)
+    /// Streaming MIDI writers (one per recording device, keyed by port name)
+    pub midi_writers: HashMap<String, MidiStreamWriter>,
     /// Streaming audio writers (one per device, Some when recording)
     pub audio_writers: Vec<Option<AudioStreamWriter>>,
     /// Pre-roll buffer for MIDI events (used when not recording)
@@ -265,7 +464,7 @@ impl CaptureState {
             is_starting: false,
             session_path: None,
             start_time: None,
-            midi_events: Vec::new(),
+            midi_writers: HashMap::new(),
             audio_writers: Vec::new(),
             midi_preroll: MidiPrerollBuffer::new(pre_roll_secs),
             audio_prerolls: Vec::new(),
@@ -278,6 +477,27 @@ impl CaptureState {
     pub fn should_use_preroll(&self) -> bool {
         !self.is_recording || self.is_starting
     }
+    
+    /// Push a MIDI event to the appropriate writer, creating one lazily if needed.
+    pub fn push_midi_event(&mut self, device_name: &str, event: TimestampedMidiEvent) {
+        if !self.midi_writers.contains_key(device_name) {
+            if let Some(session_path) = self.session_path.clone() {
+                let safe_name = device_name
+                    .replace(' ', "_")
+                    .replace('/', "_")
+                    .replace('\\', "_")
+                    .replace(':', "_");
+                let filename = format!("midi_{}.mid", safe_name);
+                match MidiStreamWriter::new(&session_path, &filename, device_name) {
+                    Ok(writer) => { self.midi_writers.insert(device_name.to_string(), writer); }
+                    Err(e) => { println!("[Sacho] Failed to create MIDI writer for {}: {}", device_name, e); }
+                }
+            }
+        }
+        if let Some(writer) = self.midi_writers.get_mut(device_name) {
+            writer.push_event(&event);
+        }
+    }
 }
 
 impl Default for CaptureState {
@@ -287,7 +507,7 @@ impl Default for CaptureState {
             is_starting: false,
             session_path: None,
             start_time: None,
-            midi_events: Vec::new(),
+            midi_writers: HashMap::new(),
             audio_writers: Vec::new(),
             midi_preroll: MidiPrerollBuffer::new(2),
             audio_prerolls: Vec::new(),
@@ -420,18 +640,17 @@ impl MidiMonitor {
                                     };
                                     state.midi_preroll.push(port_name_clone.clone(), event, timestamp_us);
                                 } else {
-                                    // Recording is active, store with proper timestamp
-                                    // Add midi_timestamp_offset_us to align with pre-roll content
+                                    // Recording is active, stream to disk
                                     let rel_time = state.start_time
                                         .map(|st| st.elapsed().as_micros() as u64 + state.midi_timestamp_offset_us)
                                         .unwrap_or(state.midi_timestamp_offset_us);
-                                    state.midi_events.push((
-                                        port_name_clone.clone(),
+                                    state.push_midi_event(
+                                        &port_name_clone,
                                         TimestampedMidiEvent {
                                             timestamp_us: rel_time,
                                             data: message.to_vec(),
-                                        }
-                                    ));
+                                        },
+                                    );
                                 }
                             }
                             
@@ -505,18 +724,17 @@ impl MidiMonitor {
                                     timestamp_us,
                                 );
                             } else {
-                                // Recording is active, store with proper timestamp
-                                // Add midi_timestamp_offset_us to align with pre-roll content
+                                // Recording is active, stream to disk
                                 let rel_time = state.start_time
                                     .map(|st| st.elapsed().as_micros() as u64 + state.midi_timestamp_offset_us)
                                     .unwrap_or(state.midi_timestamp_offset_us);
-                                state.midi_events.push((
-                                    port_name_clone.clone(),
+                                state.push_midi_event(
+                                    &port_name_clone,
                                     TimestampedMidiEvent {
                                         timestamp_us: rel_time,
                                         data: message.to_vec(),
-                                    }
-                                ));
+                                    },
+                                );
                             }
                         },
                         (),
@@ -751,8 +969,9 @@ impl MidiMonitor {
         // Stop video capture
         self.video_manager.lock().stop();
         
-        // Clear audio writers and pre-roll buffers
+        // Clear writers and pre-roll buffers
         let mut state = self.capture_state.lock();
+        state.midi_writers.clear();
         state.audio_writers.clear();
         state.audio_prerolls.clear();
     }
@@ -993,10 +1212,26 @@ fn start_recording(
         let preroll_events = state.midi_preroll.drain_with_audio_sync(sync_preroll_duration);
         let midi_preroll_count = preroll_events.len();
         
-        // Add pre-roll MIDI events first
-        state.midi_events.clear();
+        // Create MIDI writers and flush pre-roll events through them
+        state.midi_writers.clear();
+        for (device_name, _event) in &preroll_events {
+            if !state.midi_writers.contains_key(device_name.as_str()) {
+                let safe_name = device_name
+                    .replace(' ', "_")
+                    .replace('/', "_")
+                    .replace('\\', "_")
+                    .replace(':', "_");
+                let filename = format!("midi_{}.mid", safe_name);
+                match MidiStreamWriter::new(&session_path, &filename, device_name) {
+                    Ok(writer) => { state.midi_writers.insert(device_name.clone(), writer); }
+                    Err(e) => { println!("[Sacho] Failed to create MIDI writer for {}: {}", device_name, e); }
+                }
+            }
+        }
         for (device_name, event) in preroll_events {
-            state.midi_events.push((device_name, event));
+            if let Some(writer) = state.midi_writers.get_mut(&device_name) {
+                writer.push_event(&event);
+            }
         }
         
         // Create streaming audio writers and drain pre-roll into them
@@ -1105,7 +1340,7 @@ fn stop_recording(
     video_manager: &Arc<Mutex<VideoCaptureManager>>,
 ) {
     // First, extract what we need from capture_state
-    let (session_path, midi_events, audio_writers, duration_secs) = {
+    let (session_path, midi_writers, audio_writers, duration_secs) = {
         let mut state = capture_state.lock();
         if !state.is_recording {
             return;
@@ -1116,10 +1351,12 @@ fn stop_recording(
             .unwrap_or(0.0);
         
         let path = state.session_path.take();
-        let events = std::mem::take(&mut state.midi_events);
+        
+        // Take MIDI writers out of the state
+        let midi_ws: HashMap<String, MidiStreamWriter> = std::mem::take(&mut state.midi_writers);
         
         // Take audio writers out of the state (replace with None)
-        let writers: Vec<Option<AudioStreamWriter>> = state.audio_writers.iter_mut()
+        let audio_ws: Vec<Option<AudioStreamWriter>> = state.audio_writers.iter_mut()
             .map(|w| w.take())
             .collect();
         
@@ -1128,7 +1365,7 @@ fn stop_recording(
         state.start_time = None;
         state.midi_timestamp_offset_us = 0;
         
-        (path, events, writers, duration)
+        (path, midi_ws, audio_ws, duration)
     };
     
     let Some(session_path) = session_path else {
@@ -1162,16 +1399,19 @@ fn stop_recording(
         mgr.stop_recording()
     };
     
-    let writer_count = audio_writers.iter().filter(|w| w.is_some()).count();
-    println!("[Sacho] Stopping recording, {} MIDI events, {} audio streams, {} video files", 
-        midi_events.len(), writer_count, video_files.len());
+    let midi_writer_count = midi_writers.len();
+    let audio_writer_count = audio_writers.iter().filter(|w| w.is_some()).count();
+    println!("[Sacho] Stopping recording, {} MIDI streams, {} audio streams, {} video files", 
+        midi_writer_count, audio_writer_count, video_files.len());
     
-    // Write MIDI files (one per device)
-    let midi_files = if !midi_events.is_empty() {
-        write_midi_files(&session_path, &midi_events)
-    } else {
-        Vec::new()
-    };
+    // Finalize MIDI writers (patch headers and close files)
+    let mut midi_files = Vec::new();
+    for (_, writer) in midi_writers.into_iter() {
+        match writer.finish() {
+            Ok(info) => midi_files.push(info),
+            Err(e) => println!("[Sacho] Failed to finalize MIDI: {}", e),
+        }
+    }
     
     // Calculate max video duration for potential audio padding
     let video_max_duration = video_files.iter()
@@ -1260,108 +1500,5 @@ fn stop_recording(
     println!("[Sacho] Recording stopped, duration: {} sec", duration_secs);
 }
 
-/// Write MIDI events to a Standard MIDI File
-fn write_midi_files(session_path: &PathBuf, events: &[(String, TimestampedMidiEvent)]) -> Vec<MidiFileInfo> {
-    use std::collections::HashMap;
-    
-    // Group events by device name
-    let mut events_by_device: HashMap<&str, Vec<&TimestampedMidiEvent>> = HashMap::new();
-    for (device_name, event) in events {
-        events_by_device.entry(device_name.as_str()).or_default().push(event);
-    }
-    
-    let mut midi_files = Vec::new();
-    let device_count = events_by_device.len();
-    
-    for (device_name, device_events) in events_by_device.into_iter() {
-        // Create safe filename from device name
-        let safe_name = device_name
-            .replace(" ", "_")
-            .replace("/", "_")
-            .replace("\\", "_")
-            .replace(":", "_");
-        
-        let filename = if device_count == 1 {
-            "recording.mid".to_string()
-        } else {
-            format!("midi_{}.mid", safe_name)
-        };
-        
-        let midi_path = session_path.join(&filename);
-        
-        match write_single_midi_file(&midi_path, &device_events) {
-            Ok(size) => {
-                midi_files.push(MidiFileInfo {
-                    filename,
-                    device_name: device_name.to_string(),
-                    event_count: device_events.len(),
-                    size_bytes: size,
-                });
-            }
-            Err(e) => {
-                println!("[Sacho] Failed to write MIDI for {}: {}", device_name, e);
-            }
-        }
-    }
-    
-    midi_files
-}
 
-/// Write a single MIDI file for one device
-fn write_single_midi_file(midi_path: &PathBuf, events: &[&TimestampedMidiEvent]) -> anyhow::Result<u64> {
-    let mut file = std::fs::File::create(midi_path)?;
-    
-    // MIDI Header: MThd
-    file.write_all(b"MThd")?;
-    file.write_all(&[0, 0, 0, 6])?; // Header length
-    file.write_all(&[0, 0])?; // Format 0
-    file.write_all(&[0, 1])?; // 1 track
-    file.write_all(&[0x01, 0xE0])?; // 480 ticks per quarter note
-    
-    // Build track data
-    let mut track_data: Vec<u8> = Vec::new();
-    let ticks_per_us = 480.0 / 500000.0; // Assuming 120 BPM (500000 us per beat)
-    
-    let mut last_tick: u64 = 0;
-    
-    for event in events {
-        let tick = (event.timestamp_us as f64 * ticks_per_us) as u64;
-        let delta = tick.saturating_sub(last_tick);
-        last_tick = tick;
-        
-        // Write variable-length delta time
-        write_variable_length(&mut track_data, delta as u32);
-        
-        // Write MIDI event data
-        track_data.extend_from_slice(&event.data);
-    }
-    
-    // End of track
-    write_variable_length(&mut track_data, 0);
-    track_data.extend_from_slice(&[0xFF, 0x2F, 0x00]);
-    
-    // Write track chunk
-    file.write_all(b"MTrk")?;
-    let track_len = track_data.len() as u32;
-    file.write_all(&track_len.to_be_bytes())?;
-    file.write_all(&track_data)?;
-    
-    let size = std::fs::metadata(midi_path)?.len();
-    Ok(size)
-}
-
-/// Write variable-length quantity for MIDI
-fn write_variable_length(data: &mut Vec<u8>, mut value: u32) {
-    let mut bytes = Vec::new();
-    bytes.push((value & 0x7F) as u8);
-    value >>= 7;
-    
-    while value > 0 {
-        bytes.push(((value & 0x7F) | 0x80) as u8);
-        value >>= 7;
-    }
-    
-    bytes.reverse();
-    data.extend(bytes);
-}
 

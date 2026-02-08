@@ -113,6 +113,7 @@ export interface MidiFileInfo {
   device_name: string;
   event_count: number;
   size_bytes: number;
+  needs_repair: boolean;
 }
 
 export interface VideoFileInfo {
@@ -291,6 +292,10 @@ export async function getSessionDetail(sessionId: string): Promise<SessionMetada
 
 export async function deleteSession(sessionId: string): Promise<void> {
   return invoke('delete_session', { sessionId });
+}
+
+export async function repairMidi(sessionId: string, filename: string): Promise<MidiFileInfo> {
+  return invoke('repair_midi', { sessionId, filename });
 }
 
 export async function readSessionFile(sessionPath: string, filename: string): Promise<Uint8Array> {

@@ -126,6 +126,7 @@ pub fn run() {
             commands::stop_recording,
             commands::get_sessions,
             commands::get_session_detail,
+            commands::repair_midi,
             commands::delete_session,
             commands::update_session_favorite,
             commands::update_session_notes,
