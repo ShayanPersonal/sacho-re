@@ -142,6 +142,7 @@ export interface Config {
   video_encoding_mode: VideoEncodingMode;
   dark_mode: boolean;
   auto_start: boolean;
+  start_minimized: boolean;
   notify_recording_start: boolean;
   notify_recording_stop: boolean;
   selected_audio_devices: string[];

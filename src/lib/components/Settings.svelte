@@ -4,6 +4,7 @@
   import type { Config, EncoderAvailability, AutoSelectProgress, AutostartInfo } from '$lib/api';
   import { getEncoderAvailability, autoSelectEncoderPreset, getAutostartInfo, setAllUsersAutostart } from '$lib/api';
   import { listen } from '@tauri-apps/api/event';
+  import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
     import { recordingState } from '$lib/stores/recording';
   
@@ -466,10 +467,10 @@
               bind:checked={localSettings.auto_start}
               onchange={autoSave}
             />
-            <span class="setting-label">Start at system startup <i>(recommended)</i></span>
+            <span class="setting-label">Start at system startup for current user <i>(recommended)</i></span>
           </label>
           {#if autostartInfo}
-          <label class="checkbox-row child-checkbox">
+          <label class="checkbox-row">
             <input 
               type="checkbox" 
               checked={autostartInfo.all_users_autostart}
@@ -486,10 +487,20 @@
             </span>
           </label>
           {/if}
-          <p class="setting-recommendation">This ensures the application will start up again if your system restarts (such as for system updates). <b>On password-protected systems, you may have to log back in before the app starts.</b></p>
+          <label class="checkbox-row">
+            <input 
+              type="checkbox" 
+              bind:checked={localSettings.start_minimized}
+              onchange={autoSave}
+            />
+            <span class="setting-label">Hide application window at startup.</span>
+          </label>
+          <p class="setting-recommendation">This ensures the application will start up again if your system restarts (such as for system updates). <b>On password-protected or multi-user systems, you may have to log back in before the app starts.</b></p>
           <p class="setting-recommendation">To stop the application from running in the background, right-click the tray icon and select Quit. Note that your performances will not be recorded until the application is started again.</p>
           
-          
+          <button class="debug-crash-btn" onclick={() => invoke('simulate_crash')}>
+            Simulate Crash (dev)
+          </button>
         </div>
       </section>
       
@@ -1019,16 +1030,11 @@
     cursor: pointer;
   }
   
-  .checkbox-row.child-checkbox {
-    margin-left: 1.75rem;
-    margin-top: 0.5rem;
-  }
-  
-  .checkbox-row.child-checkbox .disabled-hint {
+  .checkbox-row .disabled-hint {
     color: #5a5a5a;
   }
   
-  :global(body.light-mode) .checkbox-row.child-checkbox .disabled-hint {
+  :global(body.light-mode) .checkbox-row .disabled-hint {
     color: #999;
   }
   

@@ -1429,3 +1429,9 @@ pub fn set_all_users_autostart(enabled: bool) -> Result<(), String> {
         Ok(())
     }
 }
+
+/// Dev-only: force a crash to test RegisterApplicationRestart
+#[tauri::command]
+pub fn simulate_crash() {
+    std::process::abort();
+}

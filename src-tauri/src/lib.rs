@@ -81,6 +81,16 @@ pub fn run() {
             
             // Initialize config
             let config = config::Config::load_or_default(&app_handle);
+            
+            // If launched with --minimized and config says to start minimized,
+            // hide the main window immediately (startup/crash recovery)
+            let started_minimized = std::env::args().any(|arg| arg == "--minimized");
+            if started_minimized && config.start_minimized {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+            
             app.manage(RwLock::new(config));
             
             // Initialize recording engine state
@@ -155,6 +165,7 @@ pub fn run() {
             commands::auto_select_encoder_preset,
             commands::get_autostart_info,
             commands::set_all_users_autostart,
+            commands::simulate_crash,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sacho");

@@ -52,6 +52,10 @@ pub struct Config {
     /// Whether to start with system
     pub auto_start: bool,
     
+    /// Whether to start minimized to tray (when launched via autostart or --minimized)
+    #[serde(default = "default_true")]
+    pub start_minimized: bool,
+    
     /// Whether to minimize to tray on close
     pub minimize_to_tray: bool,
     
@@ -201,6 +205,7 @@ impl Default for Config {
             video_encoding_mode: VideoEncodingMode::default(),
             dark_mode: false,
             auto_start: true,
+            start_minimized: true,
             minimize_to_tray: true,
             notify_recording_start: false,
             notify_recording_stop: true,
