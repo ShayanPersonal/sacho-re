@@ -253,13 +253,13 @@
           </div>
           <select bind:value={localSettings.video_encoding_mode} onchange={autoSave}>
             {#if encoderAvailability?.av1_available}
-              <option value="av1">AV1 ({encoderAvailability.av1_encoder_name + (encoderAvailability.av1_hardware ? '' : ' - requires configuration')})</option>
+              <option value="av1">AV1 ({encoderAvailability.av1_encoder_name + (encoderAvailability.av1_hardware ? '' : '')})</option>
             {/if}
             {#if encoderAvailability?.vp9_available}
-              <option value="vp9">VP9 ({encoderAvailability.vp9_encoder_name + (encoderAvailability.vp9_hardware ? '' : ' - requires configuration')})</option>
+              <option value="vp9">VP9 ({encoderAvailability.vp9_encoder_name + (encoderAvailability.vp9_hardware ? '' : '')})</option>
             {/if}
             {#if encoderAvailability?.vp8_available}
-              <option value="vp8">VP8 ({encoderAvailability.vp8_encoder_name + (encoderAvailability.vp8_hardware ? '' : ' - requires configuration')})</option>
+              <option value="vp8">VP8 ({encoderAvailability.vp8_encoder_name + (encoderAvailability.vp8_hardware ? '' : '')})</option>
             {/if}
             {#if !encoderAvailability?.av1_available && !encoderAvailability?.vp9_available && !encoderAvailability?.vp8_available}
               <option value="" disabled>No encoders available</option>
@@ -372,7 +372,7 @@
             <span class="setting-description">Format for recorded audio files</span>
           </label>
           <select bind:value={localSettings.audio_format} onchange={autoSave}>
-            <option value="wav">WAV (lossless, largest files)</option>
+            <option value="wav">WAV (lossless, larger files)</option>
             <option value="flac">FLAC (lossless, smaller files)</option>
           </select>
           <button class="advanced-toggle" onclick={() => showAudioAdvanced = !showAudioAdvanced}>
@@ -454,16 +454,6 @@
           <label class="checkbox-row">
             <input 
               type="checkbox" 
-              bind:checked={localSettings.dark_mode}
-              onchange={autoSave}
-            />
-            <span class="setting-label">Dark color scheme</span>
-          </label>
-        </div>
-        <div class="setting-row">
-          <label class="checkbox-row">
-            <input 
-              type="checkbox" 
               bind:checked={localSettings.auto_start}
               onchange={autoSave}
             />
@@ -478,11 +468,11 @@
               onchange={handleAllUsersToggle}
             />
             <span class="setting-label">
-              Start at startup for all users
+              Start at system startup for all users
               {#if autostartInfo.is_per_machine_install}
                 <i>(requires admin privileges)</i>
               {:else}
-                <i class="disabled-hint">(requires app to be installed for all users)</i>
+                <i class="disabled-hint">(requires app installed for all users)</i>
               {/if}
             </span>
           </label>
@@ -493,19 +483,31 @@
               bind:checked={localSettings.start_minimized}
               onchange={autoSave}
             />
-            <span class="setting-label">Hide application window at startup.</span>
+            <span class="setting-label">Hide application window at startup</span>
           </label>
-          <p class="setting-recommendation">This ensures the application will start up again if your system restarts (such as for system updates). <b>On password-protected or multi-user systems, you may have to log back in before the app starts.</b></p>
+          <p class="setting-recommendation">These settings ensure the application will start up again if your system restarts (such as for system updates). <b>On password-protected or multi-user systems, you may have to log back in before the app starts.</b></p>
           <p class="setting-recommendation">To stop the application from running in the background, right-click the tray icon and select Quit. Note that your performances will not be recorded until the application is started again.</p>
           
+          <!--
           <button class="debug-crash-btn" onclick={() => invoke('simulate_crash')}>
             Simulate Crash (dev)
           </button>
+          -->
         </div>
       </section>
       
       <section class="settings-section">
-        <h3>Notifications</h3>
+        <h3>Application</h3>
+        <div class="setting-row">
+          <label class="checkbox-row">
+            <input 
+              type="checkbox" 
+              bind:checked={localSettings.dark_mode}
+              onchange={autoSave}
+            />
+            <span class="setting-label">Dark color scheme</span>
+          </label>
+        </div>
         <div class="setting-row">
           <label class="checkbox-row">
             <input 
@@ -1033,8 +1035,20 @@
   .checkbox-row .disabled-hint {
     color: #5a5a5a;
   }
+
+  .checkbox-row:has(input:disabled) {
+    cursor:  not-allowed;
+  }
+
+  .checkbox-row:has(input:disabled) .setting-label {
+    color: #5a5a5a;
+  }
   
   :global(body.light-mode) .checkbox-row .disabled-hint {
+    color: #999;
+  }
+
+  :global(body.light-mode) .checkbox-row:has(input:disabled) .setting-label {
     color: #999;
   }
   
