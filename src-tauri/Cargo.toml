@@ -85,7 +85,12 @@ base64 = "0.22"
 
 # Windows console attachment for CLI logging
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_System_Console",
+    "Win32_System_Recovery",
+    "Win32_System_Registry",
+    "Win32_UI_Shell",
+] }
 
 [features]
 default = []

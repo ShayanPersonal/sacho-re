@@ -42,6 +42,23 @@
     
     ; Remove the installers folder after copying (no longer needed)
     RMDir /r "$INSTDIR\installers"
+    
+    ; ---- Autostart registration ----
+    ; Always set HKCU autostart for the installing user (no first run needed)
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --minimized'
+    DetailPrint "Registered autostart for current user"
+    
+    ; If installed for all users, also set HKLM autostart
+    !if "${INSTALLMODE}" == "both"
+    ${If} $MultiUser.InstallMode == "AllUsers"
+        WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --minimized'
+        DetailPrint "Registered autostart for all users"
+    ${EndIf}
+    !endif
+    !if "${INSTALLMODE}" == "perMachine"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --minimized'
+    DetailPrint "Registered autostart for all users"
+    !endif
 !macroend
 
 ; ============================================================================
@@ -93,6 +110,12 @@
     ${EndIf}
     
     DetailPrint "GStreamer runtime libraries removed"
+    
+    ; ---- Autostart cleanup ----
+    ; Clean up HKLM autostart (succeeds if admin, silently fails if not)
+    ; Note: HKCU cleanup is already handled by Tauri's uninstaller template
+    DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
+    DetailPrint "Removed autostart registry entries"
 !macroend
 
 ; ============================================================================

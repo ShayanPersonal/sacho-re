@@ -358,6 +358,23 @@ export async function updateConfig(newConfig: Config): Promise<void> {
 }
 
 // ============================================================================
+// Autostart Commands
+// ============================================================================
+
+export interface AutostartInfo {
+  is_per_machine_install: boolean;
+  all_users_autostart: boolean;
+}
+
+export async function getAutostartInfo(): Promise<AutostartInfo> {
+  return invoke<AutostartInfo>('get_autostart_info');
+}
+
+export async function setAllUsersAutostart(enabled: boolean): Promise<void> {
+  return invoke('set_all_users_autostart', { enabled });
+}
+
+// ============================================================================
 // Similarity Commands
 // ============================================================================
 

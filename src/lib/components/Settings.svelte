@@ -1,8 +1,8 @@
 <script lang="ts">
   import { settings, saveSettings, saveSettingsDebounced, saveStatus } from '$lib/stores/settings';
   import { open } from '@tauri-apps/plugin-dialog';
-  import type { Config, EncoderAvailability, AutoSelectProgress } from '$lib/api';
-  import { getEncoderAvailability, autoSelectEncoderPreset } from '$lib/api';
+  import type { Config, EncoderAvailability, AutoSelectProgress, AutostartInfo } from '$lib/api';
+  import { getEncoderAvailability, autoSelectEncoderPreset, getAutostartInfo, setAllUsersAutostart } from '$lib/api';
   import { listen } from '@tauri-apps/api/event';
   import { onMount } from 'svelte';
     import { recordingState } from '$lib/stores/recording';
@@ -19,6 +19,10 @@
   let autoSelectProgress = $state<AutoSelectProgress | null>(null);
   let autoSelectError = $state<string | null>(null);
   
+  // All-users autostart state
+  let autostartInfo = $state<AutostartInfo | null>(null);
+  let allUsersToggling = $state(false);
+  
   // Preset labels
   const presetLabels: Record<number, string> = {
     1: 'Lightest',
@@ -28,11 +32,19 @@
     5: 'Maximum',
   };
   
-  // Listen for auto-select progress events
+  // Listen for auto-select progress events and load autostart info
   onMount(() => {
     const unlisten = listen<AutoSelectProgress>('auto-select-progress', (event) => {
       autoSelectProgress = event.payload;
     });
+    
+    // Load all-users autostart info
+    getAutostartInfo().then(info => {
+      autostartInfo = info;
+    }).catch(e => {
+      console.error('Failed to get autostart info:', e);
+    });
+    
     return () => { unlisten.then(fn => fn()); };
   });
   
@@ -54,6 +66,30 @@
     }
     localSettings.encoder_preset_levels[mode] = level;
     autoSave();
+  }
+  
+  // Handle all-users autostart toggle (triggers UAC prompt)
+  async function handleAllUsersToggle(event: Event) {
+    const checkbox = event.target as HTMLInputElement;
+    const newValue = checkbox.checked;
+    
+    // Immediately revert the checkbox while we try the elevated operation
+    checkbox.checked = !newValue;
+    allUsersToggling = true;
+    
+    try {
+      await setAllUsersAutostart(newValue);
+      // Success - update local state
+      checkbox.checked = newValue;
+      if (autostartInfo) {
+        autostartInfo = { ...autostartInfo, all_users_autostart: newValue };
+      }
+    } catch (e) {
+      // UAC was cancelled or failed - checkbox stays reverted
+      console.error('Failed to toggle all-users autostart:', e);
+    } finally {
+      allUsersToggling = false;
+    }
   }
   
   // Run auto-select
@@ -432,8 +468,28 @@
             />
             <span class="setting-label">Start at system startup <i>(recommended)</i></span>
           </label>
-           <p class="setting-recommendation">This ensures the application will start up again if your system restarts (such as for system updates). <b>On password-protected systems, you may have to log back in before the app starts.</b></p>
+          {#if autostartInfo}
+          <label class="checkbox-row child-checkbox">
+            <input 
+              type="checkbox" 
+              checked={autostartInfo.all_users_autostart}
+              disabled={!autostartInfo.is_per_machine_install || allUsersToggling}
+              onchange={handleAllUsersToggle}
+            />
+            <span class="setting-label">
+              Start at startup for all users
+              {#if autostartInfo.is_per_machine_install}
+                <i>(requires admin privileges)</i>
+              {:else}
+                <i class="disabled-hint">(requires app to be installed for all users)</i>
+              {/if}
+            </span>
+          </label>
+          {/if}
+          <p class="setting-recommendation">This ensures the application will start up again if your system restarts (such as for system updates). <b>On password-protected systems, you may have to log back in before the app starts.</b></p>
           <p class="setting-recommendation">To stop the application from running in the background, right-click the tray icon and select Quit. Note that your performances will not be recorded until the application is started again.</p>
+          
+          
         </div>
       </section>
       
@@ -961,6 +1017,19 @@
     align-items: center;
     gap: 0.75rem;
     cursor: pointer;
+  }
+  
+  .checkbox-row.child-checkbox {
+    margin-left: 1.75rem;
+    margin-top: 0.5rem;
+  }
+  
+  .checkbox-row.child-checkbox .disabled-hint {
+    color: #5a5a5a;
+  }
+  
+  :global(body.light-mode) .checkbox-row.child-checkbox .disabled-hint {
+    color: #999;
   }
   
   .checkbox-row input {

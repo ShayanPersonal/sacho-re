@@ -6,6 +6,7 @@ use crate::devices::{AudioDevice, MidiDevice, VideoDevice, DeviceManager};
 use crate::recording::{RecordingState, RecordingStatus, MidiMonitor};
 use crate::session::{SessionDatabase, SessionSummary, SessionMetadata, SessionFilter, SimilarityPoint};
 use crate::similarity;
+use crate::autostart::{self, AutostartInfo};
 use parking_lot::{RwLock, Mutex};
 use tauri::{State, Emitter};
 use serde::{Deserialize, Serialize};
@@ -1403,4 +1404,28 @@ async fn run_auto_select_test(
     println!("[AutoSelect] Best preset level: {} ({})", best_level, crate::encoding::presets::preset_label(best_level));
     
     Ok(best_level)
+}
+
+// ============================================================================
+// Autostart Commands
+// ============================================================================
+
+#[tauri::command]
+pub fn get_autostart_info() -> AutostartInfo {
+    AutostartInfo {
+        is_per_machine_install: autostart::is_per_machine_install(),
+        all_users_autostart: autostart::is_hklm_autostart_enabled(),
+    }
+}
+
+#[tauri::command]
+pub fn set_all_users_autostart(enabled: bool) -> Result<(), String> {
+    autostart::request_set_hklm_autostart(enabled)?;
+    // Re-check the actual state after the elevated process ran
+    let actual_state = autostart::is_hklm_autostart_enabled();
+    if actual_state != enabled {
+        Err("The autostart setting was not changed. The UAC prompt may have been cancelled.".to_string())
+    } else {
+        Ok(())
+    }
 }

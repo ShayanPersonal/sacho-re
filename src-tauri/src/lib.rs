@@ -1,6 +1,7 @@
 // Sacho - Automatic Recording Studio Companion
 // Main library entry point
 
+pub mod autostart;
 pub mod config;
 pub mod devices;
 pub mod encoding;
@@ -37,6 +38,14 @@ pub fn run() {
         ).init();
     }
     
+    // Register with Windows Error Reporting for automatic restart on crash/hang
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Recovery::RegisterApplicationRestart;
+        let restart_args: Vec<u16> = "--minimized\0".encode_utf16().collect();
+        unsafe { RegisterApplicationRestart(restart_args.as_ptr(), 0); }
+    }
+
     // Initialize GStreamer environment before anything else
     // This sets up paths for private GStreamer deployment on Windows
     gstreamer_init::init_gstreamer_env();
@@ -144,6 +153,8 @@ pub fn run() {
             commands::get_video_frame_timestamps,
             commands::get_encoder_availability,
             commands::auto_select_encoder_preset,
+            commands::get_autostart_info,
+            commands::set_all_users_autostart,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sacho");
