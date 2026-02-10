@@ -18,7 +18,7 @@ use gstreamer_pbutils as gst_pbutils;
 use gst_pbutils::prelude::*;
 
 /// Supported codecs for playback
-const SUPPORTED_CODECS: &[&str] = &["mjpeg", "jpeg", "vp8", "vp9", "av1", "raw"];
+const SUPPORTED_CODECS: &[&str] = &["mjpeg", "vp8", "vp9", "av1", "raw"];
 
 /// Information about a video file's codec
 #[derive(Debug, Clone)]
@@ -97,51 +97,30 @@ fn normalize_codec_name(caps_name: &str) -> String {
 /// Check if a codec is supported for playback
 fn is_codec_supported(codec: &str) -> bool {
     let codec_lower = codec.to_lowercase();
-    SUPPORTED_CODECS.iter().any(|&c| codec_lower == c || codec_lower.contains(c))
-}
-
-/// Check if a video file has a supported codec for playback
-pub fn is_video_playable<P: AsRef<Path>>(path: P) -> Result<bool, VideoError> {
-    let info = probe_video_codec(path)?;
-    Ok(info.is_supported)
-}
-
-/// Check if a video file requires the custom frame player
-/// Returns true for MJPEG, false for VP8/VP9/AV1 (which use native player)
-pub fn needs_custom_player(path: &Path) -> bool {
-    // Check by extension - only MKV files with MJPEG need custom player
-    let extension = path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase())
-        .unwrap_or_default();
-    
-    // WebM uses VP8/VP9/AV1 which native player handles
-    // MKV uses MJPEG which needs custom player
-    extension == "mkv"
+    SUPPORTED_CODECS.iter().any(|&c| codec_lower == c)
 }
 
 /// Detect the video format and create an appropriate demuxer
-/// Only works for formats that need custom playback (MJPEG in MKV)
+/// Only works for MJPEG codec which needs custom frame-by-frame playback.
+/// VP8/VP9/AV1 should use the native HTML5 video player instead.
 pub fn open_video<P: AsRef<Path>>(path: P) -> Result<Box<dyn VideoDemuxer>, VideoError> {
     let path = path.as_ref();
     
-    let extension = path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase())
-        .unwrap_or_default();
+    // Probe the actual codec - don't rely on file extension since both MJPEG
+    // and encoded codecs (VP8/VP9/AV1) may use the .mkv extension
+    let codec_info = probe_video_codec(path)?;
     
-    match extension.as_str() {
-        "mkv" => {
-            // MKV contains MJPEG - use frame extractor
+    match codec_info.codec.as_str() {
+        "mjpeg" => {
             let demuxer = MjpegDemuxer::open(path)?;
             Ok(Box::new(demuxer))
         }
-        "webm" => {
+        codec @ ("vp8" | "vp9" | "av1") => {
             Err(VideoError::UnsupportedFormat(format!(
-                "{} files use native player, not custom demuxer", extension
+                "{} videos use the native player, not the custom demuxer", codec.to_uppercase()
             )))
         }
-        _ => Err(VideoError::UnsupportedFormat(extension)),
+        other => Err(VideoError::UnsupportedCodec(other.to_string())),
     }
 }
 

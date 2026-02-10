@@ -15,7 +15,7 @@ use crate::devices::DeviceManager;
 use crate::encoding::VideoCodec;
 use crate::recording::RecordingState;
 use crate::recording::midi::TimestampedMidiEvent;
-use crate::recording::preroll::{MidiPrerollBuffer, AudioPrerollBuffer};
+use crate::recording::preroll::{MidiPrerollBuffer, AudioPrerollBuffer, MAX_PRE_ROLL_SECS, MAX_PRE_ROLL_SECS_ENCODED};
 use crate::recording::video::VideoCaptureManager;
 use crate::session::{SessionMetadata, SessionDatabase, MidiFileInfo, AudioFileInfo};
 use crate::notifications;
@@ -937,7 +937,8 @@ impl MidiMonitor {
         let pre_roll_secs = {
             let config_state = app_handle.state::<RwLock<Config>>();
             let config = config_state.read();
-            config.pre_roll_secs.min(5)
+            let limit = if config.encode_during_preroll { MAX_PRE_ROLL_SECS_ENCODED } else { MAX_PRE_ROLL_SECS };
+            config.pre_roll_secs.min(limit)
         };
         
         Self {
@@ -966,12 +967,16 @@ impl MidiMonitor {
         let config = self.app_handle.state::<RwLock<Config>>();
         let config = config.read();
         
+        // Determine pre-roll limit based on encode_during_preroll setting
+        let encode_during_preroll = config.encode_during_preroll;
+        let pre_roll_limit = if encode_during_preroll { MAX_PRE_ROLL_SECS_ENCODED } else { MAX_PRE_ROLL_SECS };
+        
         // Update pre-roll duration from config
         {
-            let pre_roll = config.pre_roll_secs.min(5);
+            let pre_roll = config.pre_roll_secs.min(pre_roll_limit);
             let mut state = self.capture_state.lock();
             state.pre_roll_secs = pre_roll;
-            state.midi_preroll.set_duration(pre_roll);
+            state.midi_preroll.set_duration_with_limit(pre_roll, pre_roll_limit);
         }
         
         println!("[Sacho] Trigger MIDI devices: {:?}", config.trigger_midi_devices);
@@ -1142,7 +1147,7 @@ impl MidiMonitor {
         println!("[Sacho] Audio devices: {:?}", config.selected_audio_devices);
         
         let host = cpal::default_host();
-        let pre_roll_secs = config.pre_roll_secs.min(5);
+        let pre_roll_secs = config.pre_roll_secs.min(pre_roll_limit);
         
         if let Ok(audio_devices) = host.input_devices() {
             for device in audio_devices {
@@ -1160,11 +1165,12 @@ impl MidiMonitor {
                                 let mut state = self.capture_state.lock();
                                 
                                 // Pre-roll buffer (captures audio before trigger)
-                                state.audio_prerolls.push(AudioPrerollBuffer::new(
+                                state.audio_prerolls.push(AudioPrerollBuffer::with_limit(
                                     device_name.clone(),
                                     sample_rate,
                                     channels,
                                     pre_roll_secs,
+                                    pre_roll_limit,
                                 ));
                                 
                                 // Writer slot (None until recording starts)
@@ -1222,7 +1228,7 @@ impl MidiMonitor {
         // Start video capture for selected video devices
         let video_count = {
             let selected_video = config.selected_video_devices.clone();
-            let pre_roll = config.pre_roll_secs.min(5);
+            let pre_roll = config.pre_roll_secs.min(pre_roll_limit);
             drop(config); // Release config lock before video operations
             
             // Look up codec and name for each selected video device
@@ -1276,6 +1282,7 @@ impl MidiMonitor {
             video_mgr.set_preroll_duration(pre_roll);
             video_mgr.set_encoding_mode(encoding_mode);
             video_mgr.set_preset_level(preset_level);
+            video_mgr.set_encode_during_preroll(encode_during_preroll);
             
             if !video_with_info.is_empty() {
                 if let Err(e) = video_mgr.start(&video_with_info) {

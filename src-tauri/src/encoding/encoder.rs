@@ -760,7 +760,7 @@ impl AsyncVideoEncoder {
     /// 
     /// Files created in streaming mode may not have duration in the header.
     /// This function remuxes the file to add it.
-    fn remux_with_duration(file_path: &PathBuf) -> Result<u64> {
+    pub(crate) fn remux_with_duration(file_path: &PathBuf) -> Result<u64> {
         let extension = file_path.extension()
             .and_then(|e| e.to_str())
             .unwrap_or("webm");
@@ -890,7 +890,7 @@ impl AsyncVideoEncoder {
     }
     
     /// Create common pipeline elements (appsrc, queue, videoconvert)
-    fn create_common_pipeline_start(
+    pub(crate) fn create_common_pipeline_start(
         width: u32,
         height: u32,
         fps: u32,
@@ -984,7 +984,7 @@ impl AsyncVideoEncoder {
     ///
     /// Encoder parameters are configured by the preset system
     /// ([`super::presets::apply_preset`]) based on `config.preset_level`.
-    fn create_av1_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
+    pub(crate) fn create_av1_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
         let encoder_name = hw_type.av1_encoder_element()
             .ok_or_else(|| EncoderError::NotAvailable(format!(
                 "{} does not support AV1 encoding", hw_type.display_name()
@@ -1049,7 +1049,7 @@ impl AsyncVideoEncoder {
     /// VP8 is royalty-free, so we can use both hardware and software encoders.
     /// Hardware encoders (VA-API, QuickSync) are preferred, with libvpx as fallback.
     /// Encoder parameters are configured by the preset system.
-    fn create_vp8_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
+    pub(crate) fn create_vp8_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
         let encoder_name = hw_type.vp8_encoder_element()
             .ok_or_else(|| EncoderError::NotAvailable(format!(
                 "{} does not support VP8 encoding", hw_type.display_name()
@@ -1125,7 +1125,7 @@ impl AsyncVideoEncoder {
     /// VP9 is royalty-free, so we can use both hardware and software encoders.
     /// Hardware encoders (QuickSync, VA-API) are preferred, with libvpx as fallback.
     /// Encoder parameters are configured by the preset system.
-    fn create_vp9_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
+    pub(crate) fn create_vp9_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
         let encoder_name = hw_type.vp9_encoder_element()
             .ok_or_else(|| EncoderError::NotAvailable(format!(
                 "{} does not support VP9 encoding", hw_type.display_name()

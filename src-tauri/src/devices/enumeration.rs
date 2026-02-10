@@ -1,6 +1,6 @@
 // Device enumeration implementations
 
-use super::{AudioDevice, MidiDevice, VideoDevice, VideoDeviceType, Resolution};
+use super::{AudioDevice, MidiDevice, VideoDevice, Resolution};
 use crate::encoding::{VideoCodec, has_av1_encoder, has_vp9_encoder, has_vp8_encoder};
 use cpal::traits::{DeviceTrait, HostTrait};
 use gstreamer as gst;

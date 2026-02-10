@@ -468,10 +468,6 @@
     color: #6a6a6a;
   }
 
-  :global(body.light-mode .section-header:hover) {
-    background: rgba(0, 0, 0, 0.03);
-  }
-
   :global(body.light-mode .settings-section h3) {
     border-bottom-color: rgba(0, 0, 0, 0.08);
   }

@@ -6,8 +6,12 @@ use std::time::{Duration, Instant};
 
 use super::midi::TimestampedMidiEvent;
 
-/// Maximum pre-roll duration (5 seconds)
+/// Maximum pre-roll duration when encoding during pre-roll is OFF
 pub const MAX_PRE_ROLL_SECS: u32 = 5;
+
+/// Maximum pre-roll duration when encoding during pre-roll is ON
+/// Encoded frames are much smaller than raw, so we can afford a longer window.
+pub const MAX_PRE_ROLL_SECS_ENCODED: u32 = 30;
 
 // ============================================================================
 // MIDI Pre-roll Buffer
@@ -32,14 +36,22 @@ pub struct MidiPrerollBuffer {
 
 impl MidiPrerollBuffer {
     pub fn new(max_secs: u32) -> Self {
+        Self::with_limit(max_secs, MAX_PRE_ROLL_SECS)
+    }
+    
+    pub fn with_limit(max_secs: u32, limit: u32) -> Self {
         Self {
             events: VecDeque::new(),
-            max_duration: Duration::from_secs(max_secs.min(MAX_PRE_ROLL_SECS) as u64),
+            max_duration: Duration::from_secs(max_secs.min(limit) as u64),
         }
     }
     
     pub fn set_duration(&mut self, secs: u32) {
-        self.max_duration = Duration::from_secs(secs.min(MAX_PRE_ROLL_SECS) as u64);
+        self.set_duration_with_limit(secs, MAX_PRE_ROLL_SECS);
+    }
+    
+    pub fn set_duration_with_limit(&mut self, secs: u32, limit: u32) {
+        self.max_duration = Duration::from_secs(secs.min(limit) as u64);
         self.trim();
     }
     
@@ -179,7 +191,11 @@ pub struct AudioPrerollBuffer {
 
 impl AudioPrerollBuffer {
     pub fn new(device_name: String, sample_rate: u32, channels: u16, max_secs: u32) -> Self {
-        let max_samples = (sample_rate as usize) * (channels as usize) * (max_secs.min(MAX_PRE_ROLL_SECS) as usize);
+        Self::with_limit(device_name, sample_rate, channels, max_secs, MAX_PRE_ROLL_SECS)
+    }
+    
+    pub fn with_limit(device_name: String, sample_rate: u32, channels: u16, max_secs: u32, limit: u32) -> Self {
+        let max_samples = (sample_rate as usize) * (channels as usize) * (max_secs.min(limit) as usize);
         Self {
             samples: VecDeque::with_capacity(max_samples),
             max_samples,
@@ -190,7 +206,11 @@ impl AudioPrerollBuffer {
     }
     
     pub fn set_duration(&mut self, secs: u32) {
-        self.max_samples = (self.sample_rate as usize) * (self.channels as usize) * (secs.min(MAX_PRE_ROLL_SECS) as usize);
+        self.set_duration_with_limit(secs, MAX_PRE_ROLL_SECS);
+    }
+    
+    pub fn set_duration_with_limit(&mut self, secs: u32, limit: u32) {
+        self.max_samples = (self.sample_rate as usize) * (self.channels as usize) * (secs.min(limit) as usize);
         self.trim();
     }
     

@@ -30,6 +30,7 @@
   let videoError = $state<string | null>(null);
   let useCustomPlayer = $state(false); // Switch to custom JPEG frame player on error
   let videoUnsupportedCodec = $state<string | null>(null); // Detected unsupported codec
+  let detectedCodec = $state<string | null>(null); // Actual codec detected by probing
   let isCheckingCodec = $state(false); // Loading state for codec check
   
   // Fallback time tracking when no video/audio is playing
@@ -85,15 +86,16 @@
     }, 500);
   }
   
-  // Check if a video file needs the custom player (MJPEG in MKV)
-  function needsCustomPlayer(filename: string): boolean {
-    return filename.toLowerCase().endsWith('.mkv');
+  // Check if the detected codec needs the custom frame player (only MJPEG)
+  function needsCustomPlayer(): boolean {
+    return detectedCodec === 'mjpeg';
   }
   
   // Check the video codec and determine if it's playable
   async function checkCurrentVideoCodec() {
     if (!currentVideoFile) {
       videoUnsupportedCodec = null;
+      detectedCodec = null;
       return;
     }
     
@@ -101,6 +103,7 @@
     try {
       const result = await checkVideoCodec(session.path, currentVideoFile.filename);
       console.log('[Video] Codec check:', result);
+      detectedCodec = result.codec.toLowerCase();
       
       if (!result.is_playable) {
         videoUnsupportedCodec = result.codec.toUpperCase();
@@ -111,25 +114,26 @@
     } catch (e) {
       console.error('[Video] Failed to check codec:', e);
       // If we can't probe, try to play anyway - native player will show error if needed
+      detectedCodec = null;
       videoUnsupportedCodec = null;
     } finally {
       isCheckingCodec = false;
     }
   }
   
-  // Handle video error - switch to custom player for MKV files
+  // Handle video error - switch to custom player only for MJPEG codec
   function handleVideoError(e: Event) {
     const video = e.target as HTMLVideoElement;
     if (video.error && currentVideoFile) {
-      console.log('[handleVideoError] Video error:', video.error.code, video.error.message);
-      // Only switch to custom player for MKV files (MJPEG)
-      // WebM should work with native player
-      if (needsCustomPlayer(currentVideoFile.filename)) {
+      console.log('[handleVideoError] Video error:', video.error.code, video.error.message, 'codec:', detectedCodec);
+      // Only switch to custom frame player if the actual codec is MJPEG
+      // VP8/VP9/AV1 in MKV containers should NOT use the MJPEG frame player
+      if (needsCustomPlayer()) {
         useCustomPlayer = true;
         videoError = null;
       } else {
-        // For other formats, show error
-        videoError = 'Unsupported video format';
+        // For VP8/VP9/AV1 that fail in native player, show error
+        videoError = 'Video playback failed — try an external player';
       }
     }
   }
@@ -138,7 +142,7 @@
   function resetVideoError() {
     videoError = null;
     // Reset custom player flag if the new video doesn't need it
-    if (currentVideoFile && !needsCustomPlayer(currentVideoFile.filename)) {
+    if (currentVideoFile && !needsCustomPlayer()) {
       useCustomPlayer = false;
     }
   }
@@ -265,6 +269,7 @@
     midiIndex = 0;
     lastMidiTime = 0;
     videoError = null;
+    detectedCodec = null;
     useCustomPlayer = false; // Try native player first for new session
     playStartTime = 0;
     playStartOffset = 0;

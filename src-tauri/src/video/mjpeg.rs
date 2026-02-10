@@ -66,7 +66,8 @@ impl MjpegDemuxer {
         gst::Element::link_many([&jpegparse, appsink.upcast_ref()])
             .map_err(|e| VideoError::Gst(format!("Failed to link jpegparse to appsink: {}", e)))?;
         
-        // Connect matroskademux pad-added signal to link video stream to jpegparse
+        // Connect matroskademux pad-added signal to link ONLY JPEG streams to jpegparse.
+        // We must NOT link VP8/VP9/AV1 pads here - jpegparse can only handle image/jpeg.
         let jpegparse_weak = jpegparse.downgrade();
         matroskademux.connect_pad_added(move |_demux, src_pad| {
             let Some(jpegparse) = jpegparse_weak.upgrade() else {
@@ -76,13 +77,17 @@ impl MjpegDemuxer {
             let caps = src_pad.current_caps().or_else(|| Some(src_pad.query_caps(None)));
             if let Some(caps) = caps {
                 if let Some(structure) = caps.structure(0) {
-                    let name = structure.name();
-                    // Link video pads (image/jpeg for MJPEG)
-                    if name.starts_with("image/") || name.starts_with("video/") {
+                    let name = structure.name().as_str();
+                    // Only link JPEG pads - reject VP8/VP9/AV1/other codecs
+                    if name == "image/jpeg" {
                         let sink_pad = jpegparse.static_pad("sink").unwrap();
                         if !sink_pad.is_linked() {
-                            let _ = src_pad.link(&sink_pad);
+                            if let Err(e) = src_pad.link(&sink_pad) {
+                                log::warn!("Failed to link JPEG pad: {:?}", e);
+                            }
                         }
+                    } else {
+                        log::debug!("MjpegDemuxer: ignoring non-JPEG pad with caps '{}'", name);
                     }
                 }
             }

@@ -17,6 +17,7 @@ pub mod video;
 use std::sync::Arc;
 use parking_lot::{Mutex, RwLock};
 use tauri::Manager;
+use sysinfo::System;
 
 /// Initialize and run the Tauri application
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -127,6 +128,14 @@ pub fn run() {
             }
             app.manage(Arc::new(Mutex::new(midi_monitor)));
             
+            // Initialize sysinfo for process stats (CPU/RAM monitoring)
+            let mut sys = System::new();
+            sys.refresh_processes(
+                sysinfo::ProcessesToUpdate::Some(&[sysinfo::get_current_pid().unwrap()]),
+                true,
+            );
+            app.manage(Mutex::new(sys));
+            
             // Setup system tray
             if let Err(e) = tray::setup_tray(&app_handle) {
                 log::error!("Failed to setup tray: {}", e);
@@ -166,6 +175,7 @@ pub fn run() {
             commands::get_autostart_info,
             commands::set_all_users_autostart,
             commands::simulate_crash,
+            commands::get_app_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sacho");

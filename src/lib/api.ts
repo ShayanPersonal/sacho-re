@@ -153,6 +153,8 @@ export interface Config {
   video_device_codecs: Record<string, VideoCodec>;
   /** Encoder quality preset level per encoding mode (e.g. { av1: 3, vp9: 4, vp8: 3 }) */
   encoder_preset_levels: Record<string, number>;
+  /** Whether to encode video during pre-roll (trades compute for memory, allows up to 30s pre-roll) */
+  encode_during_preroll: boolean;
   device_presets: DevicePreset[];
   current_preset: string | null;
 }
@@ -444,6 +446,25 @@ export async function getVideoFramesBatch(
 
 export async function getVideoFrameTimestamps(sessionPath: string, filename: string): Promise<number[]> {
   return invoke('get_video_frame_timestamps', { sessionPath, filename });
+}
+
+// ============================================================================
+// App Stats
+// ============================================================================
+
+export interface AppStats {
+  /** Process CPU usage percentage (0-100+) */
+  cpu_percent: number;
+  /** Process resident memory in bytes */
+  memory_bytes: number;
+  /** Total size of recordings folder in bytes */
+  storage_used_bytes: number;
+  /** Free space on the recordings disk in bytes */
+  disk_free_bytes: number;
+}
+
+export async function getAppStats(): Promise<AppStats> {
+  return invoke<AppStats>('get_app_stats');
 }
 
 // ============================================================================

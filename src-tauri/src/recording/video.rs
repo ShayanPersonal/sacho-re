@@ -21,6 +21,8 @@ use crate::config::VideoEncodingMode;
 use crate::encoding::{AsyncVideoEncoder, EncoderConfig, RawVideoFrame};
 use crate::session::VideoFileInfo;
 
+use super::preroll::MAX_PRE_ROLL_SECS_ENCODED;
+
 /// Error type for video capture operations
 #[derive(Debug, thiserror::Error)]
 pub enum VideoError {
@@ -189,6 +191,12 @@ pub struct VideoCapturePipeline {
     total_frames_dropped: u64,
     /// Encoder quality preset level (1–5)
     preset_level: u8,
+    /// Whether encode-during-preroll is active (raw video only)
+    encode_during_preroll: bool,
+    /// Pre-roll encoder (when encode_during_preroll is active)
+    preroll_encoder: Option<PrerollVideoEncoder>,
+    /// Shared output from pre-roll encoder
+    preroll_encoder_output: Option<Arc<Mutex<PrerollEncoderOutput>>>,
 }
 
 /// Generic video file writer that handles different codecs and containers
@@ -197,7 +205,6 @@ pub struct VideoCapturePipeline {
 struct VideoWriter {
     pipeline: gst::Pipeline,
     appsrc: gst_app::AppSrc,
-    codec: crate::encoding::VideoCodec,
     output_path: PathBuf,
     /// Tracks the end of the last written frame (PTS + duration, in nanoseconds)
     /// for accurate content duration reporting.
@@ -298,7 +305,6 @@ impl VideoWriter {
         Ok(Self {
             pipeline,
             appsrc,
-            codec,
             output_path: path.clone(),
             last_pts_end_ns: 0,
         })
@@ -379,6 +385,230 @@ impl Drop for VideoWriter {
     fn drop(&mut self) {
         // Ensure pipeline is stopped to avoid GStreamer resource leaks
         // This handles cases where finish() was not called (e.g., error paths)
+        let _ = self.pipeline.set_state(gst::State::Null);
+    }
+}
+
+// ============================================================================
+// Pre-roll Video Encoder (continuous encoding during pre-roll)
+// ============================================================================
+
+/// Shared output state for the pre-roll video encoder.
+///
+/// The GStreamer appsink callback and main code share this via `Arc<Mutex<>>`.
+/// During pre-roll, encoded frames accumulate in a time-bounded ring buffer.
+/// When recording starts, the ring buffer is drained to a `VideoWriter` and
+/// subsequent encoded frames are routed directly to that writer.
+struct PrerollEncoderOutput {
+    /// Ring buffer of encoded frames (trimmed by time)
+    buffer: std::collections::VecDeque<BufferedFrame>,
+    /// Maximum pre-roll duration
+    max_duration: Duration,
+    /// Current buffer size in bytes
+    current_bytes: usize,
+    /// When Some, encoded frames are routed here instead of the ring buffer
+    active_writer: Option<VideoWriter>,
+    /// PTS offset for normalizing timestamps in the writer
+    pts_offset: Option<u64>,
+    /// Target codec (needed for VideoWriter creation)
+    target_codec: crate::encoding::VideoCodec,
+}
+
+impl PrerollEncoderOutput {
+    fn new(max_duration_secs: u32, target_codec: crate::encoding::VideoCodec) -> Self {
+        Self {
+            buffer: std::collections::VecDeque::new(),
+            max_duration: Duration::from_secs(max_duration_secs as u64),
+            current_bytes: 0,
+            active_writer: None,
+            pts_offset: None,
+            target_codec,
+        }
+    }
+    
+    /// Push an encoded frame. Routes to either the ring buffer or the active writer.
+    fn push_encoded_frame(&mut self, frame: BufferedFrame) {
+        if let Some(ref mut writer) = self.active_writer {
+            // Recording active: write to file
+            if let Err(e) = writer.write_frame(&frame, self.pts_offset) {
+                println!("[PrerollEncoder] Warning: Failed to write frame to writer: {}", e);
+            }
+        } else {
+            // Pre-roll phase: add to ring buffer
+            self.current_bytes += frame.data.len();
+            self.buffer.push_back(frame);
+            self.trim();
+        }
+    }
+    
+    fn trim(&mut self) {
+        let cutoff = Instant::now() - self.max_duration;
+        while let Some(front) = self.buffer.front() {
+            if front.wall_time < cutoff {
+                if let Some(removed) = self.buffer.pop_front() {
+                    self.current_bytes = self.current_bytes.saturating_sub(removed.data.len());
+                }
+            } else {
+                break;
+            }
+        }
+    }
+    
+    /// Drain all buffered encoded frames (for recording start)
+    fn drain(&mut self) -> Vec<BufferedFrame> {
+        self.current_bytes = 0;
+        self.buffer.drain(..).collect()
+    }
+    
+    /// Duration of buffered content
+    fn duration(&self) -> Duration {
+        if self.buffer.is_empty() {
+            return Duration::ZERO;
+        }
+        let first = self.buffer.front().unwrap();
+        let last = self.buffer.back().unwrap();
+        last.wall_time.duration_since(first.wall_time)
+    }
+}
+
+/// Continuously encodes raw video frames during pre-roll.
+///
+/// Runs a GStreamer pipeline (`appsrc -> queue -> videoconvert -> encoder -> appsink`)
+/// on its own streaming thread. Encoded frames are stored in a shared ring buffer
+/// until recording starts, then seamlessly routed to a file writer.
+///
+/// This trades CPU/GPU compute for dramatically reduced memory usage, allowing
+/// pre-roll durations up to 30 seconds even at high resolutions.
+struct PrerollVideoEncoder {
+    /// GStreamer encoding pipeline
+    pipeline: gst::Pipeline,
+    /// AppSrc for pushing raw frames
+    appsrc: gst_app::AppSrc,
+    /// Shared output state (ring buffer / active writer)
+    output: Arc<Mutex<PrerollEncoderOutput>>,
+}
+
+impl PrerollVideoEncoder {
+    fn new(
+        width: u32,
+        height: u32,
+        fps: u32,
+        target_codec: crate::encoding::VideoCodec,
+        preset_level: u8,
+        max_preroll_secs: u32,
+    ) -> Result<Self> {
+        use crate::encoding::encoder::{
+            AsyncVideoEncoder, EncoderConfig,
+            detect_best_encoder_for_codec,
+        };
+        
+        let hw_type = detect_best_encoder_for_codec(target_codec);
+        println!("[PrerollEncoder] Using {} for {} encoding (pre-roll)", 
+            hw_type.display_name(), target_codec.display_name());
+        
+        let config = EncoderConfig {
+            keyframe_interval: fps * 2,
+            target_codec,
+            preset_level,
+        };
+        
+        // Create the common pipeline start (appsrc, queue, videoconvert)
+        let (pipeline, appsrc, queue, videoconvert) = 
+            AsyncVideoEncoder::create_common_pipeline_start(width, height, fps)
+                .map_err(|e| VideoError::Pipeline(format!("PrerollEncoder pipeline: {}", e)))?;
+        
+        // Create encoder element based on target codec
+        let encoder = match target_codec {
+            crate::encoding::VideoCodec::Av1 => AsyncVideoEncoder::create_av1_encoder(hw_type, &config),
+            crate::encoding::VideoCodec::Vp8 => AsyncVideoEncoder::create_vp8_encoder(hw_type, &config),
+            crate::encoding::VideoCodec::Vp9 => AsyncVideoEncoder::create_vp9_encoder(hw_type, &config),
+            _ => return Err(VideoError::Pipeline(format!(
+                "Unsupported codec for preroll encoding: {:?}", target_codec
+            ))),
+        }.map_err(|e| VideoError::Pipeline(format!("PrerollEncoder encoder: {}", e)))?;
+        
+        // Create appsink for encoded output
+        let appsink = gst_app::AppSink::builder()
+            .name("enc_sink")
+            .sync(false)
+            .build();
+        
+        // Add all elements to pipeline
+        pipeline.add_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, appsink.upcast_ref()])
+            .map_err(|e| VideoError::Pipeline(format!("Failed to add PrerollEncoder elements: {}", e)))?;
+        
+        // Link: appsrc -> queue -> videoconvert -> encoder -> appsink
+        gst::Element::link_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, appsink.upcast_ref()])
+            .map_err(|e| VideoError::Pipeline(format!("Failed to link PrerollEncoder elements: {}", e)))?;
+        
+        // Create shared output
+        let output = Arc::new(Mutex::new(PrerollEncoderOutput::new(max_preroll_secs, target_codec)));
+        
+        // Set up appsink callback to route encoded frames
+        let output_clone = output.clone();
+        appsink.set_callbacks(
+            gst_app::AppSinkCallbacks::builder()
+                .new_sample(move |sink| {
+                    match sink.pull_sample() {
+                        Ok(sample) => {
+                            if let Some(buffer) = sample.buffer() {
+                                let pts = buffer.pts().map(|t| t.nseconds()).unwrap_or(0);
+                                let duration = buffer.duration().map(|t| t.nseconds()).unwrap_or(33_333_333);
+                                
+                                if let Ok(map) = buffer.map_readable() {
+                                    let data = map.as_slice().to_vec();
+                                    let frame = BufferedFrame {
+                                        data,
+                                        pts,
+                                        duration,
+                                        wall_time: Instant::now(),
+                                        pixel_format: None, // Encoded, no pixel format
+                                    };
+                                    output_clone.lock().push_encoded_frame(frame);
+                                }
+                            }
+                            Ok(gst::FlowSuccess::Ok)
+                        }
+                        Err(_) => Err(gst::FlowError::Error),
+                    }
+                })
+                .build()
+        );
+        
+        // Start the pipeline
+        pipeline.set_state(gst::State::Playing)
+            .map_err(|e| VideoError::Pipeline(format!("Failed to start PrerollEncoder: {:?}", e)))?;
+        
+        println!("[PrerollEncoder] Pipeline started ({}x{} @ {}fps -> {})", 
+            width, height, fps, target_codec.display_name());
+        
+        Ok(Self {
+            pipeline,
+            appsrc,
+            output,
+        })
+    }
+    
+    /// Push a raw frame to be encoded.
+    /// Non-blocking: if the pipeline can't accept the frame, it is silently dropped.
+    fn push_frame(&self, frame: &BufferedFrame) {
+        let mut buffer = gst::Buffer::from_slice(frame.data.clone());
+        {
+            let buffer_ref = buffer.get_mut().unwrap();
+            buffer_ref.set_pts(gst::ClockTime::from_nseconds(frame.pts));
+            buffer_ref.set_duration(gst::ClockTime::from_nseconds(frame.duration));
+        }
+        
+        // Push to the encoder pipeline; if the pipeline is full the frame is dropped
+        if let Err(e) = self.appsrc.push_buffer(buffer) {
+            println!("[PrerollEncoder] Warning: Failed to push frame: {:?}", e);
+        }
+    }
+    
+}
+
+impl Drop for PrerollVideoEncoder {
+    fn drop(&mut self) {
         let _ = self.pipeline.set_state(gst::State::Null);
     }
 }
@@ -557,6 +787,9 @@ impl VideoCapturePipeline {
             consecutive_full_drops: 0,
             total_frames_dropped: 0,
             preset_level: crate::encoding::DEFAULT_PRESET,
+            encode_during_preroll: false,
+            preroll_encoder: None,
+            preroll_encoder_output: None,
         })
     }
     
@@ -573,6 +806,7 @@ impl VideoCapturePipeline {
         device_name_hint: &str, 
         pre_roll_secs: u32,
         encoding_mode: VideoEncodingMode,
+        encode_during_preroll: bool,
     ) -> Result<Self> {
         // Initialize GStreamer if not already done
         gst::init().map_err(|e| VideoError::Gst(e))?;
@@ -671,12 +905,13 @@ impl VideoCapturePipeline {
         
         println!("[Video] RAW capture pipeline created for {} (device {})", device_name, device_index);
         
-        // Create pre-roll buffer with byte limit sized for raw video up to 8K.
-        // The time-based trim (max 5 seconds) is the primary size control; this
-        // byte limit is a safety cap to prevent unbounded memory if timestamps
-        // are broken. Sized for worst case: 8K NV12 @ 60fps ≈ 3 GB/sec.
+        // Create pre-roll buffer for raw frames.
+        // When encode_during_preroll is active, this is just a 1-second staging buffer
+        // that poll() drains every ~10ms to feed the continuous encoder.
+        // When inactive, this is the full pre-roll buffer sized for raw video up to 8K.
         const RAW_BYTES_PER_SEC: usize = 3840 * 2160 * 3 / 2 * 60;
-        let preroll_buffer = Arc::new(Mutex::new(VideoPrerollBuffer::with_byte_rate(pre_roll_secs, RAW_BYTES_PER_SEC)));
+        let raw_buffer_secs = if encode_during_preroll { 1 } else { pre_roll_secs };
+        let preroll_buffer = Arc::new(Mutex::new(VideoPrerollBuffer::with_byte_rate(raw_buffer_secs, RAW_BYTES_PER_SEC)));
         
         // Set up appsink callback to fill pre-roll buffer
         let preroll_clone = preroll_buffer.clone();
@@ -748,6 +983,9 @@ impl VideoCapturePipeline {
             consecutive_full_drops: 0,
             total_frames_dropped: 0,
             preset_level: crate::encoding::DEFAULT_PRESET,
+            encode_during_preroll,
+            preroll_encoder: None,          // Created in start() after cap negotiation
+            preroll_encoder_output: None,   // Created in start() after cap negotiation
         })
     }
     
@@ -774,6 +1012,39 @@ impl VideoCapturePipeline {
                         .unwrap_or(30);
                     
                     println!("[Video]   Negotiated: {}x{} @ {}fps", self.width, self.height, self.fps);
+                }
+            }
+        }
+        
+        // Create the pre-roll encoder if encode_during_preroll is active.
+        // This must happen after cap negotiation so we know the actual dimensions.
+        if self.encode_during_preroll && self.codec == crate::encoding::VideoCodec::Raw {
+            // Drop any previous encoder (e.g., from a previous start/stop cycle)
+            self.preroll_encoder = None;
+            self.preroll_encoder_output = None;
+            
+            let target_codec = match self.encoding_mode {
+                VideoEncodingMode::Av1 => crate::encoding::VideoCodec::Av1,
+                VideoEncodingMode::Vp9 => crate::encoding::VideoCodec::Vp9,
+                VideoEncodingMode::Vp8 => crate::encoding::VideoCodec::Vp8,
+                VideoEncodingMode::Raw => crate::encoding::VideoCodec::Vp8, // Fallback
+            };
+            
+            match PrerollVideoEncoder::new(
+                self.width, self.height, self.fps,
+                target_codec, self.preset_level,
+                MAX_PRE_ROLL_SECS_ENCODED,
+            ) {
+                Ok(encoder) => {
+                    let output = encoder.output.clone();
+                    self.preroll_encoder = Some(encoder);
+                    self.preroll_encoder_output = Some(output);
+                    println!("[Video] PrerollVideoEncoder started for {} ({}x{} @ {}fps -> {})", 
+                        self.device_name, self.width, self.height, self.fps, target_codec.display_name());
+                }
+                Err(e) => {
+                    println!("[Video] Warning: Failed to create PrerollVideoEncoder: {}. Falling back to raw pre-roll.", e);
+                    self.encode_during_preroll = false;
                 }
             }
         }
@@ -828,7 +1099,56 @@ impl VideoCapturePipeline {
         self.pts_offset = preroll_frames.first().map(|f| f.pts);
         
         // Handle raw vs pre-encoded video differently
-        if self.codec == crate::encoding::VideoCodec::Raw {
+        if self.encode_during_preroll && self.preroll_encoder_output.is_some() {
+            // ── Encode-during-preroll path ──────────────────────────────────
+            // The PrerollVideoEncoder has been continuously encoding. We drain
+            // its encoded ring buffer, write those frames to a new VideoWriter,
+            // then switch the encoder's output to the writer for live frames.
+            let target_codec = self.preroll_encoder_output.as_ref().unwrap().lock().target_codec;
+            
+            // Create the writer OUTSIDE the lock (pipeline creation takes a moment)
+            let mut writer = VideoWriter::new(&output_path, target_codec, self.width, self.height, self.fps)?;
+            
+            // Lock the output, drain, write pre-roll, and atomically switch to recording
+            let mut output = self.preroll_encoder_output.as_ref().unwrap().lock();
+            let encoded_frames = output.drain();
+            
+            // Calculate pre-roll duration from encoded frames
+            let preroll_duration = encoded_frames.first()
+                .map(|f| f.wall_time.elapsed())
+                .unwrap_or(Duration::ZERO);
+            
+            println!("[Video] Encode-during-preroll: {} encoded frames in ring buffer ({:?})", 
+                encoded_frames.len(), preroll_duration);
+            
+            // Set PTS offset from the first encoded pre-roll frame
+            let pts_offset = encoded_frames.first().map(|f| f.pts);
+            output.pts_offset = pts_offset;
+            
+            // Write all pre-roll frames to the writer
+            for frame in &encoded_frames {
+                if let Err(e) = writer.write_frame(frame, pts_offset) {
+                    println!("[Video] Warning: Failed to write pre-roll encoded frame: {}", e);
+                }
+            }
+            
+            // Switch: new encoded frames from the appsink callback go to the writer
+            output.active_writer = Some(writer);
+            drop(output); // Explicitly release the lock
+            
+            self.raw_encoder = None;
+            self.file_writer = None; // Writer is inside PrerollEncoderOutput
+            self.recording_path = Some(output_path);
+            self.recording_start = Some(Instant::now());
+            self.frames_written = encoded_frames.len() as u64;
+            self.is_recording = true;
+            self.consecutive_full_drops = 0;
+            self.total_frames_dropped = 0;
+            
+            println!("[Video] Started recording (encode-during-preroll), pre-roll: {:?}", preroll_duration);
+            
+            return Ok(preroll_duration);
+        } else if self.codec == crate::encoding::VideoCodec::Raw {
             // Determine target codec based on encoding mode
             let target_codec = match self.encoding_mode {
                 VideoEncodingMode::Av1 => crate::encoding::VideoCodec::Av1,
@@ -910,7 +1230,34 @@ impl VideoCapturePipeline {
         // Drain any remaining frames from pre-roll buffer
         let remaining_frames = self.preroll_buffer.lock().drain();
         
-        let (duration, file_size) = if let Some(encoder) = self.raw_encoder.take() {
+        let (duration, file_size) = if self.encode_during_preroll && self.preroll_encoder_output.is_some() {
+            // ── Encode-during-preroll path ──────────────────────────────────
+            // Take the writer out of PrerollEncoderOutput (resumes ring buffer mode),
+            // then feed remaining raw frames and finalize the writer.
+            
+            // First, push remaining raw frames to the preroll encoder so they get encoded
+            if let Some(ref encoder) = self.preroll_encoder {
+                for frame in &remaining_frames {
+                    encoder.push_frame(frame);
+                }
+            }
+            
+            // Brief pause to let the encoder process the last frames
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            
+            // Take the writer out of the output (atomically switches back to ring buffer)
+            let writer = {
+                let mut output = self.preroll_encoder_output.as_ref().unwrap().lock();
+                output.active_writer.take()
+                // pts_offset is left as-is; it will be reset on next recording start
+            };
+            
+            if let Some(writer) = writer {
+                writer.finish()?
+            } else {
+                return Err(VideoError::Pipeline("No active writer in PrerollEncoderOutput".to_string()));
+            }
+        } else if let Some(encoder) = self.raw_encoder.take() {
             // Raw video with encoding
             let pixel_format = self.pixel_format.clone().unwrap_or_else(|| "NV12".to_string());
             
@@ -982,6 +1329,11 @@ impl VideoCapturePipeline {
     
     /// Get pre-roll buffer duration
     pub fn preroll_duration(&self) -> Duration {
+        if self.encode_during_preroll {
+            if let Some(ref output) = self.preroll_encoder_output {
+                return output.lock().duration();
+            }
+        }
         self.preroll_buffer.lock().duration()
     }
     
@@ -993,12 +1345,35 @@ impl VideoCapturePipeline {
     
     /// Set pre-roll duration
     pub fn set_preroll_duration(&self, secs: u32) {
-        self.preroll_buffer.lock().set_duration(secs);
+        if self.encode_during_preroll {
+            // Raw buffer stays at 1 second (staging only)
+            // Update the encoded pre-roll buffer's duration
+            if let Some(ref output) = self.preroll_encoder_output {
+                let clamped = secs.min(MAX_PRE_ROLL_SECS_ENCODED);
+                output.lock().max_duration = Duration::from_secs(clamped as u64);
+            }
+        } else {
+            self.preroll_buffer.lock().set_duration(secs);
+        }
     }
     
     /// Poll for new frames and write to file if recording
     /// This should be called periodically from a background thread
     pub fn poll(&mut self) -> Result<()> {
+        // When encode_during_preroll is active, we always drain the raw staging
+        // buffer and feed frames to the PrerollVideoEncoder -- whether recording
+        // or not. The encoder's appsink callback handles routing to the ring
+        // buffer (pre-roll) or the active VideoWriter (recording).
+        if self.encode_during_preroll {
+            if let Some(ref encoder) = self.preroll_encoder {
+                let frames = self.preroll_buffer.lock().drain();
+                for frame in &frames {
+                    encoder.push_frame(frame);
+                }
+            }
+            return Ok(());
+        }
+        
         if !self.is_recording {
             return Ok(());
         }
@@ -1100,6 +1475,8 @@ pub struct VideoCaptureManager {
     encoding_mode: VideoEncodingMode,
     /// Encoder quality preset level (1–5)
     preset_level: u8,
+    /// Whether to encode video during pre-roll (raw video only)
+    encode_during_preroll: bool,
 }
 
 impl VideoCaptureManager {
@@ -1116,12 +1493,18 @@ impl VideoCaptureManager {
             is_recording: false,
             encoding_mode: VideoEncodingMode::Av1,
             preset_level: crate::encoding::DEFAULT_PRESET,
+            encode_during_preroll: false,
         }
     }
     
     /// Set the encoding mode for raw video
     pub fn set_encoding_mode(&mut self, mode: VideoEncodingMode) {
         self.encoding_mode = mode;
+    }
+    
+    /// Set whether to encode video during pre-roll (raw video only)
+    pub fn set_encode_during_preroll(&mut self, enabled: bool) {
+        self.encode_during_preroll = enabled;
     }
     
     /// Set the encoder quality preset level (1–5) for raw video encoding.
@@ -1156,6 +1539,7 @@ impl VideoCaptureManager {
                     device_name, 
                     self.pre_roll_secs,
                     self.encoding_mode.clone(),
+                    self.encode_during_preroll,
                 )
             } else {
                 // Pre-encoded video - use passthrough pipeline

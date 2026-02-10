@@ -90,6 +90,12 @@ pub struct Config {
     #[serde(default)]
     pub encoder_preset_levels: HashMap<String, u8>,
     
+    /// Whether to encode video during pre-roll (trades CPU/GPU compute for memory).
+    /// When enabled, the pre-roll limit increases from 5 to 30 seconds.
+    /// Only affects raw video sources; passthrough (MJPEG etc.) is already encoded.
+    #[serde(default)]
+    pub encode_during_preroll: bool,
+    
     /// Device presets
     pub device_presets: Vec<DevicePreset>,
     
@@ -215,6 +221,7 @@ impl Default for Config {
             selected_video_devices: Vec::new(),
             video_device_codecs: HashMap::new(),
             encoder_preset_levels: HashMap::new(),
+            encode_during_preroll: false,
             device_presets: Vec::new(),
             current_preset: None,
         }

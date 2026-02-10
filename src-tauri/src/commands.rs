@@ -584,7 +584,8 @@ pub fn update_config(
             || current.selected_video_devices != new_config.selected_video_devices
             || current.video_device_codecs != new_config.video_device_codecs
             || current.selected_audio_devices != new_config.selected_audio_devices
-            || current.pre_roll_secs != new_config.pre_roll_secs;
+            || current.pre_roll_secs != new_config.pre_roll_secs
+            || current.encode_during_preroll != new_config.encode_during_preroll;
         let preset_changed = current.encoder_preset_levels != new_config.encoder_preset_levels
             || current.video_encoding_mode != new_config.video_encoding_mode;
         (dev_changed, preset_changed)
@@ -1276,6 +1277,7 @@ async fn run_auto_select_test(
         device_name,
         2, // minimal pre-roll
         encoding_mode.clone(),
+        false, // Don't encode during pre-roll for auto-select tests
     ).map_err(|e| format!("Failed to create test pipeline: {}", e))?;
     
     // Start capture
@@ -1434,4 +1436,121 @@ pub fn set_all_users_autostart(enabled: bool) -> Result<(), String> {
 #[tauri::command]
 pub fn simulate_crash() {
     std::process::abort();
+}
+
+// ============================================================================
+// App Stats Commands
+// ============================================================================
+
+#[derive(Serialize)]
+pub struct AppStats {
+    /// Process CPU usage percentage (0-100+, may exceed 100 on multi-core)
+    pub cpu_percent: f32,
+    /// Process resident set size (physical memory) in bytes
+    pub memory_bytes: u64,
+    /// Total size of all files in the recordings folder, in bytes
+    pub storage_used_bytes: u64,
+    /// Free space on the disk containing the recordings folder, in bytes
+    pub disk_free_bytes: u64,
+}
+
+/// Get current app resource usage: CPU%, RAM, storage used, and disk free space.
+///
+/// CPU/RAM are read from sysinfo (per-process). Storage and disk stats run on
+/// a blocking thread via `spawn_blocking` to avoid stalling the async runtime.
+#[tauri::command]
+pub async fn get_app_stats(
+    config: State<'_, RwLock<Config>>,
+    sys_state: State<'_, Mutex<sysinfo::System>>,
+) -> Result<AppStats, String> {
+    // --- CPU & RAM (fast, in-process) ---
+    let pid = sysinfo::get_current_pid().map_err(|e| e.to_string())?;
+    let num_cpus = std::thread::available_parallelism()
+        .map(|n| n.get() as f32)
+        .unwrap_or(1.0);
+    let (cpu_percent, memory_bytes) = {
+        let mut sys = sys_state.lock();
+        sys.refresh_processes(
+            sysinfo::ProcessesToUpdate::Some(&[pid]),
+            false,
+        );
+        let process = sys.process(pid);
+        match process {
+            // sysinfo reports per-core %, so 400% = 4 cores fully used.
+            // Normalize to total system capacity (0-100%).
+            Some(p) => (p.cpu_usage() / num_cpus, p.memory()),
+            None => (0.0, 0),
+        }
+    };
+
+    // --- Storage walk + disk free (potentially slow, run on blocking thread) ---
+    let storage_path = config.read().storage_path.clone();
+    let (storage_used_bytes, disk_free_bytes) = tokio::task::spawn_blocking(move || {
+        let used = dir_size_recursive(&storage_path);
+        let free = disk_free_space(&storage_path);
+        (used, free)
+    })
+    .await
+    .map_err(|e| format!("Stats task failed: {}", e))?;
+
+    Ok(AppStats {
+        cpu_percent,
+        memory_bytes,
+        storage_used_bytes,
+        disk_free_bytes,
+    })
+}
+
+/// Recursively walk a directory and sum up all file sizes.
+fn dir_size_recursive(path: &std::path::Path) -> u64 {
+    let mut total: u64 = 0;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let ft = match entry.file_type() {
+                Ok(ft) => ft,
+                Err(_) => continue,
+            };
+            if ft.is_dir() {
+                total += dir_size_recursive(&entry.path());
+            } else if ft.is_file() {
+                total += entry.metadata().map(|m| m.len()).unwrap_or(0);
+            }
+        }
+    }
+    total
+}
+
+/// Find the disk that contains `path` and return its available space.
+fn disk_free_space(path: &std::path::Path) -> u64 {
+    use sysinfo::Disks;
+    let disks = Disks::new_with_refreshed_list();
+
+    // On Windows, std::fs::canonicalize returns \\?\C:\... (UNC prefix) but
+    // sysinfo mount points are plain C:\. Strip the prefix so starts_with works.
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let canonical_str = canonical.to_string_lossy();
+    let clean_path = if canonical_str.starts_with(r"\\?\") {
+        std::path::PathBuf::from(&canonical_str[4..])
+    } else {
+        canonical
+    };
+
+    // Find the disk whose mount point is the longest prefix of our path
+    let mut best_mount: Option<&std::path::Path> = None;
+    let mut best_free: u64 = 0;
+
+    for disk in disks.list() {
+        let mount = disk.mount_point();
+        if clean_path.starts_with(mount) {
+            let is_better = match best_mount {
+                None => true,
+                Some(prev) => mount.as_os_str().len() > prev.as_os_str().len(),
+            };
+            if is_better {
+                best_mount = Some(mount);
+                best_free = disk.available_space();
+            }
+        }
+    }
+    best_free
 }

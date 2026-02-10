@@ -111,13 +111,6 @@ impl VideoDevice {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum VideoDeviceType {
-    Webcam,
-    Screen,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Resolution {
     pub width: u32,

@@ -1,12 +1,12 @@
 <script lang="ts">
   import { settings, saveSettings, saveSettingsDebounced, saveStatus } from '$lib/stores/settings';
   import { open } from '@tauri-apps/plugin-dialog';
-  import type { Config, EncoderAvailability, AutoSelectProgress, AutostartInfo } from '$lib/api';
-  import { getEncoderAvailability, autoSelectEncoderPreset, getAutostartInfo, setAllUsersAutostart } from '$lib/api';
+  import type { Config, EncoderAvailability, AutoSelectProgress, AutostartInfo, AppStats } from '$lib/api';
+  import { getEncoderAvailability, autoSelectEncoderPreset, getAutostartInfo, setAllUsersAutostart, getAppStats } from '$lib/api';
   import { listen } from '@tauri-apps/api/event';
   import { invoke } from '@tauri-apps/api/core';
-  import { onMount } from 'svelte';
-    import { recordingState } from '$lib/stores/recording';
+  import { onMount, onDestroy } from 'svelte';
+  import { recordingState } from '$lib/stores/recording';
   
   // Local editable copy
   let localSettings = $state<Config | null>(null);
@@ -23,6 +23,32 @@
   // All-users autostart state
   let autostartInfo = $state<AutostartInfo | null>(null);
   let allUsersToggling = $state(false);
+  
+  // App stats (CPU, RAM, Storage)
+  let appStats = $state<AppStats | null>(null);
+  let statsInterval: ReturnType<typeof setInterval> | null = null;
+  
+  /** Format bytes as GB with 1 decimal place (e.g. "0.2 GB", "62.7 GB") */
+  function formatGB(bytes: number): string {
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  }
+  
+  async function fetchStats() {
+    try {
+      appStats = await getAppStats();
+    } catch (e) {
+      // Silently ignore - stats are non-critical
+    }
+  }
+  
+  onMount(() => {
+    fetchStats();
+    statsInterval = setInterval(fetchStats, 1000);
+  });
+  
+  onDestroy(() => {
+    if (statsInterval) clearInterval(statsInterval);
+  });
   
   // Preset labels
   const presetLabels: Record<number, string> = {
@@ -151,7 +177,8 @@
     
     // Clamp numeric values to valid ranges
     localSettings.idle_timeout_secs = Math.max(2, Math.min(30, localSettings.idle_timeout_secs));
-    localSettings.pre_roll_secs = Math.max(0, Math.min(30, localSettings.pre_roll_secs));
+    const preRollMax = localSettings.encode_during_preroll ? 30 : 5;
+    localSettings.pre_roll_secs = Math.max(0, Math.min(preRollMax, localSettings.pre_roll_secs));
     
     saveSettingsDebounced(localSettings);
   }
@@ -177,28 +204,35 @@
 <div class="settings">
   <div class="settings-header">
     <h2>Settings</h2>
-    {#if $saveStatus === 'saving' || $saveStatus === 'saved'}
-      <div class="save-status" class:saving={$saveStatus === 'saving'} class:saved={$saveStatus === 'saved'}>
-        {#if $saveStatus === 'saving'}
-          <svg class="icon spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
-            <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>
-          </svg>
-          Saving...
-        {:else if $saveStatus === 'saved'}
-          <svg class="icon check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <polyline points="20 6 9 17 4 12"/>
-          </svg>
-          Saved
-        {/if}
-      </div>
-    {/if}
+    <div class="header-right">
+      {#if $saveStatus === 'saving' || $saveStatus === 'saved'}
+        <div class="save-status" class:saving={$saveStatus === 'saving'} class:saved={$saveStatus === 'saved'}>
+          {#if $saveStatus === 'saving'}
+            <svg class="icon spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>
+            </svg>
+            Saving...
+          {:else if $saveStatus === 'saved'}
+            <svg class="icon check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            Saved
+          {/if}
+        </div>
+      {/if}
+    </div>
   </div>
   
   {#if localSettings}
     <div class="settings-content">
       <section class="settings-section">
-        <h3>Recording</h3>
+        <div class="section-header">
+          <h3>Recording</h3>
+          {#if appStats}
+            <span class="section-stats" title="Sacho's current CPU and memory usage">CPU: {Math.round(appStats.cpu_percent)}% · RAM: {formatGB(appStats.memory_bytes)}</span>
+          {/if}
+        </div>
         <div class="setting-row">
           <label>
             <span class="setting-label">Auto-recording timeout</span>
@@ -225,13 +259,36 @@
             <input 
               type="number" 
               min="0" 
-              max="30"
+              max={localSettings.encode_during_preroll ? 30 : 5}
               bind:value={localSettings.pre_roll_secs}
               oninput={autoSaveDebounced}
             />
-            <span class="input-suffix">seconds</span>
+            <span class="input-suffix">seconds (max {localSettings.encode_during_preroll ? 30 : 5})</span>
           </div>
         </div>
+        {#if localSettings.selected_video_devices.length > 0 && localSettings.video_encoding_mode !== 'raw'}
+        <div class="setting-row">
+          <label>
+            <span class="setting-label">Encode during pre-roll</span>
+            <span class="setting-description">Encodes video in the background during pre-roll, trading compute for reduced memory. Increases the pre-roll limit to 30 seconds.</span>
+          </label>
+          <label class="toggle">
+            <input 
+              type="checkbox" 
+              bind:checked={localSettings.encode_during_preroll}
+              onchange={() => {
+                if (!localSettings) return;
+                // When disabling, clamp pre-roll back to 5 if needed
+                if (!localSettings.encode_during_preroll && localSettings.pre_roll_secs > 5) {
+                  localSettings.pre_roll_secs = 5;
+                }
+                autoSave();
+              }}
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        {/if}
         <div class="setting-row">
           <div class="setting-label-group">
             <span class="setting-label-with-help">
@@ -350,7 +407,12 @@
       </section>
       
       <section class="settings-section">
-        <h3>Storage</h3>
+        <div class="section-header">
+          <h3>Storage</h3>
+          {#if appStats}
+            <span class="section-stats" title="Size of the recordings folder, and remaining disk space on this system">Used {formatGB(appStats.storage_used_bytes)} · {formatGB(appStats.disk_free_bytes)} remaining</span>
+          {/if}
+        </div>
         <div class="setting-row">
           <label>
             <span class="setting-label">Recording Location</span>
@@ -409,7 +471,7 @@
               {/if}
               <p class="advanced-field-description">
                 {#if (localSettings.audio_format === 'wav' ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === 'int16'}
-                  Smallest files. Not optimal if your audio has high dynamic range (both very quiet and very loud sections in the same recording).
+                  Smallest files. Not optimal if there's very quiet sounds you plan on boosting the volume of later.
                 {:else if (localSettings.audio_format === 'wav' ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === 'int24'}
                   Studio quality. Wide compatibility.
                 {:else}
@@ -589,6 +651,36 @@
     color: #c9a962;
     animation: fadeOut 2s ease forwards;
     animation-delay: 1s;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 1.25rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+
+  .settings-section .section-header > h3 {
+    margin: 0;
+    padding: 0;
+    border: none;
+  }
+
+  .section-stats {
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
+    font-size: 0.5625rem;
+    color: #525252;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    cursor: help;
   }
   
   @keyframes spin {
@@ -1131,6 +1223,14 @@
   /* Light mode overrides */
   :global(body.light-mode) .settings-header h2 {
     color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .section-header {
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .section-stats {
+    color: #8a8a8a;
   }
 
   :global(body.light-mode) .settings-section {
