@@ -150,7 +150,7 @@
     if (!localSettings) return;
     
     // Clamp numeric values to valid ranges
-    localSettings.idle_timeout_secs = Math.max(5, Math.min(30, localSettings.idle_timeout_secs));
+    localSettings.idle_timeout_secs = Math.max(2, Math.min(30, localSettings.idle_timeout_secs));
     localSettings.pre_roll_secs = Math.max(0, Math.min(30, localSettings.pre_roll_secs));
     
     saveSettingsDebounced(localSettings);
@@ -207,7 +207,7 @@
           <div class="input-with-suffix">
             <input 
               type="number" 
-              min="5" 
+              min="2" 
               max="30"
               bind:value={localSettings.idle_timeout_secs}
               oninput={autoSaveDebounced}

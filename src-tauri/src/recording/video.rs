@@ -70,9 +70,15 @@ pub struct VideoPrerollBuffer {
 }
 
 impl VideoPrerollBuffer {
+    /// Create a new pre-roll buffer for compressed video (MJPEG, H.264, etc.)
     pub fn new(max_duration_secs: u32) -> Self {
         // Estimate ~5MB/sec for compressed video (MJPEG at 720p30)
-        let bytes_per_sec = 5 * 1024 * 1024;
+        Self::with_byte_rate(max_duration_secs, 5 * 1024 * 1024)
+    }
+    
+    /// Create a new pre-roll buffer with a custom byte rate estimate.
+    /// Use this for raw video where frame sizes are much larger than compressed.
+    pub fn with_byte_rate(max_duration_secs: u32, bytes_per_sec: usize) -> Self {
         let max_bytes = bytes_per_sec * max_duration_secs as usize;
         
         Self {
@@ -191,9 +197,11 @@ pub struct VideoCapturePipeline {
 struct VideoWriter {
     pipeline: gst::Pipeline,
     appsrc: gst_app::AppSrc,
-    start_time: Instant,
     codec: crate::encoding::VideoCodec,
     output_path: PathBuf,
+    /// Tracks the end of the last written frame (PTS + duration, in nanoseconds)
+    /// for accurate content duration reporting.
+    last_pts_end_ns: u64,
 }
 
 impl VideoWriter {
@@ -290,19 +298,26 @@ impl VideoWriter {
         Ok(Self {
             pipeline,
             appsrc,
-            start_time: Instant::now(),
             codec,
             output_path: path.clone(),
+            last_pts_end_ns: 0,
         })
     }
     
-    fn write_frame(&self, frame: &BufferedFrame, pts_offset: Option<u64>) -> Result<()> {
+    fn write_frame(&mut self, frame: &BufferedFrame, pts_offset: Option<u64>) -> Result<()> {
         let offset = pts_offset.unwrap_or(frame.pts);
+        let normalized_pts = frame.pts.saturating_sub(offset);
         let mut buffer = gst::Buffer::from_slice(frame.data.clone());
         {
             let buffer_ref = buffer.get_mut().unwrap();
-            buffer_ref.set_pts(gst::ClockTime::from_nseconds(frame.pts.saturating_sub(offset)));
+            buffer_ref.set_pts(gst::ClockTime::from_nseconds(normalized_pts));
             buffer_ref.set_duration(gst::ClockTime::from_nseconds(frame.duration));
+        }
+        
+        // Track content duration
+        let pts_end = normalized_pts + frame.duration;
+        if pts_end > self.last_pts_end_ns {
+            self.last_pts_end_ns = pts_end;
         }
         
         self.appsrc.push_buffer(buffer)
@@ -312,7 +327,7 @@ impl VideoWriter {
     }
     
     fn finish(self) -> Result<(Duration, u64)> {
-        let duration = self.start_time.elapsed();
+        let content_duration = Duration::from_nanos(self.last_pts_end_ns);
         
         // Send EOS and wait for pipeline to finish
         let eos_result = self.appsrc.end_of_stream();
@@ -326,7 +341,7 @@ impl VideoWriter {
             // No bus available - still try to cleanup and return
             let _ = self.pipeline.set_state(gst::State::Null);
             let file_size = std::fs::metadata(&self.output_path).map(|m| m.len()).unwrap_or(0);
-            return Ok((duration, file_size));
+            return Ok((content_duration, file_size));
         };
         for msg in bus.iter_timed(gst::ClockTime::from_seconds(5)) {
             match msg.view() {
@@ -356,7 +371,7 @@ impl VideoWriter {
             .map(|m| m.len())
             .unwrap_or(0);
         
-        Ok((duration, file_size))
+        Ok((content_duration, file_size))
     }
 }
 
@@ -656,8 +671,12 @@ impl VideoCapturePipeline {
         
         println!("[Video] RAW capture pipeline created for {} (device {})", device_name, device_index);
         
-        // Create pre-roll buffer (larger for raw video)
-        let preroll_buffer = Arc::new(Mutex::new(VideoPrerollBuffer::new(pre_roll_secs)));
+        // Create pre-roll buffer with byte limit sized for raw video up to 8K.
+        // The time-based trim (max 5 seconds) is the primary size control; this
+        // byte limit is a safety cap to prevent unbounded memory if timestamps
+        // are broken. Sized for worst case: 8K NV12 @ 60fps ≈ 3 GB/sec.
+        const RAW_BYTES_PER_SEC: usize = 3840 * 2160 * 3 / 2 * 60;
+        let preroll_buffer = Arc::new(Mutex::new(VideoPrerollBuffer::with_byte_rate(pre_roll_secs, RAW_BYTES_PER_SEC)));
         
         // Set up appsink callback to fill pre-roll buffer
         let preroll_clone = preroll_buffer.clone();
@@ -859,7 +878,7 @@ impl VideoCapturePipeline {
             self.file_writer = None;
         } else {
             // Pre-encoded video - use passthrough writer
-            let writer = VideoWriter::new(&output_path, self.codec, self.width, self.height, self.fps)?;
+            let mut writer = VideoWriter::new(&output_path, self.codec, self.width, self.height, self.fps)?;
             
             // Write pre-roll frames
             for frame in &preroll_frames {
@@ -918,8 +937,8 @@ impl VideoCapturePipeline {
             let stats = encoder.finish()
                 .map_err(|e| VideoError::Pipeline(format!("Failed to finish encoding: {}", e)))?;
             
-            (stats.encoding_duration, stats.bytes_written)
-        } else if let Some(writer) = self.file_writer.take() {
+            (stats.content_duration, stats.bytes_written)
+        } else if let Some(mut writer) = self.file_writer.take() {
             // Pre-encoded video
             for frame in &remaining_frames {
                 let _ = writer.write_frame(frame, self.pts_offset);
@@ -1045,7 +1064,7 @@ impl VideoCapturePipeline {
             } else if !frames.is_empty() {
                 self.consecutive_full_drops = 0;
             }
-        } else if let Some(ref writer) = self.file_writer {
+        } else if let Some(ref mut writer) = self.file_writer {
             // Pre-encoded video - write directly
             // Set pts_offset from first frame if not yet initialized (no pre-roll case)
             if self.pts_offset.is_none() {

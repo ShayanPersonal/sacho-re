@@ -414,6 +414,8 @@ pub struct EncoderStats {
     pub frames_encoded: u64,
     pub bytes_written: u64,
     pub encoding_duration: Duration,
+    /// Actual video content duration (from PTS of first to last frame)
+    pub content_duration: Duration,
     pub average_fps: f64,
 }
 
@@ -584,19 +586,33 @@ impl AsyncVideoEncoder {
         let mut frames_encoded = 0u64;
         let mut frames_dropped_stale = 0u64;
         let mut first_pts: Option<u64> = None;
+        // Track the end of the last encoded frame (PTS + duration) for content duration
+        let mut last_pts_end: u64 = 0;
         
         // Maximum age for a frame to be worth encoding. Frames older than this
         // were captured too long ago — encoding them would just create a backlog
         // that delays recording stop.
         let max_frame_age = Duration::from_millis(500);
         
+        // Track whether we've transitioned from pre-roll to live frames.
+        // Pre-roll frames are intentionally old (captured seconds before the
+        // recording trigger) and must NOT be dropped by the stale-frame check.
+        // Once we see a "fresh" frame (age < max_frame_age), we know pre-roll
+        // processing is complete and can start dropping genuinely stale frames.
+        let mut live_mode = false;
+        
         // Process frames from channel
         loop {
             match receiver.recv() {
                 Ok(EncoderMessage::Frame(frame)) => {
-                    // Drop frames that are too old (encoder can't keep up)
+                    // Drop frames that are too old (encoder can't keep up),
+                    // but only after we've finished processing pre-roll frames.
                     let age = frame.capture_time.elapsed();
-                    if age > max_frame_age && frames_encoded > 0 {
+                    if age <= max_frame_age {
+                        // Frame is fresh — pre-roll is done, enter live mode
+                        live_mode = true;
+                    }
+                    if age > max_frame_age && live_mode {
                         frames_dropped_stale += 1;
                         if frames_dropped_stale == 1 || frames_dropped_stale % 30 == 0 {
                             println!("[Encoder] Dropping stale frame (age: {:?}, {} total dropped)", 
@@ -619,6 +635,12 @@ impl AsyncVideoEncoder {
                         let buffer_ref = buffer.get_mut().unwrap();
                         buffer_ref.set_pts(gst::ClockTime::from_nseconds(pts));
                         buffer_ref.set_duration(gst::ClockTime::from_nseconds(frame.duration));
+                    }
+                    
+                    // Track content duration from PTS
+                    let pts_end = pts + frame.duration;
+                    if pts_end > last_pts_end {
+                        last_pts_end = pts_end;
                     }
                     
                     // Push to encoder
@@ -707,6 +729,7 @@ impl AsyncVideoEncoder {
         };
         
         let encoding_duration = start_time.elapsed();
+        let content_duration = Duration::from_nanos(last_pts_end);
         let average_fps = if encoding_duration.as_secs_f64() > 0.0 {
             frames_encoded as f64 / encoding_duration.as_secs_f64()
         } else {
@@ -721,13 +744,14 @@ impl AsyncVideoEncoder {
             s.is_finished = true;
         }
         
-        println!("[Encoder] Finished: {} frames, {} bytes, {:.1} fps", 
-            frames_encoded, bytes_written, average_fps);
+        println!("[Encoder] Finished: {} frames, {} bytes, {:.1} fps, content: {:.2}s", 
+            frames_encoded, bytes_written, average_fps, content_duration.as_secs_f64());
         
         Ok(EncoderStats {
             frames_encoded,
             bytes_written,
             encoding_duration,
+            content_duration,
             average_fps,
         })
     }
@@ -891,14 +915,17 @@ impl AsyncVideoEncoder {
             .build();
         
         // Queue to decouple appsrc from encoder.
-        // leaky=downstream (2): when the queue is full, drop the OLDEST buffers
-        // to keep latency low. This prevents frame accumulation when the encoder
-        // can't keep up with real-time capture (e.g., software VP8 on slow CPUs).
+        // Must be large enough to hold the pre-roll burst (up to 5 seconds at
+        // up to 60fps = 300 frames). During live recording the queue stays
+        // nearly empty since frames arrive at camera rate, so these generous
+        // limits only matter for the initial pre-roll burst.
+        // leaky=downstream: if the encoder truly can't keep up, drop oldest
+        // frames rather than blocking the capture pipeline.
         let queue = gst::ElementFactory::make("queue")
-            .property("max-size-buffers", 3u32)     // Small buffer — just enough to decouple threads
-            .property("max-size-time", 500_000_000u64) // 500ms max latency
-            .property("max-size-bytes", 0u32)        // No byte limit
-            .property_from_str("leaky", "downstream")   // drop oldest when full
+            .property("max-size-buffers", 600u32)         // 2× max pre-roll at 60fps
+            .property("max-size-time", 10_000_000_000u64) // 10 seconds of PTS span
+            .property("max-size-bytes", 0u32)              // No byte limit
+            .property_from_str("leaky", "downstream")      // drop oldest when full
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create queue: {}", e)))?;
         
