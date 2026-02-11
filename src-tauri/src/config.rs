@@ -52,7 +52,7 @@ pub struct Config {
     /// Whether to start with system
     pub auto_start: bool,
     
-    /// Whether to start minimized to tray (when launched via autostart or --minimized)
+    /// Whether to hide the window when launched via autostart or crash recovery
     #[serde(default = "default_true")]
     pub start_minimized: bool,
     

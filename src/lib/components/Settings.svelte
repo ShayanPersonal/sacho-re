@@ -11,6 +11,7 @@
   // Local editable copy
   let localSettings = $state<Config | null>(null);
   let showRawVideoHelp = $state(false);
+  let showPrerollEncodeHelp = $state(false);
   let showAudioAdvanced = $state(false);
   let showEncoderAdvanced = $state(false);
   let encoderAvailability = $state<EncoderAvailability | null>(null);
@@ -95,27 +96,43 @@
     autoSave();
   }
   
-  // Handle all-users autostart toggle (triggers UAC prompt)
-  async function handleAllUsersToggle(event: Event) {
+  // Smart autostart toggle: uses HKLM (all-users) for per-machine installs,
+  // HKCU (per-user) for per-user installs.
+  function isAutostartEnabled(): boolean {
+    if (autostartInfo?.is_per_machine_install) {
+      return autostartInfo.all_users_autostart;
+    }
+    return localSettings?.auto_start ?? false;
+  }
+
+  async function handleAutostartToggle(event: Event) {
     const checkbox = event.target as HTMLInputElement;
     const newValue = checkbox.checked;
-    
-    // Immediately revert the checkbox while we try the elevated operation
-    checkbox.checked = !newValue;
-    allUsersToggling = true;
-    
-    try {
-      await setAllUsersAutostart(newValue);
-      // Success - update local state
-      checkbox.checked = newValue;
-      if (autostartInfo) {
+
+    if (autostartInfo?.is_per_machine_install) {
+      // Per-machine install: toggle HKLM (may trigger UAC)
+      checkbox.checked = !newValue; // revert while waiting
+      allUsersToggling = true;
+      try {
+        await setAllUsersAutostart(newValue);
+        checkbox.checked = newValue;
         autostartInfo = { ...autostartInfo, all_users_autostart: newValue };
+        // Also sync per-user config to match (disable per-user if all-users is on)
+        if (localSettings) {
+          localSettings.auto_start = false;
+          autoSave();
+        }
+      } catch (e) {
+        console.error('Failed to toggle autostart:', e);
+      } finally {
+        allUsersToggling = false;
       }
-    } catch (e) {
-      // UAC was cancelled or failed - checkbox stays reverted
-      console.error('Failed to toggle all-users autostart:', e);
-    } finally {
-      allUsersToggling = false;
+    } else {
+      // Per-user install: toggle HKCU via tauri-plugin-autostart
+      if (localSettings) {
+        localSettings.auto_start = newValue;
+        autoSave();
+      }
     }
   }
   
@@ -267,32 +284,44 @@
             {#if localSettings.pre_roll_secs === 0}
               <span class="input-suffix" style="margin-left: 0.25rem;">(turned off)</span>
             {/if}
+            {#if localSettings.selected_video_devices.length > 0 && localSettings.video_encoding_mode !== 'raw'}
+              <span style="flex: 1;"></span>
+              <label class="inline-checkbox" class:inline-checkbox-disabled={localSettings.pre_roll_secs === 0}>
+                <input 
+                  type="checkbox" 
+                  bind:checked={localSettings.encode_during_preroll}
+                  disabled={localSettings.pre_roll_secs === 0}
+                  onchange={() => {
+                    if (!localSettings) return;
+                    if (!localSettings.encode_during_preroll && localSettings.pre_roll_secs > 5) {
+                      localSettings.pre_roll_secs = 5;
+                    }
+                    autoSave();
+                  }}
+                />
+                <span class="input-suffix">Encode during pre-roll</span>
+              </label>
+              <span class="setting-label-with-help">
+                <button 
+                  class="help-btn" 
+                  onclick={() => showPrerollEncodeHelp = !showPrerollEncodeHelp}
+                  onblur={() => showPrerollEncodeHelp = false}
+                >
+                  ?
+                </button>
+                {#if showPrerollEncodeHelp}
+                  <div class="help-tooltip">
+                    Runs the video encoder during the pre-roll, reducing RAM usage but increasing CPU usage. Best used with hardware acceleration. <br><br>Increases the limit on the pre-roll length from 5 seconds to 30 seconds.
+                  </div>
+                {/if}
+              </span>
+            {/if}
           </div>
         </div>
-        {#if localSettings.selected_video_devices.length > 0 && localSettings.video_encoding_mode !== 'raw'}
-        <div class="setting-row">
-          <label class="checkbox-row">
-            <input 
-              type="checkbox" 
-              bind:checked={localSettings.encode_during_preroll}
-              onchange={() => {
-                if (!localSettings) return;
-                // When disabling, clamp pre-roll back to 5 if needed
-                if (!localSettings.encode_during_preroll && localSettings.pre_roll_secs > 5) {
-                  localSettings.pre_roll_secs = 5;
-                }
-                autoSave();
-              }}
-            />
-            <span class="setting-label">Encode during pre-roll</span>
-          </label>
-          <span class="setting-description">Encodes video during the pre-roll, reducing memory usage, but increasing CPU usage. Best used in conjunction with hardware acceleration. Increases max pre-roll length from 5 to 30 seconds.</span>
-        </div>
-        {/if}
         <div class="setting-row">
           <div class="setting-label-group">
             <span class="setting-label-with-help">
-              <span>Raw Video Handling</span>
+              <span>Video encoder</span>
               <button 
                 class="help-btn" 
                 onclick={() => showRawVideoHelp = !showRawVideoHelp}
@@ -471,11 +500,11 @@
               {/if}
               <p class="advanced-field-description">
                 {#if (localSettings.audio_format === 'wav' ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === 'int16'}
-                  Smallest files. Not optimal if there's very quiet sounds you plan on boosting the volume of later.
+                  Smallest files. Not optimal if you need to boost the volume of quiet sections.
                 {:else if (localSettings.audio_format === 'wav' ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === 'int24'}
                   Studio quality. Wide compatibility.
                 {:else}
-                  {localSettings.audio_format === 'flac' ? ' Very new. Many programs do not support 32-bit FLAC recordings. Use at your own risk.' : 'Good if the audio source is also 32-bit float. Otherwise just uses more disk space.'}
+                  {localSettings.audio_format === 'flac' ? ' Many programs do not support 32-bit FLAC recordings. Use at your own risk.' : 'Good if the audio source is also 32-bit float. Otherwise just uses more disk space.'}
                 {/if}
               </p>
             </div>
@@ -509,47 +538,30 @@
         </div>
 
       </section>
-      
       <section class="settings-section">
         <h3>System</h3>
         <div class="setting-row">
           <label class="checkbox-row">
             <input 
               type="checkbox" 
-              bind:checked={localSettings.auto_start}
-              onchange={autoSave}
+              checked={isAutostartEnabled()}
+              disabled={allUsersToggling}
+              onchange={handleAutostartToggle}
             />
-            <span class="setting-label">Start at system startup for current user <i>(recommended)</i></span>
+            <span class="setting-label">Start at system startup <i>(recommended)</i></span>
           </label>
-          {#if autostartInfo}
-          <label class="checkbox-row">
-            <input 
-              type="checkbox" 
-              checked={autostartInfo.all_users_autostart}
-              disabled={!autostartInfo.is_per_machine_install || allUsersToggling}
-              onchange={handleAllUsersToggle}
-            />
-            <span class="setting-label">
-              Start at system startup for all users
-              {#if autostartInfo.is_per_machine_install}
-                <i>(requires admin privileges)</i>
-              {:else}
-                <i class="disabled-hint">(requires app installed for all users)</i>
-              {/if}
-            </span>
-          </label>
-          {/if}
-          <label class="checkbox-row">
+
+          <p class="setting-recommendation">Ensures the application will start back up if the system restarts (such as for system updates). <b>You may have to log back in first if there's a login screen.</b></p>
+          <p class="setting-recommendation" style="margin-bottom: 0.7rem">To stop the application from running in the background, right-click the tray icon and select Quit. Note that your performances will not be recorded until the application is started again.</p>
+          <label class="checkbox-row" class:checkbox-row-disabled={!isAutostartEnabled()}>
             <input 
               type="checkbox" 
               bind:checked={localSettings.start_minimized}
+              disabled={!isAutostartEnabled()}
               onchange={autoSave}
             />
-            <span class="setting-label">Hide application window at startup</span>
+            <span class="setting-label">Hide application window at system startup</span>
           </label>
-          <p class="setting-recommendation">These settings ensure the application will start up again if your system restarts (such as for system updates). <b>On password-protected or multi-user systems, you may have to log back in before the app starts.</b></p>
-          <p class="setting-recommendation">To stop the application from running in the background, right-click the tray icon and select Quit. Note that your performances will not be recorded until the application is started again.</p>
-          
           <!--
           <button class="debug-crash-btn" onclick={() => invoke('simulate_crash')}>
             Simulate Crash (dev)
@@ -557,19 +569,9 @@
           -->
         </div>
       </section>
-      
       <section class="settings-section">
         <h3>Application</h3>
-        <div class="setting-row">
-          <label class="checkbox-row">
-            <input 
-              type="checkbox" 
-              bind:checked={localSettings.dark_mode}
-              onchange={autoSave}
-            />
-            <span class="setting-label">Dark color scheme</span>
-          </label>
-        </div>
+
         <div class="setting-row">
           <label class="checkbox-row">
             <input 
@@ -590,7 +592,19 @@
             <span class="setting-label">Notify when recording stops</span>
           </label>
         </div>
+        <div class="setting-row">
+          <label class="checkbox-row">
+            <input 
+              type="checkbox" 
+              bind:checked={localSettings.dark_mode}
+              onchange={autoSave}
+            />
+            <span class="setting-label">Dark color scheme</span>
+          </label>
+        </div>
       </section>
+      
+      
     </div>
   {:else}
     <div class="loading">Loading settings...</div>
@@ -737,6 +751,36 @@
   
   .setting-row:last-child {
     margin-bottom: 0;
+  }
+
+  .inline-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    color: #6b6b6b;
+    white-space: nowrap;
+  }
+
+  .inline-checkbox input {
+    accent-color: #c9a962;
+    width: 13px;
+    height: 13px;
+    margin: 0;
+  }
+
+  .inline-checkbox-disabled {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+
+  :global(body.light-mode) .inline-checkbox {
+    color: #888;
+  }
+
+  :global(body.light-mode) .inline-checkbox input {
+    accent-color: #a08030;
   }
   
   .setting-row > label:not(.checkbox-row) {
@@ -1124,10 +1168,6 @@
     cursor: pointer;
   }
   
-  .checkbox-row .disabled-hint {
-    color: #5a5a5a;
-  }
-
   .checkbox-row:has(input:disabled) {
     cursor:  not-allowed;
   }
@@ -1136,10 +1176,6 @@
     color: #5a5a5a;
   }
   
-  :global(body.light-mode) .checkbox-row .disabled-hint {
-    color: #999;
-  }
-
   :global(body.light-mode) .checkbox-row:has(input:disabled) .setting-label {
     color: #999;
   }
@@ -1166,7 +1202,7 @@
   .setting-label-with-help {
     display: flex;
     align-items: center;
-    gap: 0.375rem;
+    gap: 0.625rem;
     position: relative;
   }
   

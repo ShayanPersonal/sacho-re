@@ -168,7 +168,7 @@ pub fn write_hklm_autostart(enable: bool) {
             }
 
             if enable {
-                // Write the autostart entry with the exe path and --minimized flag
+                // Write the autostart entry with the exe path and --autostarted flag
                 let exe = match std::env::current_exe() {
                     Ok(e) => e,
                     Err(e) => {
@@ -177,7 +177,7 @@ pub fn write_hklm_autostart(enable: bool) {
                         return;
                     }
                 };
-                let value_data = format!("\"{}\" --minimized", exe.display());
+                let value_data = format!("\"{}\" --autostarted", exe.display());
                 let value_wide = to_wide(&value_data);
                 // Size in bytes, including the null terminator (already in to_wide)
                 let byte_size = (value_wide.len() * 2) as u32;

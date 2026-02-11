@@ -43,7 +43,7 @@ pub fn run() {
     #[cfg(windows)]
     {
         use windows_sys::Win32::System::Recovery::RegisterApplicationRestart;
-        let restart_args: Vec<u16> = "--minimized\0".encode_utf16().collect();
+        let restart_args: Vec<u16> = "--autostarted\0".encode_utf16().collect();
         unsafe { RegisterApplicationRestart(restart_args.as_ptr(), 0); }
     }
 
@@ -57,7 +57,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec!["--minimized"]),
+            Some(vec!["--autostarted"]),
         ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -83,12 +83,14 @@ pub fn run() {
             // Initialize config
             let config = config::Config::load_or_default(&app_handle);
             
-            // If launched with --minimized and config says to start minimized,
-            // hide the main window immediately (startup/crash recovery)
-            let started_minimized = std::env::args().any(|arg| arg == "--minimized");
-            if started_minimized && config.start_minimized {
+            // Window starts hidden (visible: false in tauri.conf.json) to prevent
+            // a flash on screen when auto-starting. Show it now unless the app
+            // was auto-started and the user wants to start hidden.
+            let was_autostarted = std::env::args().any(|arg| arg == "--autostarted");
+            let should_hide = was_autostarted && config.start_minimized;
+            if !should_hide {
                 if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.hide();
+                    let _ = window.show();
                 }
             }
             
