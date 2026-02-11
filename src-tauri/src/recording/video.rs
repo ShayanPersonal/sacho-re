@@ -1389,6 +1389,7 @@ impl VideoCapturePipeline {
             fps: self.fps,
             duration_secs: duration.as_secs_f64(),
             size_bytes: file_size,
+            has_audio: false,
         })
     }
     

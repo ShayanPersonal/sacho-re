@@ -12,6 +12,7 @@
   let localSettings = $state<Config | null>(null);
   let showRawVideoHelp = $state(false);
   let showPrerollEncodeHelp = $state(false);
+  let showCombineHelp = $state(false);
   let showAudioAdvanced = $state(false);
   let showEncoderAdvanced = $state(false);
   let encoderAvailability = $state<EncoderAvailability | null>(null);
@@ -157,6 +158,13 @@
   $effect(() => {
     if ($settings && !localSettings) {
       localSettings = { ...$settings };
+    } else if ($settings && localSettings) {
+      // Keep device selections in sync (they're managed by DevicePanel, not Settings)
+      localSettings.selected_audio_devices = $settings.selected_audio_devices;
+      localSettings.selected_midi_devices = $settings.selected_midi_devices;
+      localSettings.trigger_midi_devices = $settings.trigger_midi_devices;
+      localSettings.selected_video_devices = $settings.selected_video_devices;
+      localSettings.video_device_codecs = $settings.video_device_codecs;
     }
   });
   
@@ -536,6 +544,36 @@
           </div>
           {/if}
         </div>
+        <!--
+        <div class="setting-row" style="margin-bottom: 0.5rem;">
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <label class="checkbox-row">
+              <input 
+                type="checkbox" 
+                bind:checked={localSettings.combine_audio_video}
+                disabled={($settings?.selected_video_devices?.length ?? 0) !== 1 || ($settings?.selected_audio_devices?.length ?? 0) !== 1}
+                onchange={autoSave}
+              />
+              <span class="setting-label">Store audio and video as one file</span>
+            </label>
+            <span class="setting-label-with-help">
+              <button 
+                class="help-btn" 
+                onclick={() => showCombineHelp = !showCombineHelp}
+                onblur={() => showCombineHelp = false}
+              >
+                ?
+              </button>
+              {#if showCombineHelp}
+                <div class="help-tooltip help-tooltip-right">
+                  Stores audio and video as a single MKV file instead of separate files. <br><br>Available when exactly one audio source and one video source is selected.
+                </div>
+              {/if}
+            </span>
+          </div>
+        </div>
+        -->
+
 
       </section>
       <section class="settings-section">
@@ -551,7 +589,7 @@
             <span class="setting-label">Start at system startup <i>(recommended)</i></span>
           </label>
 
-          <p class="setting-recommendation">Ensures the application will start back up if the system restarts (such as for system updates). <b>You may have to log back in first if the system has a login screen.</b></p>
+          <p class="setting-recommendation">Ensures the application will start back up if the system restarts (such as for system updates). <b>You may have to log back in first, if your computer has a login screen.</b></p>
           <p class="setting-recommendation" style="margin-bottom: 0.7rem">To stop the application from running in the background, right-click the tray icon and select Quit. Note that your performances will not be recorded until the application is started again.</p>
           <label class="checkbox-row" class:checkbox-row-disabled={!isAutostartEnabled()}>
             <input 
@@ -1251,6 +1289,11 @@
     z-index: 100;
   }
   
+  .help-tooltip-right {
+    left: auto;
+    right: 0;
+  }
+
   .help-tooltip strong {
     color: #e8e6e3;
   }

@@ -78,6 +78,9 @@ pub struct VideoFileInfo {
     pub fps: u32,
     pub duration_secs: f64,
     pub size_bytes: u64,
+    /// Whether this MKV file contains an embedded audio track
+    #[serde(default)]
+    pub has_audio: bool,
 }
 
 /// Extracted MIDI features for similarity analysis
@@ -194,7 +197,8 @@ impl From<&SessionMetadata> for SessionSummary {
             id: meta.id.clone(),
             timestamp: meta.timestamp,
             duration_secs: meta.duration_secs,
-            has_audio: !meta.audio_files.is_empty(),
+            has_audio: !meta.audio_files.is_empty()
+                || meta.video_files.iter().any(|v| v.has_audio),
             has_midi: !meta.midi_files.is_empty(),
             has_video: !meta.video_files.is_empty(),
             audio_count: meta.audio_files.len(),

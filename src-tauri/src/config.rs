@@ -96,6 +96,12 @@ pub struct Config {
     #[serde(default)]
     pub encode_during_preroll: bool,
     
+    /// Whether to combine audio and video into a single MKV file.
+    /// When enabled (and exactly 1 video + 1 audio device are selected),
+    /// the separate audio file is muxed into the video MKV after recording stops.
+    #[serde(default)]
+    pub combine_audio_video: bool,
+    
     /// Device presets
     pub device_presets: Vec<DevicePreset>,
     
@@ -222,6 +228,7 @@ impl Default for Config {
             video_device_codecs: HashMap::new(),
             encoder_preset_levels: HashMap::new(),
             encode_during_preroll: false,
+            combine_audio_video: false,
             device_presets: Vec::new(),
             current_preset: None,
         }

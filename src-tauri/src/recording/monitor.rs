@@ -814,6 +814,158 @@ pub fn repair_video_file(file_path: &PathBuf) -> anyhow::Result<(f64, u64)> {
     Ok((duration_secs, size))
 }
 
+/// Combine a video MKV and an audio file into a single MKV with both tracks.
+/// The combined file replaces the original video file. Returns the new file size.
+pub fn combine_audio_video_mkv(
+    video_path: &PathBuf,
+    audio_path: &PathBuf,
+    audio_format: &crate::config::AudioFormat,
+) -> anyhow::Result<u64> {
+    use gstreamer as gst;
+    use gstreamer::prelude::*;
+    
+    println!("[Sacho] Combining audio+video into single MKV: {:?} + {:?}",
+        video_path.file_name().unwrap_or_default(),
+        audio_path.file_name().unwrap_or_default());
+    
+    let temp_path = video_path.with_extension("mkv.combine.tmp");
+    
+    // Build pipeline manually so we can handle dynamic pads from matroskademux
+    let pipeline = gst::Pipeline::new();
+    
+    // ── Video source: filesrc ! matroskademux (dynamic pads) ──
+    let video_filesrc = gst::ElementFactory::make("filesrc")
+        .property("location", video_path.to_string_lossy().to_string())
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create video filesrc: {}", e))?;
+    
+    let demux = gst::ElementFactory::make("matroskademux")
+        .name("demux")
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create matroskademux: {}", e))?;
+    
+    let video_queue = gst::ElementFactory::make("queue")
+        .name("vqueue")
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create video queue: {}", e))?;
+    
+    // ── Audio source: filesrc ! parser ──
+    let audio_filesrc = gst::ElementFactory::make("filesrc")
+        .property("location", audio_path.to_string_lossy().to_string())
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create audio filesrc: {}", e))?;
+    
+    let audio_parser_name = match audio_format {
+        crate::config::AudioFormat::Flac => "flacparse",
+        crate::config::AudioFormat::Wav => "wavparse",
+    };
+    let audio_parser = gst::ElementFactory::make(audio_parser_name)
+        .name("aparser")
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create {}: {}", audio_parser_name, e))?;
+    
+    let audio_queue = gst::ElementFactory::make("queue")
+        .name("aqueue")
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create audio queue: {}", e))?;
+    
+    // ── Muxer and sink ──
+    let mux = gst::ElementFactory::make("matroskamux")
+        .name("mux")
+        .property("writing-app", "Sacho")
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create matroskamux: {}", e))?;
+    
+    let filesink = gst::ElementFactory::make("filesink")
+        .property("location", temp_path.to_string_lossy().to_string())
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create filesink: {}", e))?;
+    
+    // Add all elements to the pipeline
+    pipeline.add_many([
+        &video_filesrc, &demux, &video_queue,
+        &audio_filesrc, &audio_parser, &audio_queue,
+        &mux, &filesink,
+    ]).map_err(|e| anyhow::anyhow!("Failed to add elements: {}", e))?;
+    
+    // Static links
+    video_filesrc.link(&demux)
+        .map_err(|e| anyhow::anyhow!("Failed to link video filesrc -> demux: {}", e))?;
+    video_queue.link(&mux)
+        .map_err(|e| anyhow::anyhow!("Failed to link video queue -> mux: {}", e))?;
+    audio_filesrc.link(&audio_parser)
+        .map_err(|e| anyhow::anyhow!("Failed to link audio filesrc -> parser: {}", e))?;
+    audio_parser.link(&audio_queue)
+        .map_err(|e| anyhow::anyhow!("Failed to link audio parser -> queue: {}", e))?;
+    audio_queue.link(&mux)
+        .map_err(|e| anyhow::anyhow!("Failed to link audio queue -> mux: {}", e))?;
+    mux.link(&filesink)
+        .map_err(|e| anyhow::anyhow!("Failed to link mux -> filesink: {}", e))?;
+    
+    // Handle dynamic pads from matroskademux (video stream)
+    let vqueue_weak = video_queue.downgrade();
+    demux.connect_pad_added(move |_demux, src_pad| {
+        let pad_name = src_pad.name();
+        // Only link video pads; the original MKV should only have video
+        if pad_name.starts_with("video") {
+            if let Some(queue) = vqueue_weak.upgrade() {
+                if let Some(sink_pad) = queue.static_pad("sink") {
+                    if !sink_pad.is_linked() {
+                        if let Err(e) = src_pad.link(&sink_pad) {
+                            println!("[Sacho] Warning: Failed to link demux video pad: {:?}", e);
+                        }
+                    }
+                }
+            }
+        } else {
+            println!("[Sacho] Ignoring demux pad: {} (only taking video)", pad_name);
+        }
+    });
+    
+    // Run the pipeline
+    pipeline.set_state(gst::State::Playing)
+        .map_err(|e| anyhow::anyhow!("Failed to start combine pipeline: {:?}", e))?;
+    
+    let bus = pipeline.bus().unwrap();
+    for msg in bus.iter_timed(gst::ClockTime::from_seconds(300)) {
+        match msg.view() {
+            gst::MessageView::Eos(..) => {
+                println!("[Sacho] Audio+video combine complete");
+                break;
+            }
+            gst::MessageView::Error(err) => {
+                pipeline.set_state(gst::State::Null).ok();
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(anyhow::anyhow!(
+                    "Combine error: {} ({})",
+                    err.error(),
+                    err.debug().unwrap_or_default()
+                ));
+            }
+            _ => {}
+        }
+    }
+    
+    pipeline.set_state(gst::State::Null).ok();
+    
+    // Replace original video file with the combined file
+    let new_size = std::fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0);
+    if new_size > 0 {
+        std::fs::remove_file(video_path)
+            .map_err(|e| anyhow::anyhow!("Failed to remove original video: {}", e))?;
+        std::fs::rename(&temp_path, video_path)
+            .map_err(|e| anyhow::anyhow!("Failed to rename combined file: {}", e))?;
+        
+        println!("[Sacho] Combined audio+video: {} ({} bytes)",
+            video_path.file_name().unwrap_or_default().to_string_lossy(), new_size);
+        
+        Ok(new_size)
+    } else {
+        let _ = std::fs::remove_file(&temp_path);
+        Err(anyhow::anyhow!("Combine produced empty file"))
+    }
+}
+
 /// Shared state for recording capture
 pub struct CaptureState {
     pub is_recording: bool,
@@ -1806,7 +1958,7 @@ fn stop_recording(
     }
     
     // Stop video recording and get video files
-    let video_files = {
+    let mut video_files = {
         let mut mgr = video_manager.lock();
         mgr.stop_recording()
     };
@@ -1856,6 +2008,34 @@ fn stop_recording(
         .map(|f| f.duration_secs)
         .fold(0.0f64, |a, b| a.max(b));
     let duration_secs = target_duration.max(audio_max_duration);
+    
+    // Combine audio+video into a single MKV if configured (exactly 1 of each)
+    {
+        let config = app_handle.state::<RwLock<Config>>();
+        let config_read = config.read();
+        if config_read.combine_audio_video
+            && video_files.len() == 1
+            && audio_files.len() == 1
+        {
+            let video_path = session_path.join(&video_files[0].filename);
+            let audio_path = session_path.join(&audio_files[0].filename);
+            match combine_audio_video_mkv(&video_path, &audio_path, &config_read.audio_format) {
+                Ok(new_size) => {
+                    // Delete the separate audio file
+                    let _ = std::fs::remove_file(&audio_path);
+                    // Update metadata: video now has audio, remove separate audio entry
+                    video_files[0].has_audio = true;
+                    video_files[0].size_bytes = new_size;
+                    audio_files.clear();
+                    println!("[Sacho] Combined audio+video into single MKV");
+                }
+                Err(e) => {
+                    println!("[Sacho] Failed to combine audio+video: {}. Keeping separate files.", e);
+                    // Graceful fallback: separate files are still valid
+                }
+            }
+        }
+    }
     
     // Clear remaining recording state (session path and devices)
     {

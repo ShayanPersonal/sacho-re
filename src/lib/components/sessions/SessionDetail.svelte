@@ -182,6 +182,9 @@
   let currentAudioFile = $derived(session.audio_files[audioIndex] ?? null);
   let currentMidiFile = $derived(session.midi_files[midiIndex] ?? null);
   
+  // Whether the current video file has embedded audio (combined MKV)
+  let videoHasAudio = $derived(currentVideoFile?.has_audio ?? false);
+  
   // Load MIDI data for current file
   async function loadMidi() {
     // Clean up previous
@@ -417,6 +420,8 @@
   function toggleAudioMute() {
     audioMuted = !audioMuted;
     if (audioElement) audioElement.muted = audioMuted;
+    // When audio is embedded in the video, control video element's muted state
+    if (videoHasAudio && videoElement) videoElement.muted = audioMuted;
   }
   
   function toggleMidiMute() {
@@ -544,7 +549,7 @@
               onended={handleEnded}
               onerror={handleVideoError}
               onloadeddata={resetVideoError}
-              muted
+              muted={videoHasAudio ? audioMuted : true}
               playsinline
               preload="metadata"
             >
@@ -627,7 +632,7 @@
     
     <!-- Track Controls -->
     <div class="track-controls">
-      {#if session.audio_files.length > 0}
+      {#if session.audio_files.length > 0 || videoHasAudio}
         <div class="track-control">
           <button 
             class="mute-btn" 
@@ -646,23 +651,31 @@
             {/if}
           </button>
           <span class="track-label">Audio</span>
-          <span class="track-info">{currentAudioFile?.device_name ?? 'Unknown'}</span>
+          <span class="track-info">
+            {#if videoHasAudio && session.audio_files.length === 0}
+              {currentVideoFile?.device_name ?? 'Embedded'}
+            {:else}
+              {currentAudioFile?.device_name ?? 'Unknown'}
+            {/if}
+          </span>
           {#if session.audio_files.length > 1}
             <button class="switch-btn" onclick={nextAudio} title="Switch audio source">
               {audioIndex + 1}/{session.audio_files.length}
             </button>
           {/if}
         </div>
-        <!-- Hidden audio element -->
-        {#key audioSrc}
-          <audio 
-            bind:this={audioElement}
-            src={audioSrc}
-            onended={handleEnded}
-            muted={audioMuted}
-            preload="metadata"
-          ></audio>
-        {/key}
+        <!-- Hidden audio element (only needed for separate audio files) -->
+        {#if session.audio_files.length > 0}
+          {#key audioSrc}
+            <audio 
+              bind:this={audioElement}
+              src={audioSrc}
+              onended={handleEnded}
+              muted={audioMuted}
+              preload="metadata"
+            ></audio>
+          {/key}
+        {/if}
       {/if}
       
       {#if session.midi_files.length > 0}

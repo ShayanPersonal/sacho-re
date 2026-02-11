@@ -409,6 +409,7 @@ pub fn repair_session(
                             fps,
                             duration_secs,
                             size_bytes,
+                            has_audio: false,
                         });
                     }
                     Err(e) => {
@@ -434,6 +435,7 @@ pub fn repair_session(
                     fps: 0,
                     duration_secs: 0.0,
                     size_bytes: size,
+                    has_audio: false,
                 });
             }
         }

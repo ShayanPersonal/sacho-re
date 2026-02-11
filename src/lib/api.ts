@@ -124,6 +124,7 @@ export interface VideoFileInfo {
   fps: number;
   duration_secs: number;
   size_bytes: number;
+  has_audio?: boolean;
 }
 
 export type VideoEncodingMode = 'av1' | 'vp9' | 'vp8' | 'raw';
@@ -155,6 +156,8 @@ export interface Config {
   encoder_preset_levels: Record<string, number>;
   /** Whether to encode video during pre-roll (trades compute for memory, allows up to 30s pre-roll) */
   encode_during_preroll: boolean;
+  /** Whether to combine audio and video into a single MKV file */
+  combine_audio_video: boolean;
   device_presets: DevicePreset[];
   current_preset: string | null;
 }
