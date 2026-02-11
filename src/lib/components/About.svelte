@@ -36,7 +36,7 @@
       </div>
       
       <div class="about-title">
-        <h3>Sacho™</h3>
+        <h3>Sacho<sup class="tm">™</sup></h3>
         <span class="version-badge">Version {appVersion}</span>
       </div>
 
@@ -179,6 +179,15 @@
     color: #e8e6e3;
     letter-spacing: 0.1em;
     margin: 0;
+  }
+
+  .tm {
+    font-size: 0.4em;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-weight: 300;
+    opacity: 0.35;
+    vertical-align: super;
+    margin-left: 0.05em;
   }
   
   .version-badge {
