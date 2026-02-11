@@ -321,7 +321,7 @@
         <div class="setting-row">
           <div class="setting-label-group">
             <span class="setting-label-with-help">
-              <span>Video encoder</span>
+              <span>Raw video encoding</span>
               <button 
                 class="help-btn" 
                 onclick={() => showRawVideoHelp = !showRawVideoHelp}
@@ -551,7 +551,7 @@
             <span class="setting-label">Start at system startup <i>(recommended)</i></span>
           </label>
 
-          <p class="setting-recommendation">Ensures the application will start back up if the system restarts (such as for system updates). <b>You may have to log back in first if there's a login screen.</b></p>
+          <p class="setting-recommendation">Ensures the application will start back up if the system restarts (such as for system updates). <b>You may have to log back in first if the system has a login screen.</b></p>
           <p class="setting-recommendation" style="margin-bottom: 0.7rem">To stop the application from running in the background, right-click the tray icon and select Quit. Note that your performances will not be recorded until the application is started again.</p>
           <label class="checkbox-row" class:checkbox-row-disabled={!isAutostartEnabled()}>
             <input 
@@ -571,7 +571,16 @@
       </section>
       <section class="settings-section">
         <h3>Application</h3>
-
+        <div class="setting-row">
+          <label class="checkbox-row">
+            <input 
+              type="checkbox" 
+              bind:checked={localSettings.dark_mode}
+              onchange={autoSave}
+            />
+            <span class="setting-label">Dark color scheme</span>
+          </label>
+        </div>
         <div class="setting-row">
           <label class="checkbox-row">
             <input 
@@ -590,16 +599,6 @@
               onchange={autoSave}
             />
             <span class="setting-label">Notify when recording stops</span>
-          </label>
-        </div>
-        <div class="setting-row">
-          <label class="checkbox-row">
-            <input 
-              type="checkbox" 
-              bind:checked={localSettings.dark_mode}
-              onchange={autoSave}
-            />
-            <span class="setting-label">Dark color scheme</span>
           </label>
         </div>
       </section>
