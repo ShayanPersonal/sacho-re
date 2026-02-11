@@ -45,18 +45,18 @@
     
     ; ---- Autostart registration ----
     ; Always set HKCU autostart for the installing user (no first run needed)
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --minimized'
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --autostarted'
     DetailPrint "Registered autostart for current user"
     
     ; If installed for all users, also set HKLM autostart
     !if "${INSTALLMODE}" == "both"
     ${If} $MultiUser.InstallMode == "AllUsers"
-        WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --minimized'
+        WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --autostarted'
         DetailPrint "Registered autostart for all users"
     ${EndIf}
     !endif
     !if "${INSTALLMODE}" == "perMachine"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --minimized'
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --autostarted'
     DetailPrint "Registered autostart for all users"
     !endif
 !macroend
