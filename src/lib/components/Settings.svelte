@@ -255,13 +255,13 @@
         <div class="section-header">
           <h3>Recording</h3>
           {#if appStats}
-            <span class="section-stats" title="Sacho's current CPU and memory usage">CPU: {Math.round(appStats.cpu_percent)}% · RAM: {formatGB(appStats.memory_bytes)}</span>
+            <span class="section-stats" title="Current CPU and memory usage of this application">CPU: {Math.round(appStats.cpu_percent)}% · RAM: {formatGB(appStats.memory_bytes)}</span>
           {/if}
         </div>
         <div class="setting-row">
           <label>
             <span class="setting-label">Auto-recording timeout</span>
-            <span class="setting-description">Stop automatic recordings after no MIDI is detected for this length of time</span>
+            <span class="setting-description">Stop automatic recording after no trigger activity is detected for this length of time</span>
           </label>
           <div class="input-with-suffix">
             <input 
@@ -278,7 +278,7 @@
         <div class="setting-row">
           <label>
             <span class="setting-label">Pre-roll Length</span>
-            <span class="setting-description">How much of the past to retrospectively include at the start of a recording</span>
+            <span class="setting-description">How much of the moments before playing to retrospectively include at the start of recordings</span>
           </label>
           <div class="input-with-suffix">
             <input 
@@ -589,7 +589,7 @@
             <span class="setting-label">Start at system startup <i>(recommended)</i></span>
           </label>
 
-          <p class="setting-recommendation">Ensures the application will start back up if the system restarts (such as for system updates). <b>You may have to log back in first, if your computer has a login screen.</b></p>
+          <p class="setting-recommendation">Ensures the application will start back up if the system restarts (such as for system updates). <b>You may have to log back in if your computer has a login screen.</b></p>
           <p class="setting-recommendation" style="margin-bottom: 0.7rem">To stop the application from running in the background, right-click the tray icon and select Quit. Note that your performances will not be recorded until the application is started again.</p>
           <label class="checkbox-row" class:checkbox-row-disabled={!isAutostartEnabled()}>
             <input 

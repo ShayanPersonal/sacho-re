@@ -52,39 +52,36 @@
           <span class="feature-icon">
             <svg viewBox="0 0 24 24" fill="currentColor">
               <circle cx="12" cy="12" r="3"/>
-              <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.5"/>
-              <path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/>
             </svg>
           </span>
-          <span class="feature-label">Trigger Recording</span>
-          <span class="feature-desc">Automatic MIDI, audio, and video recording when a performance is detected.</span>
+          <span class="feature-label">Automatic Recordings</span>
+          <span class="feature-desc">Automatic MIDI, audio, and video recording when playing is detected.</span>
         </div>
         <div class="feature">
           <span class="feature-icon">
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="6" cy="8" r="2.5"/>
-              <circle cx="9" cy="5" r="2"/>
-              <circle cx="5" cy="12" r="1.5"/>
-              <circle cx="17" cy="16" r="2.5"/>
-              <circle cx="14" cy="18" r="2"/>
-              <circle cx="19" cy="12" r="1.5"/>
-              <circle cx="12" cy="12" r="1" opacity="0.5"/>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="3" y="3" width="18" height="18" rx="1"/>
+              <line x1="3" y1="9" x2="21" y2="9"/>
+              <line x1="3" y1="15" x2="21" y2="15"/>
+              <line x1="9" y1="3" x2="9" y2="21"/>
+              <line x1="15" y1="3" x2="15" y2="21"/>
             </svg>
           </span>
           <span class="feature-label">Similarity Map</span>
-          <span class="feature-desc">Quickly locate recordings with similar themes and chord progressions.</span>
+          <span class="feature-desc">Quickly locate recordings with similar melodies and harmonies.</span>
         </div>
         <div class="feature">
           <span class="feature-icon">
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/>
-              <path d="M12 7v5l-3 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-              <path d="M4.5 8A8 8 0 0 1 12 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>
-              <path d="M4 4v4h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 4h14M5 20h14"/>
+              <path d="M7 4c0 4 5 7 5 8s-5 4-5 8"/>
+              <path d="M17 4c0 4-5 7-5 8s5 4 5 8"/>
+              <path d="M8 19h8" opacity="0.4"/>
             </svg>
           </span>
           <span class="feature-label">Pre-roll Capture</span>
-          <span class="feature-desc">Capture the moments leading up to the performance for a more natural recording.</span>
+          <span class="feature-desc">Capture the moments leading up to the performance for a more natural playback.</span>
         </div>
       </div>
       
