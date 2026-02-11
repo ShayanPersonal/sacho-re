@@ -254,9 +254,6 @@ impl VideoWriter {
             crate::encoding::ContainerFormat::Mkv => {
                 muxer.set_property("writing-app", "Sacho");
             }
-            crate::encoding::ContainerFormat::WebM => {
-                // webmmux doesn't need special properties
-            }
         }
         
         let filesink = gst::ElementFactory::make("filesink")
@@ -420,6 +417,9 @@ struct PrerollEncoderOutput {
     buffer: std::collections::VecDeque<BufferedFrame>,
     /// Maximum pre-roll duration
     max_duration: Duration,
+    /// Keyframe interval duration — extra headroom kept in the time-based trim
+    /// so that after stripping to the next keyframe we still meet `max_duration`.
+    keyframe_duration: Duration,
     /// Current buffer size in bytes
     current_bytes: usize,
     /// When Some, encoded frames are routed here instead of the ring buffer
@@ -431,10 +431,11 @@ struct PrerollEncoderOutput {
 }
 
 impl PrerollEncoderOutput {
-    fn new(max_duration_secs: u32, target_codec: crate::encoding::VideoCodec) -> Self {
+    fn new(max_duration_secs: u32, target_codec: crate::encoding::VideoCodec, keyframe_interval_secs: u32) -> Self {
         Self {
             buffer: std::collections::VecDeque::new(),
             max_duration: Duration::from_secs(max_duration_secs as u64),
+            keyframe_duration: Duration::from_secs(keyframe_interval_secs as u64),
             current_bytes: 0,
             active_writer: None,
             pts_offset: None,
@@ -458,7 +459,13 @@ impl PrerollEncoderOutput {
     }
     
     fn trim(&mut self) {
-        let cutoff = Instant::now() - self.max_duration;
+        // Keep an extra keyframe interval of headroom beyond max_duration so
+        // that the keyframe-seeking pass below doesn't eat into the requested
+        // pre-roll window. With keyframes every 2 s and max_duration = 5 s,
+        // we retain ~7 s of frames by time, then strip to the first keyframe,
+        // leaving ≥5 s of usable pre-roll.
+        let retention = self.max_duration + self.keyframe_duration;
+        let cutoff = Instant::now() - retention;
         while let Some(front) = self.buffer.front() {
             if front.wall_time < cutoff {
                 if let Some(removed) = self.buffer.pop_front() {
@@ -569,8 +576,10 @@ impl PrerollVideoEncoder {
         gst::Element::link_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, appsink.upcast_ref()])
             .map_err(|e| VideoError::Pipeline(format!("Failed to link PrerollEncoder elements: {}", e)))?;
         
-        // Create shared output
-        let output = Arc::new(Mutex::new(PrerollEncoderOutput::new(max_preroll_secs, target_codec)));
+        // Create shared output.
+        // The keyframe interval is `fps * 2` frames = 2 seconds.
+        let keyframe_interval_secs = 2;
+        let output = Arc::new(Mutex::new(PrerollEncoderOutput::new(max_preroll_secs, target_codec, keyframe_interval_secs)));
         
         // Set up appsink callback to route encoded frames
         let output_clone = output.clone();
@@ -1361,7 +1370,7 @@ impl VideoCapturePipeline {
             .as_ref()
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
-            .unwrap_or("video.webm")
+            .unwrap_or("video.mkv")
             .to_string();
         
         self.is_recording = false;

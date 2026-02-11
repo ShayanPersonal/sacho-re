@@ -89,10 +89,8 @@ impl VideoCodec {
         match self {
             VideoCodec::Mjpeg => ContainerFormat::Mkv,
             VideoCodec::Av1 => ContainerFormat::Mkv,
-            // VP8/VP9 must use WebM for Chromium/WebView2 playback compatibility.
-            // Chromium supports VP8/VP9 in WebM but not in MKV containers.
-            VideoCodec::Vp8 => ContainerFormat::WebM,
-            VideoCodec::Vp9 => ContainerFormat::WebM,
+            VideoCodec::Vp8 => ContainerFormat::Mkv,
+            VideoCodec::Vp9 => ContainerFormat::Mkv,
             VideoCodec::Raw => ContainerFormat::Mkv,
         }
     }
@@ -152,8 +150,6 @@ impl VideoCodec {
 pub enum ContainerFormat {
     /// Matroska (.mkv) - flexible, supports any codec
     Mkv,
-    /// WebM (.webm) - web-optimized
-    WebM,
 }
 
 impl ContainerFormat {
@@ -161,7 +157,6 @@ impl ContainerFormat {
     pub fn extension(&self) -> &'static str {
         match self {
             ContainerFormat::Mkv => "mkv",
-            ContainerFormat::WebM => "webm",
         }
     }
     
@@ -169,7 +164,6 @@ impl ContainerFormat {
     pub fn gst_muxer(&self) -> &'static str {
         match self {
             ContainerFormat::Mkv => "matroskamux",
-            ContainerFormat::WebM => "webmmux",
         }
     }
     
@@ -177,7 +171,6 @@ impl ContainerFormat {
     pub fn gst_demuxer(&self) -> &'static str {
         match self {
             ContainerFormat::Mkv => "matroskademux",
-            ContainerFormat::WebM => "matroskademux", // WebM uses matroska demuxer
         }
     }
 }
@@ -186,7 +179,6 @@ impl ContainerFormat {
 pub fn codec_from_extension(ext: &str) -> Option<ContainerFormat> {
     match ext.to_lowercase().as_str() {
         "mkv" => Some(ContainerFormat::Mkv),
-        "webm" => Some(ContainerFormat::WebM),
         _ => None,
     }
 }

@@ -292,7 +292,7 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
     // Check recording/encoding plugins
     let recording_plugins = [
         // Container & muxing
-        ("matroska",         "MKV/WebM container (matroskamux, matroskademux)"),
+        ("matroska",         "MKV container (matroskamux, matroskademux)"),
         ("app",              "App elements (appsrc, appsink)"),
         // Codecs
         ("vpx",              "VP8/VP9 software encoding (libvpx)"),

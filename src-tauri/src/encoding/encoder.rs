@@ -763,14 +763,14 @@ impl AsyncVideoEncoder {
     pub(crate) fn remux_with_duration(file_path: &PathBuf) -> Result<u64> {
         let extension = file_path.extension()
             .and_then(|e| e.to_str())
-            .unwrap_or("webm");
+            .unwrap_or("mkv");
         
         println!("[Encoder] Remuxing {} to add duration header...", extension);
         
         // Create temp file path
         let temp_path = file_path.with_extension(format!("{}.tmp", extension));
         
-        // Build remux pipeline: filesrc ! matroskademux ! webmmux ! filesink
+        // Build remux pipeline: filesrc ! matroskademux ! matroskamux ! filesink
         let pipeline = gst::Pipeline::new();
         
         let filesrc = gst::ElementFactory::make("filesrc")
@@ -782,9 +782,9 @@ impl AsyncVideoEncoder {
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskademux: {}", e)))?;
         
-        let mux = gst::ElementFactory::make("webmmux")
+        let mux = gst::ElementFactory::make("matroskamux")
             .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create webmmux: {}", e)))?;
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
         
         let filesink = gst::ElementFactory::make("filesink")
             .property("location", temp_path.to_string_lossy().to_string())
@@ -937,7 +937,7 @@ impl AsyncVideoEncoder {
         Ok((pipeline, appsrc, queue, videoconvert))
     }
     
-    /// Create AV1 encoding pipeline (WebM container)
+    /// Create AV1 encoding pipeline (MKV container)
     fn create_av1_pipeline(
         output_path: &PathBuf,
         width: u32,
@@ -956,10 +956,11 @@ impl AsyncVideoEncoder {
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create av1parse: {}", e)))?;
         
-        // WebM muxer for AV1
-        let muxer = gst::ElementFactory::make("webmmux")
+        // MKV muxer for AV1
+        let muxer = gst::ElementFactory::make("matroskamux")
             .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create webmmux: {}", e)))?;
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
+        muxer.set_property("writing-app", "Sacho");
         
         // File sink with sync disabled for better performance
         let filesink = gst::ElementFactory::make("filesink")
@@ -1006,7 +1007,7 @@ impl AsyncVideoEncoder {
         Ok(encoder)
     }
     
-    /// Create VP8 encoding pipeline (WebM container)
+    /// Create VP8 encoding pipeline (MKV container)
     fn create_vp8_pipeline(
         output_path: &PathBuf,
         width: u32,
@@ -1020,10 +1021,11 @@ impl AsyncVideoEncoder {
         // Create VP8 encoder
         let encoder = Self::create_vp8_encoder(hw_type, config)?;
         
-        // WebM muxer for VP8
-        let muxer = gst::ElementFactory::make("webmmux")
+        // MKV muxer for VP8
+        let muxer = gst::ElementFactory::make("matroskamux")
             .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create webmmux: {}", e)))?;
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
+        muxer.set_property("writing-app", "Sacho");
         
         // File sink with sync disabled for better performance
         let filesink = gst::ElementFactory::make("filesink")
@@ -1082,7 +1084,7 @@ impl AsyncVideoEncoder {
         Ok(encoder)
     }
     
-    /// Create VP9 encoding pipeline (WebM container)
+    /// Create VP9 encoding pipeline (MKV container)
     fn create_vp9_pipeline(
         output_path: &PathBuf,
         width: u32,
@@ -1096,10 +1098,11 @@ impl AsyncVideoEncoder {
         // Create VP9 encoder
         let encoder = Self::create_vp9_encoder(hw_type, config)?;
         
-        // WebM muxer for VP9
-        let muxer = gst::ElementFactory::make("webmmux")
+        // MKV muxer for VP9
+        let muxer = gst::ElementFactory::make("matroskamux")
             .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create webmmux: {}", e)))?;
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
+        muxer.set_property("writing-app", "Sacho");
         
         // File sink with sync disabled for better performance
         let filesink = gst::ElementFactory::make("filesink")

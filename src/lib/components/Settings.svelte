@@ -455,7 +455,7 @@
             />
             <button class="browse-btn" onclick={browseStoragePath}>Browse</button>
           </div>
-          <p class="setting-recommendation">We recommend backing up this folder with a cloud storage service.</p>
+          <p class="setting-recommendation">We recommend backing up this folder to a cloud storage service.</p>
         </div>
         <div class="setting-row">
           <label>

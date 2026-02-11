@@ -693,7 +693,7 @@ pub fn repair_flac_file(file_path: &PathBuf) -> anyhow::Result<(u16, u32, f64, u
     Ok((channels, sample_rate, duration_secs, file_size))
 }
 
-/// Check if a Matroska/WebM file is unfinalized (missing duration or has zero segment size).
+/// Check if a Matroska file is unfinalized (missing duration or has zero segment size).
 pub fn video_file_needs_repair(file_path: &PathBuf) -> bool {
     use std::io::Read;
     
@@ -741,7 +741,7 @@ pub fn video_file_needs_repair(file_path: &PathBuf) -> bool {
     true
 }
 
-/// Repair a video file (WebM/MKV) by remuxing through GStreamer to fix container metadata.
+/// Repair a video file (MKV) by remuxing through GStreamer to fix container metadata.
 /// The remuxed file replaces the original.
 /// Returns (duration_secs, size_bytes).
 pub fn repair_video_file(file_path: &PathBuf) -> anyhow::Result<(f64, u64)> {
@@ -755,18 +755,10 @@ pub fn repair_video_file(file_path: &PathBuf) -> anyhow::Result<(f64, u64)> {
     // Create a temp file for the remuxed output
     let temp_path = file_path.with_extension(format!("{}.repair.tmp", extension));
     
-    // Choose the right muxer based on extension
-    let muxer_name = match extension {
-        "webm" => "webmmux",
-        _ => "matroskamux",
-    };
-    
-    // Build pipeline: filesrc ! parsebin ! muxer ! filesink
-    // parsebin auto-detects the input format and demuxes/parses streams
+    // Build pipeline: filesrc ! matroskademux ! matroskamux ! filesink
     let pipeline_str = format!(
-        "filesrc location=\"{}\" ! matroskademux name=demux ! queue ! {} name=mux ! filesink location=\"{}\"",
+        "filesrc location=\"{}\" ! matroskademux name=demux ! queue ! matroskamux name=mux ! filesink location=\"{}\"",
         file_path.to_string_lossy().replace('\\', "/"),
-        muxer_name,
         temp_path.to_string_lossy().replace('\\', "/"),
     );
     

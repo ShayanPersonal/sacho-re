@@ -188,7 +188,7 @@ pub fn get_session_detail(
             let has_media = entries.flatten().any(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
                 name.ends_with(".mid") || name.ends_with(".wav") || name.ends_with(".flac")
-                    || name.ends_with(".webm") || name.ends_with(".mkv")
+                    || name.ends_with(".mkv")
             });
             if has_media { has_corrupt_files = true; }
         }
@@ -382,7 +382,7 @@ pub fn repair_session(
                     size_bytes: size,
                 });
             }
-        } else if fname.ends_with(".webm") || fname.ends_with(".mkv") {
+        } else if fname.ends_with(".mkv") {
             // Check if video needs repair
             let needs_repair = crate::recording::monitor::video_file_needs_repair(&path);
             
@@ -394,7 +394,6 @@ pub fn repair_session(
                             .map(|f| f.device_name.clone())
                             .unwrap_or_else(|| {
                                 fname.trim_start_matches("video_")
-                                    .trim_end_matches(".webm")
                                     .trim_end_matches(".mkv")
                                     .replace('_', " ")
                             });
@@ -425,7 +424,6 @@ pub fn repair_session(
                 // Video file exists but wasn't in metadata - add with what we know
                 let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                 let device_name = fname.trim_start_matches("video_")
-                    .trim_end_matches(".webm")
                     .trim_end_matches(".mkv")
                     .replace('_', " ");
                 video_files.push(crate::session::VideoFileInfo {
@@ -1317,7 +1315,7 @@ async fn run_auto_select_test(
         
         // Create a temp file for the test encoder
         let temp_dir = std::env::temp_dir();
-        let temp_file = temp_dir.join(format!("sacho_autoselect_test_{}.webm", level));
+        let temp_file = temp_dir.join(format!("sacho_autoselect_test_{}.mkv", level));
         
         // Create encoder with this preset
         let encoder_config = EncoderConfig {
@@ -1387,7 +1385,7 @@ async fn run_auto_select_test(
         
         // Clean up temp file
         let _ = std::fs::remove_file(&temp_file);
-        let temp_tmp = temp_dir.join(format!("sacho_autoselect_test_{}.webm.tmp", level));
+        let temp_tmp = temp_dir.join(format!("sacho_autoselect_test_{}.mkv.tmp", level));
         let _ = std::fs::remove_file(&temp_tmp);
         
         println!("[AutoSelect] Level {}: sent={}, dropped={} (threshold={})", 

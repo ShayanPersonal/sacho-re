@@ -1,4 +1,4 @@
-# Sacho - The Songwriter's dream.
+# Sacho - The Songwriter's notebook.
 
 Sacho is a cross-platform (Windows, Mac, Linux) desktop application for songwriters and other spontaneous creatives to automatically capture MIDI, audio, and video when they play. Never lose a musical idea again.
 
