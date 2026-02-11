@@ -585,9 +585,11 @@ pub fn update_config(
             || current.video_device_codecs != new_config.video_device_codecs
             || current.selected_audio_devices != new_config.selected_audio_devices
             || current.pre_roll_secs != new_config.pre_roll_secs
-            || current.encode_during_preroll != new_config.encode_during_preroll;
-        let preset_changed = current.encoder_preset_levels != new_config.encoder_preset_levels
+            || current.encode_during_preroll != new_config.encode_during_preroll
+            // Encoding mode changes the entire encoder pipeline (different GStreamer
+            // elements, codec, container), so it requires a full pipeline restart.
             || current.video_encoding_mode != new_config.video_encoding_mode;
+        let preset_changed = current.encoder_preset_levels != new_config.encoder_preset_levels;
         (dev_changed, preset_changed)
     };
     

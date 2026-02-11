@@ -89,8 +89,10 @@ impl VideoCodec {
         match self {
             VideoCodec::Mjpeg => ContainerFormat::Mkv,
             VideoCodec::Av1 => ContainerFormat::Mkv,
-            VideoCodec::Vp8 => ContainerFormat::Mkv,
-            VideoCodec::Vp9 => ContainerFormat::Mkv,
+            // VP8/VP9 must use WebM for Chromium/WebView2 playback compatibility.
+            // Chromium supports VP8/VP9 in WebM but not in MKV containers.
+            VideoCodec::Vp8 => ContainerFormat::WebM,
+            VideoCodec::Vp9 => ContainerFormat::WebM,
             VideoCodec::Raw => ContainerFormat::Mkv,
         }
     }

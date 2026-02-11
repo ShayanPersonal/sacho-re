@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 
@@ -57,6 +58,10 @@ pub struct BufferedFrame {
     pub wall_time: Instant,
     /// Pixel format for raw video (e.g., "NV12", "I420"), None for encoded
     pub pixel_format: Option<String>,
+    /// Whether this is a delta/inter frame (not a keyframe).
+    /// Preserves the GStreamer DELTA_UNIT flag through the encode-during-preroll
+    /// roundtrip so the muxer can correctly mark keyframes in the container.
+    pub is_delta_unit: bool,
 }
 
 /// Pre-roll buffer for video frames
@@ -193,6 +198,11 @@ pub struct VideoCapturePipeline {
     preset_level: u8,
     /// Whether encode-during-preroll is active (raw video only)
     encode_during_preroll: bool,
+    /// Configured pre-roll duration in seconds
+    pre_roll_secs: u32,
+    /// Shared flag: appsink callback skips frame allocation when false.
+    /// True when recording or when pre_roll_secs > 0 (frames are needed).
+    needs_frames: Arc<AtomicBool>,
     /// Pre-roll encoder (when encode_during_preroll is active)
     preroll_encoder: Option<PrerollVideoEncoder>,
     /// Shared output from pre-roll encoder
@@ -318,6 +328,12 @@ impl VideoWriter {
             let buffer_ref = buffer.get_mut().unwrap();
             buffer_ref.set_pts(gst::ClockTime::from_nseconds(normalized_pts));
             buffer_ref.set_duration(gst::ClockTime::from_nseconds(frame.duration));
+            // Preserve the keyframe/delta flag so the muxer marks frames correctly.
+            // Without this, all frames are treated as keyframes and VP8/VP9
+            // inter-frames get mislabeled, making the file unplayable in browsers.
+            if frame.is_delta_unit {
+                buffer_ref.set_flags(gst::BufferFlags::DELTA_UNIT);
+            }
         }
         
         // Track content duration
@@ -452,6 +468,18 @@ impl PrerollEncoderOutput {
                 break;
             }
         }
+        // Ensure the buffer starts at a keyframe. After the time-based trim the
+        // first remaining frame may be a delta/inter-frame which can't be decoded
+        // without its reference keyframe. Drop frames until we hit a keyframe.
+        while let Some(front) = self.buffer.front() {
+            if front.is_delta_unit {
+                if let Some(removed) = self.buffer.pop_front() {
+                    self.current_bytes = self.current_bytes.saturating_sub(removed.data.len());
+                }
+            } else {
+                break;
+            }
+        }
     }
     
     /// Drain all buffered encoded frames (for recording start)
@@ -554,6 +582,7 @@ impl PrerollVideoEncoder {
                             if let Some(buffer) = sample.buffer() {
                                 let pts = buffer.pts().map(|t| t.nseconds()).unwrap_or(0);
                                 let duration = buffer.duration().map(|t| t.nseconds()).unwrap_or(33_333_333);
+                                let is_delta = buffer.flags().contains(gst::BufferFlags::DELTA_UNIT);
                                 
                                 if let Ok(map) = buffer.map_readable() {
                                     let data = map.as_slice().to_vec();
@@ -563,6 +592,7 @@ impl PrerollVideoEncoder {
                                         duration,
                                         wall_time: Instant::now(),
                                         pixel_format: None, // Encoded, no pixel format
+                                        is_delta_unit: is_delta,
                                     };
                                     output_clone.lock().push_encoded_frame(frame);
                                 }
@@ -721,14 +751,24 @@ impl VideoCapturePipeline {
         // Create pre-roll buffer
         let preroll_buffer = Arc::new(Mutex::new(VideoPrerollBuffer::new(pre_roll_secs)));
         
+        // Shared flag: the appsink callback skips frame allocation when false.
+        // True when pre_roll_secs > 0 or recording is active.
+        let needs_frames = Arc::new(AtomicBool::new(pre_roll_secs > 0));
+        
         // Set up appsink callback to fill pre-roll buffer
         let preroll_clone = preroll_buffer.clone();
+        let needs_frames_clone = needs_frames.clone();
         let frame_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let frame_counter_clone = frame_counter.clone();
         
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
+                    if !needs_frames_clone.load(Ordering::Relaxed) {
+                        // Discard: no pre-roll needed and not recording
+                        let _ = sink.pull_sample();
+                        return Ok(gst::FlowSuccess::Ok);
+                    }
                     match sink.pull_sample() {
                         Ok(sample) => {
                             if let Some(buffer) = sample.buffer() {
@@ -737,7 +777,7 @@ impl VideoCapturePipeline {
                                 
                                 if let Ok(map) = buffer.map_readable() {
                                     let data = map.as_slice().to_vec();
-                                    let frame_num = frame_counter_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    let frame_num = frame_counter_clone.fetch_add(1, Ordering::Relaxed);
                                     
                                     // Minimal logging - only first frame
                                     if frame_num == 0 {
@@ -750,6 +790,7 @@ impl VideoCapturePipeline {
                                         duration,
                                         wall_time: Instant::now(),
                                         pixel_format: None, // Pre-encoded, no pixel format
+                                        is_delta_unit: false, // Not relevant for passthrough capture
                                     };
                                     preroll_clone.lock().push(frame);
                                 }
@@ -788,6 +829,8 @@ impl VideoCapturePipeline {
             total_frames_dropped: 0,
             preset_level: crate::encoding::DEFAULT_PRESET,
             encode_during_preroll: false,
+            pre_roll_secs,
+            needs_frames,
             preroll_encoder: None,
             preroll_encoder_output: None,
         })
@@ -913,14 +956,24 @@ impl VideoCapturePipeline {
         let raw_buffer_secs = if encode_during_preroll { 1 } else { pre_roll_secs };
         let preroll_buffer = Arc::new(Mutex::new(VideoPrerollBuffer::with_byte_rate(raw_buffer_secs, RAW_BYTES_PER_SEC)));
         
+        // Shared flag: the appsink callback skips frame allocation when false.
+        // True when pre_roll_secs > 0 or recording is active.
+        let needs_frames = Arc::new(AtomicBool::new(pre_roll_secs > 0));
+        
         // Set up appsink callback to fill pre-roll buffer
         let preroll_clone = preroll_buffer.clone();
+        let needs_frames_clone = needs_frames.clone();
         let frame_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let frame_counter_clone = frame_counter.clone();
         
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
+                    if !needs_frames_clone.load(Ordering::Relaxed) {
+                        // Discard: no pre-roll needed and not recording
+                        let _ = sink.pull_sample();
+                        return Ok(gst::FlowSuccess::Ok);
+                    }
                     match sink.pull_sample() {
                         Ok(sample) => {
                             if let Some(buffer) = sample.buffer() {
@@ -934,7 +987,7 @@ impl VideoCapturePipeline {
                                 
                                 if let Ok(map) = buffer.map_readable() {
                                     let data = map.as_slice().to_vec();
-                                    let frame_num = frame_counter_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    let frame_num = frame_counter_clone.fetch_add(1, Ordering::Relaxed);
                                     
                                     if frame_num == 0 {
                                         println!("[Video] First RAW frame: {} bytes, pts={}, format={:?}", 
@@ -947,6 +1000,7 @@ impl VideoCapturePipeline {
                                         duration,
                                         wall_time: Instant::now(),
                                         pixel_format: pixel_format.clone(),
+                                        is_delta_unit: false, // Not relevant for raw capture
                                     };
                                     preroll_clone.lock().push(frame);
                                 }
@@ -984,6 +1038,8 @@ impl VideoCapturePipeline {
             total_frames_dropped: 0,
             preset_level: crate::encoding::DEFAULT_PRESET,
             encode_during_preroll,
+            pre_roll_secs,
+            needs_frames,
             preroll_encoder: None,          // Created in start() after cap negotiation
             preroll_encoder_output: None,   // Created in start() after cap negotiation
         })
@@ -1018,7 +1074,9 @@ impl VideoCapturePipeline {
         
         // Create the pre-roll encoder if encode_during_preroll is active.
         // This must happen after cap negotiation so we know the actual dimensions.
-        if self.encode_during_preroll && self.codec == crate::encoding::VideoCodec::Raw {
+        // Skip if pre_roll_secs is 0 — no point encoding frames that will be
+        // immediately discarded from the ring buffer.
+        if self.encode_during_preroll && self.pre_roll_secs > 0 && self.codec == crate::encoding::VideoCodec::Raw {
             // Drop any previous encoder (e.g., from a previous start/stop cycle)
             self.preroll_encoder = None;
             self.preroll_encoder_output = None;
@@ -1033,7 +1091,7 @@ impl VideoCapturePipeline {
             match PrerollVideoEncoder::new(
                 self.width, self.height, self.fps,
                 target_codec, self.preset_level,
-                MAX_PRE_ROLL_SECS_ENCODED,
+                self.pre_roll_secs,
             ) {
                 Ok(encoder) => {
                     let output = encoder.output.clone();
@@ -1142,6 +1200,7 @@ impl VideoCapturePipeline {
             self.recording_start = Some(Instant::now());
             self.frames_written = encoded_frames.len() as u64;
             self.is_recording = true;
+            self.needs_frames.store(true, Ordering::Relaxed);
             self.consecutive_full_drops = 0;
             self.total_frames_dropped = 0;
             
@@ -1213,6 +1272,7 @@ impl VideoCapturePipeline {
         self.recording_start = Some(Instant::now());
         self.frames_written = preroll_frames.len() as u64;
         self.is_recording = true;
+        self.needs_frames.store(true, Ordering::Relaxed);
         self.consecutive_full_drops = 0;
         self.total_frames_dropped = 0;
         
@@ -1305,6 +1365,7 @@ impl VideoCapturePipeline {
             .to_string();
         
         self.is_recording = false;
+        self.needs_frames.store(self.pre_roll_secs > 0, Ordering::Relaxed);
         self.recording_path = None;
         self.recording_start = None;
         
@@ -1344,7 +1405,12 @@ impl VideoCapturePipeline {
     }
     
     /// Set pre-roll duration
-    pub fn set_preroll_duration(&self, secs: u32) {
+    pub fn set_preroll_duration(&mut self, secs: u32) {
+        self.pre_roll_secs = secs;
+        // Update needs_frames: if not recording, only buffer when pre_roll > 0
+        if !self.is_recording {
+            self.needs_frames.store(secs > 0, Ordering::Relaxed);
+        }
         if self.encode_during_preroll {
             // Raw buffer stays at 1 second (staging only)
             // Update the encoded pre-roll buffer's duration
@@ -1434,6 +1500,7 @@ impl VideoCapturePipeline {
                     // Drop the encoder to clean up its resources
                     self.raw_encoder = None;
                     self.is_recording = false;
+                    self.needs_frames.store(self.pre_roll_secs > 0, Ordering::Relaxed);
                     return Err(VideoError::Pipeline("Encoder stalled, recording aborted".to_string()));
                 }
             } else if !frames.is_empty() {
@@ -1649,7 +1716,7 @@ impl VideoCaptureManager {
     /// Set pre-roll duration for all pipelines
     pub fn set_preroll_duration(&mut self, secs: u32) {
         self.pre_roll_secs = secs;
-        for (_, pipeline) in self.pipelines.iter() {
+        for (_, pipeline) in self.pipelines.iter_mut() {
             pipeline.set_preroll_duration(secs);
         }
     }

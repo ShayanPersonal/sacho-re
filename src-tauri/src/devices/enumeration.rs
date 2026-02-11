@@ -65,6 +65,7 @@ fn probe_compressed_formats(
 ) {
     // List of compressed formats to try (in priority order)
     let formats_to_try = [
+        ("video/x-av1", VideoCodec::Av1, "AV1"),
         ("image/jpeg", VideoCodec::Mjpeg, "MJPEG"),
     ];
     

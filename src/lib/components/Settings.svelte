@@ -263,16 +263,15 @@
               bind:value={localSettings.pre_roll_secs}
               oninput={autoSaveDebounced}
             />
-            <span class="input-suffix">seconds (max {localSettings.encode_during_preroll ? 30 : 5})</span>
+            <span class="input-suffix">seconds</span>
+            {#if localSettings.pre_roll_secs === 0}
+              <span class="input-suffix" style="margin-left: 0.25rem;">(turned off)</span>
+            {/if}
           </div>
         </div>
         {#if localSettings.selected_video_devices.length > 0 && localSettings.video_encoding_mode !== 'raw'}
         <div class="setting-row">
-          <label>
-            <span class="setting-label">Encode during pre-roll</span>
-            <span class="setting-description">Encodes video in the background during pre-roll, trading compute for reduced memory. Increases the pre-roll limit to 30 seconds.</span>
-          </label>
-          <label class="toggle">
+          <label class="checkbox-row">
             <input 
               type="checkbox" 
               bind:checked={localSettings.encode_during_preroll}
@@ -285,8 +284,9 @@
                 autoSave();
               }}
             />
-            <span class="toggle-slider"></span>
+            <span class="setting-label">Encode during pre-roll</span>
           </label>
+          <span class="setting-description">Encodes video during the pre-roll, reducing memory usage, but increasing CPU usage. Best used in conjunction with hardware acceleration. Increases max pre-roll length from 5 to 30 seconds.</span>
         </div>
         {/if}
         <div class="setting-row">
