@@ -36,13 +36,13 @@
       </div>
       
       <div class="about-title">
-        <h3>Sacho</h3>
+        <h3>Sacho™</h3>
         <span class="version-badge">Version {appVersion}</span>
       </div>
 
       <div class="about-description">
         <p>
-          The Songwriter's Notebook
+          The Songwriter's Notebook™
         </p>
       </div>
 
@@ -55,7 +55,7 @@
               <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/>
             </svg>
           </span>
-          <span class="feature-label">Automatic Recordings</span>
+          <span class="feature-label">Auto-Recording</span>
           <span class="feature-desc">Automatic MIDI, audio, and video recording when playing is detected.</span>
         </div>
         <div class="feature">
@@ -69,7 +69,7 @@
             </svg>
           </span>
           <span class="feature-label">Similarity Map</span>
-          <span class="feature-desc">Quickly locate recordings with similar melodies and harmonies.</span>
+          <span class="feature-desc">Quickly locate recordings with similar themes and chords.</span>
         </div>
         <div class="feature">
           <span class="feature-icon">
@@ -81,7 +81,7 @@
             </svg>
           </span>
           <span class="feature-label">Pre-roll Capture</span>
-          <span class="feature-desc">Capture the moments leading up to the performance for a more natural playback.</span>
+          <span class="feature-desc">Capture the moments leading up to the performance.</span>
         </div>
       </div>
       
