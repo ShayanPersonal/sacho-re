@@ -44,20 +44,26 @@
     RMDir /r "$INSTDIR\installers"
     
     ; ---- Autostart registration ----
-    ; Always set HKCU autostart for the installing user (no first run needed)
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --autostarted'
-    DetailPrint "Registered autostart for current user"
-    
-    ; If installed for all users, also set HKLM autostart
+    ; Write to HKLM for all-users installs, HKCU for per-user installs.
+    ; Never write both -- Windows processes both Run keys on boot, which
+    ; would launch two instances and the single-instance handler would
+    ; immediately show the hidden window.
     !if "${INSTALLMODE}" == "both"
     ${If} $MultiUser.InstallMode == "AllUsers"
         WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --autostarted'
-        DetailPrint "Registered autostart for all users"
+        DetailPrint "Registered autostart for all users (HKLM)"
+    ${Else}
+        WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --autostarted'
+        DetailPrint "Registered autostart for current user (HKCU)"
     ${EndIf}
     !endif
     !if "${INSTALLMODE}" == "perMachine"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --autostarted'
-    DetailPrint "Registered autostart for all users"
+    DetailPrint "Registered autostart for all users (HKLM)"
+    !endif
+    !if "${INSTALLMODE}" == "currentUser"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --autostarted'
+    DetailPrint "Registered autostart for current user (HKCU)"
     !endif
 !macroend
 
@@ -112,8 +118,9 @@
     DetailPrint "GStreamer runtime libraries removed"
     
     ; ---- Autostart cleanup ----
-    ; Clean up HKLM autostart (succeeds if admin, silently fails if not)
-    ; Note: HKCU cleanup is already handled by Tauri's uninstaller template
+    ; Clean up both HKCU and HKLM autostart entries.
+    ; Old installs may have written both; remove either to prevent double-launch.
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
     DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
     DetailPrint "Removed autostart registry entries"
 !macroend

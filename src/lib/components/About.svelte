@@ -185,7 +185,7 @@
     font-size: 0.4em;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-weight: 300;
-    opacity: 0.35;
+    opacity: 0.7;
     vertical-align: super;
     margin-left: 0.05em;
   }

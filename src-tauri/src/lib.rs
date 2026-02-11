@@ -60,11 +60,16 @@ pub fn run() {
             Some(vec!["--autostarted"]),
         ))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // Focus the existing window when a second instance tries to launch
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // Focus the existing window when a second instance tries to launch,
+            // but not if the second instance was also an autostart (e.g. both
+            // HKCU and HKLM Run entries exist from a legacy install).
+            let is_autostart = args.iter().any(|a| a == "--autostarted");
+            if !is_autostart {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
             }
         }))
         .on_window_event(|window, event| {

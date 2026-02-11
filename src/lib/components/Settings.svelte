@@ -292,38 +292,36 @@
             {#if localSettings.pre_roll_secs === 0}
               <span class="input-suffix" style="margin-left: 0.25rem;">(turned off)</span>
             {/if}
-            {#if localSettings.selected_video_devices.length > 0 && localSettings.video_encoding_mode !== 'raw'}
-              <span style="flex: 1;"></span>
-              <label class="inline-checkbox" class:inline-checkbox-disabled={localSettings.pre_roll_secs === 0}>
-                <input 
-                  type="checkbox" 
-                  bind:checked={localSettings.encode_during_preroll}
-                  disabled={localSettings.pre_roll_secs === 0}
-                  onchange={() => {
-                    if (!localSettings) return;
-                    if (!localSettings.encode_during_preroll && localSettings.pre_roll_secs > 5) {
-                      localSettings.pre_roll_secs = 5;
-                    }
-                    autoSave();
-                  }}
-                />
-                <span class="input-suffix">Encode during pre-roll</span>
-              </label>
-              <span class="setting-label-with-help">
-                <button 
-                  class="help-btn" 
-                  onclick={() => showPrerollEncodeHelp = !showPrerollEncodeHelp}
-                  onblur={() => showPrerollEncodeHelp = false}
-                >
-                  ?
-                </button>
-                {#if showPrerollEncodeHelp}
-                  <div class="help-tooltip">
-                    Runs the video encoder during the pre-roll, reducing RAM usage but increasing CPU usage. Best used with hardware acceleration. <br><br>Increases the limit on the pre-roll length from 5 seconds to 30 seconds.
-                  </div>
-                {/if}
-              </span>
-            {/if}
+            <span style="flex: 1;"></span>
+            <label class="inline-checkbox" class:inline-checkbox-disabled={localSettings.pre_roll_secs === 0}>
+              <input 
+                type="checkbox" 
+                bind:checked={localSettings.encode_during_preroll}
+                disabled={localSettings.pre_roll_secs === 0}
+                onchange={() => {
+                  if (!localSettings) return;
+                  if (!localSettings.encode_during_preroll && localSettings.pre_roll_secs > 5) {
+                    localSettings.pre_roll_secs = 5;
+                  }
+                  autoSave();
+                }}
+              />
+              <span class="input-suffix">Encode during pre-roll</span>
+            </label>
+            <span class="setting-label-with-help">
+              <button 
+                class="help-btn" 
+                onclick={() => showPrerollEncodeHelp = !showPrerollEncodeHelp}
+                onblur={() => showPrerollEncodeHelp = false}
+              >
+                ?
+              </button>
+              {#if showPrerollEncodeHelp}
+                <div class="help-tooltip">
+                  Runs the video encoder during the pre-roll, reducing RAM usage but increasing CPU usage. Best used with hardware acceleration. <br><br>Increases the limit on the pre-roll length from 5 seconds to 30 seconds.
+                </div>
+              {/if}
+            </span>
           </div>
         </div>
         <div class="setting-row">
@@ -370,7 +368,7 @@
                   encoderAvailability.vp8_hardware ? 'VP8' : null
                 ].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' and $1')}. We recommend using <strong>{encoderAvailability.av1_hardware ? 'AV1' : encoderAvailability.vp9_hardware ? 'VP9' : 'VP8'}</strong> for the best experience.
               {:else}
-                Your system does not support hardware acceleration for any available codec. We recommend using <strong>VP8</strong> for the best experience. Use the Advanced menu if you experience choppiness.
+                Your system does not support hardware acceleration for the available codecs. We recommend using <strong>VP8</strong> for the best experience. Use the Advanced menu if you experience choppiness.
               {/if}
             </p>
           {/if}
@@ -600,11 +598,9 @@
             />
             <span class="setting-label">Hide application window at system startup</span>
           </label>
-          <!--
           <button class="debug-crash-btn" onclick={() => invoke('simulate_crash')}>
             Simulate Crash (dev)
           </button>
-          -->
         </div>
       </section>
       <section class="settings-section">
