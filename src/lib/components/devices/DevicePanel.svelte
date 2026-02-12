@@ -7,7 +7,7 @@
     selectedMidiDevices,
     triggerMidiDevices,
     selectedVideoDevices,
-    videoDeviceCodecs,
+    videoDeviceConfigs,
     audioDeviceCount,
     midiDeviceCount,
     videoDeviceCount,
@@ -17,13 +17,17 @@
     toggleMidiDevice,
     toggleMidiTrigger,
     toggleVideoDevice,
-    setVideoDeviceCodec
+    setVideoDeviceConfig
   } from '$lib/stores/devices';
   import { settings } from '$lib/stores/settings';
-  import type { VideoCodec, VideoEncodingMode, EncoderAvailability } from '$lib/api';
-  import { getEncoderAvailability } from '$lib/api';
+  import type { VideoCodec, VideoDevice, VideoDeviceConfig, VideoEncodingMode, EncoderAvailability } from '$lib/api';
+  import { getEncoderAvailability, getCodecDisplayName, getResolutionLabel, formatFps, computeDefaultConfig } from '$lib/api';
+  import VideoConfigModal from './VideoConfigModal.svelte';
   
   let encoderAvailability = $state<EncoderAvailability | null>(null);
+  
+  // Track which device's config modal is open
+  let configuringDevice = $state<VideoDevice | null>(null);
   
   // Load encoder availability on mount
   $effect(() => {
@@ -42,10 +46,8 @@
   function getAvailableCodecs(codecs: VideoCodec[]): VideoCodec[] {
     let filtered = codecs;
     if (!isRawEncodingAvailable()) {
-      // Filter out 'raw' if no encoders are available
       filtered = codecs.filter(c => c !== 'raw');
     }
-    // Sort so 'raw' is always last
     return [...filtered].sort((a, b) => {
       if (a === 'raw') return 1;
       if (b === 'raw') return -1;
@@ -58,19 +60,38 @@
       case 'av1': return 'AV1';
       case 'vp9': return 'VP9';
       case 'vp8': return 'VP8';
-      default: return 'AV1';
+      default: return 'VP8';
     }
   }
   
-  function getCodecDisplayName(codec: VideoCodec, encodingMode: VideoEncodingMode | undefined): string {
-    switch (codec) {
-      case 'mjpeg': return 'MJPEG';
-      case 'vp8': return 'VP8';
-      case 'vp9': return 'VP9';
-      case 'av1': return 'AV1';
-      case 'raw': return `Raw [${getEncodingLabel(encodingMode)}]`;
-      default: return codec.toUpperCase();
+  /** Get a compact summary of the current config for a device */
+  function getConfigSummary(device: VideoDevice): string {
+    const cfg = $videoDeviceConfigs[device.id] ?? computeDefaultConfig(device);
+    if (!cfg) return 'No supported formats';
+    
+    const codec = getCodecDisplayName(cfg.source_codec);
+    const resLabel = getResolutionLabel(cfg.source_width, cfg.source_height).split(' (')[0];
+    const fpsLabel = formatFps(cfg.source_fps);
+    
+    if (cfg.source_codec === 'raw') {
+      const encoderLabel = getEncodingLabel($settings?.video_encoding_mode);
+      const isMatchSource = cfg.target_width === 0 && cfg.target_height === 0 && cfg.target_fps === 0;
+      if (isMatchSource) {
+        return `Raw ${resLabel} ${fpsLabel}fps → ${encoderLabel}`;
+      }
+      const targetRes = cfg.target_width === 0 
+        ? resLabel 
+        : getResolutionLabel(cfg.target_width, cfg.target_height).split(' (')[0];
+      const targetFpsLabel = cfg.target_fps === 0 ? fpsLabel : formatFps(cfg.target_fps);
+      return `Raw ${resLabel} ${fpsLabel}fps → ${encoderLabel} ${targetRes} ${targetFpsLabel}fps`;
     }
+    
+    return `${codec} ${resLabel} ${fpsLabel}fps`;
+  }
+  
+  function handleConfigSave(deviceId: string, cfg: VideoDeviceConfig) {
+    setVideoDeviceConfig(deviceId, cfg);
+    configuringDevice = null;
   }
   
   let expandedSections = $state<Set<string>>(new Set(['audio', 'midi']));
@@ -265,7 +286,7 @@
           <div class="video-header">
             <span class="video-col-device">Device</span>
             <div class="video-col-format">
-              <span>Stream Type</span>
+              <span>Configuration</span>
               <button 
                 class="help-btn" 
                 onclick={(e) => { e.stopPropagation(); showFormatHelp = !showFormatHelp; }}
@@ -275,7 +296,7 @@
               </button>
               {#if showFormatHelp}
                 <div class="help-tooltip format-tooltip">
-                  Video sources may provide pre-encoded streams (like MJPEG) which use less system resources. Raw streams need to be encoded by your system (configured in <b>Settings</b>), but may result in smaller files and better quality video.
+                  Configure the capture resolution, framerate, and stream type for each video source. Pre-encoded streams (like MJPEG) use less system resources. Raw streams are encoded by your system using the encoder configured in <b>Settings</b>.
                 </div>
               {/if}
             </div>
@@ -285,31 +306,21 @@
             {#each filterDevices($videoDevices) as device}
               {@const availableCodecs = getAvailableCodecs(device.supported_codecs)}
               {@const isSupported = availableCodecs.length > 0}
-              {@const selectedCodec = $videoDeviceCodecs[device.id]}
-              {@const effectiveCodec = selectedCodec && availableCodecs.includes(selectedCodec) ? selectedCodec : availableCodecs[0]}
               <div class="device-row video-row" class:device-unsupported={!isSupported}>
                 <div class="device-info">
                   <span class="device-name">{device.name}</span>
                   <div class="device-meta">
-                    {#if device.resolutions.length > 0}
-                      <span class="meta-tag">
-                        {device.resolutions[0].width}x{device.resolutions[0].height}
-                      </span>
-                    {/if}
+                    <span class="meta-tag config-summary">{getConfigSummary(device)}</span>
                   </div>
                 </div>
-                <div class="codec-tags-cell">
+                <div class="config-cell">
                   {#if isSupported}
-                    {#each availableCodecs as codec}
-                      {@const isSelected = codec === effectiveCodec}
-                      <button 
-                        class="codec-tag" 
-                        class:codec-selected={isSelected}
-                        onclick={() => setVideoDeviceCodec(device.id, codec)}
-                      >
-                        {getCodecDisplayName(codec, $settings?.video_encoding_mode)}
-                      </button>
-                    {/each}
+                    <button 
+                      class="configure-btn"
+                      onclick={() => configuringDevice = device}
+                    >
+                      Configure
+                    </button>
                   {:else}
                     <span class="meta-tag unsupported">No formats</span>
                   {/if}
@@ -333,6 +344,15 @@
     </div>
   </div>
 </div>
+
+{#if configuringDevice}
+  <VideoConfigModal
+    device={configuringDevice}
+    currentConfig={$videoDeviceConfigs[configuringDevice.id] ?? null}
+    onSave={(cfg) => handleConfigSave(configuringDevice!.id, cfg)}
+    onClose={() => configuringDevice = null}
+  />
+{/if}
 
 <style>
   .device-panel {
@@ -589,16 +609,6 @@
     color: #a65d5d;
   }
   
-  .meta-tag.codec {
-    background: rgba(120, 140, 180, 0.15);
-    color: #8a9cc0;
-  }
-  
-  .meta-tag.format-unsupported {
-    background: rgba(100, 100, 100, 0.1);
-    color: #5a5a5a;
-  }
-  
   
   .device-unsupported {
     opacity: 0.45;
@@ -679,41 +689,35 @@
     grid-template-columns: 1fr auto 70px;
   }
   
-  .codec-tags-cell {
+  .config-cell {
     display: flex;
     justify-content: flex-end;
     align-items: center;
-    gap: 0.25rem;
     padding-right: 0.5rem;
   }
   
-  .codec-tag {
-    padding: 0.125rem 0.4375rem;
+  .configure-btn {
+    padding: 0.25rem 0.625rem;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 0.125rem;
-    color: #5a5a5a;
+    color: #6b6b6b;
     font-family: inherit;
-    font-size: 0.625rem;
+    font-size: 0.6875rem;
     letter-spacing: 0.02em;
     cursor: pointer;
     transition: all 0.15s ease;
   }
   
-  .codec-tag:hover {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.15);
-    color: #8a8a8a;
-  }
-  
-  .codec-tag.codec-selected {
-    background: rgba(201, 169, 98, 0.12);
+  .configure-btn:hover {
+    background: rgba(201, 169, 98, 0.1);
     border-color: rgba(201, 169, 98, 0.35);
     color: #c9a962;
   }
   
-  .codec-tag.codec-selected:hover {
-    background: rgba(201, 169, 98, 0.18);
+  .config-summary {
+    font-size: 0.625rem;
+    white-space: nowrap;
   }
   
   .help-btn {
@@ -892,25 +896,16 @@
     color: #a04040;
   }
 
-  :global(body.light-mode) .codec-tag {
+  :global(body.light-mode) .configure-btn {
     background: rgba(0, 0, 0, 0.04);
     border-color: rgba(0, 0, 0, 0.12);
     color: #5a5a5a;
   }
 
-  :global(body.light-mode) .codec-tag:hover {
-    background: rgba(0, 0, 0, 0.08);
-    color: #3a3a3a;
-  }
-
-  :global(body.light-mode) .codec-tag.codec-selected {
-    background: rgba(160, 128, 48, 0.15);
-    border-color: rgba(160, 128, 48, 0.4);
+  :global(body.light-mode) .configure-btn:hover {
+    background: rgba(160, 128, 48, 0.12);
+    border-color: rgba(160, 128, 48, 0.35);
     color: #8a6a20;
-  }
-
-  :global(body.light-mode) .codec-tag.codec-selected:hover {
-    background: rgba(160, 128, 48, 0.2);
   }
 
   :global(body.light-mode) .help-btn {

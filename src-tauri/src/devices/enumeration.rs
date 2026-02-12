@@ -1,17 +1,109 @@
 // Device enumeration implementations
 
-use super::{AudioDevice, MidiDevice, VideoDevice, Resolution};
+use super::{AudioDevice, MidiDevice, VideoDevice, CodecCapability};
 use crate::encoding::{VideoCodec, has_av1_encoder, has_vp9_encoder, has_vp8_encoder};
 use cpal::traits::{DeviceTrait, HostTrait};
 use gstreamer as gst;
 use gstreamer::prelude::*;
+use std::collections::HashMap;
+use std::sync::Mutex;
 
-/// Process GStreamer caps to extract codecs and resolutions
+/// Global storage for GStreamer Device objects, keyed by our device ID.
+///
+/// These are saved during enumeration and used when creating capture pipelines.
+/// Using the saved `gst::Device` ensures the pipeline's source element matches
+/// the same provider (KS, DirectShow, MediaFoundation) that reported the caps.
+/// Without this, a mismatch (e.g. caps from KS but pipeline using dshowvideosrc)
+/// can cause negotiation failures.
+static GST_DEVICE_STORE: Mutex<Option<HashMap<String, gst::Device>>> = Mutex::new(None);
+
+/// Retrieve a saved GStreamer Device object by device ID.
+/// Returns None if no device was stored for this ID.
+pub fn get_gst_device(device_id: &str) -> Option<gst::Device> {
+    let store = GST_DEVICE_STORE.lock().ok()?;
+    store.as_ref()?.get(device_id).cloned()
+}
+
+/// Get exact caps from a stored GStreamer device that match the desired mode.
+///
+/// This intersects the device's full caps (which include format, pixel-aspect-ratio,
+/// colorimetry, etc.) with a filter for the desired resolution/fps. The result
+/// preserves ALL fields from the device caps — critical for Windows KS/MF sources
+/// where partial caps (missing format or colorimetry) cause negotiation failures.
+///
+/// Returns `None` if no matching caps are found.
+pub fn get_device_exact_caps(
+    device_id: &str,
+    caps_name: &str,
+    width: u32,
+    height: u32,
+    fps: f64,
+) -> Option<gst::Caps> {
+    let device = get_gst_device(device_id)?;
+    let device_caps = device.caps()?;
+    let target_fps = crate::encoding::encoder::fps_to_gst_fraction(fps);
+    
+    let filter = gst::Caps::builder(caps_name)
+        .field("width", width as i32)
+        .field("height", height as i32)
+        .field("framerate", target_fps)
+        .build();
+    
+    let matched = device_caps.intersect_with_mode(&filter, gst::CapsIntersectMode::First);
+    
+    if matched.is_empty() {
+        println!("[Video] No exact caps match for {} {}x{} @ {:.2}fps in device {}", 
+            caps_name, width, height, fps, device_id);
+        None
+    } else {
+        println!("[Video] Found exact device caps: {}", matched);
+        Some(matched)
+    }
+}
+
+/// Intermediate structure for collecting per-codec capabilities during enumeration
+struct CapabilityCollector {
+    /// codec -> (width, height) -> set of framerates (f64 to preserve fractions like 29.97)
+    data: HashMap<VideoCodec, HashMap<(u32, u32), Vec<f64>>>,
+}
+
+impl CapabilityCollector {
+    fn new() -> Self {
+        Self { data: HashMap::new() }
+    }
+    
+    fn add(&mut self, codec: VideoCodec, width: u32, height: u32, fps: f64) {
+        let res_map = self.data.entry(codec).or_default();
+        let fps_list = res_map.entry((width, height)).or_default();
+        // Deduplicate: consider fps values within 0.01 as the same
+        if !fps_list.iter().any(|&existing| (existing - fps).abs() < 0.01) {
+            fps_list.push(fps);
+        }
+    }
+    
+    /// Finalize into sorted CodecCapability lists per codec
+    fn finalize(self) -> HashMap<VideoCodec, Vec<CodecCapability>> {
+        let mut result = HashMap::new();
+        for (codec, res_map) in self.data {
+            let mut caps: Vec<CodecCapability> = res_map.into_iter()
+                .map(|((w, h), mut fps_list)| {
+                    fps_list.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)); // Descending
+                    CodecCapability { width: w, height: h, framerates: fps_list }
+                })
+                .collect();
+            // Sort by resolution descending (highest pixel count first)
+            caps.sort_by(|a, b| (b.width * b.height).cmp(&(a.width * a.height)));
+            result.insert(codec, caps);
+        }
+        result
+    }
+}
+
+/// Process GStreamer caps to extract per-codec capabilities
 fn process_caps(
     caps: &gst::Caps,
     detected_formats: &mut Vec<String>,
-    supported_codecs: &mut Vec<VideoCodec>,
-    resolutions: &mut Vec<Resolution>,
+    collector: &mut CapabilityCollector,
     can_encode_raw: bool,
 ) {
     for i in 0..caps.size() {
@@ -22,152 +114,169 @@ fn process_caps(
             let display_name = format_display_name(format_name);
             if !detected_formats.contains(&display_name) {
                 detected_formats.push(display_name.clone());
-                
-                // Try to match to a supported codec
-                if let Some(codec) = VideoCodec::from_gst_caps_name(format_name) {
-                    // For Raw codec, only add if an encoder is available
-                    if codec == VideoCodec::Raw {
-                        if can_encode_raw && !supported_codecs.contains(&codec) {
-                            supported_codecs.push(codec);
+            }
+            
+            // Try to match to a supported codec
+            let codec = match VideoCodec::from_gst_caps_name(format_name) {
+                Some(VideoCodec::Raw) if !can_encode_raw => continue,
+                Some(c) => c,
+                None => continue,
+            };
+            
+            // Extract width (may be fixed int or IntRange)
+            let widths = extract_int_values(&structure, "width");
+            let heights = extract_int_values(&structure, "height");
+            let framerates = extract_framerate_values(&structure);
+            
+            // If we got nothing useful, use defaults
+            let widths = if widths.is_empty() { vec![1280] } else { widths };
+            let heights = if heights.is_empty() { vec![720] } else { heights };
+            let framerates = if framerates.is_empty() { vec![30.0] } else { framerates };
+            
+            // Add every combination
+            for &w in &widths {
+                for &h in &heights {
+                    for &fps in &framerates {
+                        if fps > 0.0 {
+                            collector.add(codec, w, h, fps);
                         }
-                    } else if !supported_codecs.contains(&codec) {
-                        supported_codecs.push(codec);
                     }
                 }
-            }
-            
-            // Extract resolution
-            let width = structure.get::<i32>("width").unwrap_or(1280) as u32;
-            let height = structure.get::<i32>("height").unwrap_or(720) as u32;
-            let fps = structure.get::<gst::Fraction>("framerate")
-                .map(|f| {
-                    let numer = f.numer() as f64;
-                    let denom = (f.denom() as f64).max(1.0);
-                    (numer / denom).round() as u32
-                })
-                .unwrap_or(30);
-            
-            let resolution = Resolution { width, height, fps };
-            if !resolutions.iter().any(|r| r.width == width && r.height == height) {
-                resolutions.push(resolution);
             }
         }
     }
 }
 
-/// Probe a device for specific compressed formats by trying to negotiate them
-/// This is used when DeviceMonitor only shows RAW format
-#[cfg(target_os = "windows")]
-fn probe_compressed_formats(
-    device_name: &str,
-    detected_formats: &mut Vec<String>,
-    supported_codecs: &mut Vec<VideoCodec>,
-) {
-    // List of compressed formats to try (in priority order)
-    let formats_to_try = [
-        ("video/x-av1", VideoCodec::Av1, "AV1"),
-        ("image/jpeg", VideoCodec::Mjpeg, "MJPEG"),
-    ];
+/// Extract integer values from a GStreamer structure field.
+/// Handles fixed values, IntRange (samples representative values), and lists.
+fn extract_int_values(structure: &gst::StructureRef, field: &str) -> Vec<u32> {
+    // Try as a fixed int first (most common case)
+    if let Ok(val) = structure.get::<i32>(field) {
+        return vec![val as u32];
+    }
     
-    let mut found_formats = Vec::new();
-    
-    for (caps_name, codec, display_name) in formats_to_try {
-        let (supported, _) = try_format_with_debug(device_name, caps_name);
-        if supported {
-            if !detected_formats.contains(&display_name.to_string()) {
-                detected_formats.push(display_name.to_string());
+    // Try to get the raw glib::Value and inspect it
+    // GStreamer caps can contain IntRange or lists
+    if let Ok(value) = structure.value(field) {
+        // Check if it's a list of values
+        if let Ok(list) = value.get::<gst::List>() {
+            let mut result = Vec::new();
+            for v in list.iter() {
+                if let Ok(int_val) = v.get::<i32>() {
+                    result.push(int_val as u32);
+                }
             }
-            if !supported_codecs.contains(&codec) {
-                supported_codecs.push(codec);
-                found_formats.push(display_name);
+            if !result.is_empty() {
+                return result;
             }
         }
-    }
-    
-    if !found_formats.is_empty() {
-        println!("[Sacho]   Probed formats: {:?}", found_formats);
-    }
-}
-
-/// Try to negotiate a specific format with a device
-/// Returns (supported, actual_caps_string) for debugging
-#[cfg(target_os = "windows")]
-fn try_format_with_debug(device_name: &str, caps_name: &str) -> (bool, Option<String>) {
-    let pipeline = gst::Pipeline::new();
-    
-    let source = match gst::ElementFactory::make("dshowvideosrc")
-        .property("device-name", device_name)
-        .build() 
-    {
-        Ok(src) => src,
-        Err(_) => return (false, None),
-    };
-    
-    // Create a capsfilter to force the format we're testing
-    let capsfilter = match gst::ElementFactory::make("capsfilter")
-        .property("caps", gst::Caps::builder(caps_name).build())
-        .build()
-    {
-        Ok(cf) => cf,
-        Err(_) => return (false, None),
-    };
-    
-    let fakesink = match gst::ElementFactory::make("fakesink").build() {
-        Ok(sink) => sink,
-        Err(_) => return (false, None),
-    };
-    
-    // Add and link elements
-    if pipeline.add_many([&source, &capsfilter, &fakesink]).is_err() {
-        return (false, None);
-    }
-    
-    if gst::Element::link_many([&source, &capsfilter, &fakesink]).is_err() {
-        pipeline.set_state(gst::State::Null).ok();
-        return (false, None);
-    }
-    
-    // Try to set to PLAYING - PAUSED may not be enough for some devices
-    let _ = pipeline.set_state(gst::State::Playing);
-    
-    // Wait for state change - 1s is usually enough for most devices
-    // Slower capture cards may need more time but we err on the side of speed
-    let (state_result, _, _) = pipeline.state(Some(gst::ClockTime::from_mseconds(1000)));
-    
-    // Get the actual caps for debugging
-    let actual_caps_str = source.static_pad("src")
-        .and_then(|pad| pad.current_caps())
-        .map(|caps| caps.to_string());
-    
-    // Check if negotiation succeeded AND verify the actual caps
-    // For live sources, NoPreroll is expected; Success means it reached the target state
-    let result = match state_result {
-        Ok(gst::StateChangeSuccess::Success) | Ok(gst::StateChangeSuccess::NoPreroll) | Ok(gst::StateChangeSuccess::Async) => {
-            // Verify the source's output caps match the requested format
-            if let Some(pad) = source.static_pad("src") {
-                if let Some(caps) = pad.current_caps() {
-                    if let Some(structure) = caps.structure(0) {
-                        let actual_name = structure.name().as_str();
-                        // Check if format matches (be flexible with naming)
-                        actual_name == caps_name ||
-                            (caps_name == "image/jpeg" && (actual_name.contains("jpeg") || actual_name == "image/jpeg"))
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
+        
+        // Handle IntRange: extract min/max and return common values within the range
+        if let Ok(range) = value.get::<gst::IntRange<i32>>() {
+            let min = range.min() as u32;
+            let max = range.max() as u32;
+            let step = range.step() as u32;
+            
+            println!("[Sacho]   IntRange for {}: {} .. {} (step {})", field, min, max, step);
+            
+            // For width/height, sample common video resolutions within the range
+            let common_values: Vec<u32> = if field == "width" {
+                vec![7680, 3840, 2560, 1920, 1280, 1024, 960, 800, 640, 480, 352, 320, 176, 160]
+            } else if field == "height" {
+                vec![4320, 2160, 1440, 1080, 960, 720, 600, 576, 480, 400, 360, 288, 240, 144, 120]
             } else {
-                false
+                vec![]
+            };
+            
+            let result: Vec<u32> = common_values.into_iter()
+                .filter(|&v| v >= min && v <= max && (step <= 1 || (v - min) % step == 0))
+                .collect();
+            
+            if !result.is_empty() {
+                return result;
+            }
+            
+            // If no common values fit, return at least the max
+            return vec![max];
+        }
+    }
+    
+    Vec::new()
+}
+
+/// Extract framerate values from a GStreamer structure.
+/// Handles fixed fractions, fraction ranges, and fraction lists.
+/// Returns f64 values preserving fractional rates (e.g. 29.97 for 30000/1001).
+fn extract_framerate_values(structure: &gst::StructureRef) -> Vec<f64> {
+    // Try as a fixed fraction first (most common in negotiated caps)
+    if let Ok(frac) = structure.get::<gst::Fraction>("framerate") {
+        let numer = frac.numer() as f64;
+        let denom = (frac.denom() as f64).max(1.0);
+        let fps = numer / denom;
+        if fps > 0.0 {
+            return vec![fps];
+        }
+    }
+    
+    // Try to get the raw value for list/range handling
+    if let Ok(value) = structure.value("framerate") {
+        // Check if it's a list of fractions
+        if let Ok(list) = value.get::<gst::List>() {
+            let mut result = Vec::new();
+            for v in list.iter() {
+                if let Ok(frac) = v.get::<gst::Fraction>() {
+                    let numer = frac.numer() as f64;
+                    let denom = (frac.denom() as f64).max(1.0);
+                    let fps = numer / denom;
+                    if fps > 0.0 && !result.iter().any(|&existing: &f64| (existing - fps).abs() < 0.01) {
+                        result.push(fps);
+                    }
+                }
+            }
+            if !result.is_empty() {
+                return result;
             }
         }
-        _ => false,
-    };
+        
+        // For fraction ranges, extract min/max and filter common values
+        if let Ok(range) = value.get::<gst::FractionRange>() {
+            let min_frac = range.min();
+            let max_frac = range.max();
+            let min_fps = min_frac.numer() as f64 / (min_frac.denom() as f64).max(1.0);
+            let max_fps = max_frac.numer() as f64 / (max_frac.denom() as f64).max(1.0);
+            
+            println!("[Sacho]   FractionRange: {}/{} .. {}/{} ({:.2} .. {:.2} fps)",
+                min_frac.numer(), min_frac.denom(),
+                max_frac.numer(), max_frac.denom(),
+                min_fps, max_fps);
+            
+            // Only list common framerates that fall within the device's actual range.
+            // Using a small tolerance (0.5) to include NTSC rates like 29.97 when max is 30.
+            let common = vec![120.0, 60.0, 30.0, 24.0, 15.0, 10.0, 5.0];
+            let result: Vec<f64> = common.into_iter()
+                .filter(|&f| f >= min_fps - 0.5 && f <= max_fps + 0.5)
+                .collect();
+            
+            if !result.is_empty() {
+                return result;
+            }
+            
+            // If no common values fit, return the max as a single option
+            if max_fps > 0.0 {
+                return vec![max_fps];
+            }
+        }
+        
+        // Final fallback: check serialized form for any other fraction-like type
+        let val_str = format!("{:?}", value);
+        if val_str.contains("Fraction") {
+            // Unknown fraction type — conservative default
+            println!("[Sacho]   Unknown fraction value: {}", val_str);
+            return vec![30.0, 15.0];
+        }
+    }
     
-    // Clean up
-    pipeline.set_state(gst::State::Null).ok();
-    
-    (result, actual_caps_str)
+    Vec::new()
 }
 
 /// Convert GStreamer format name to a short display name
@@ -243,8 +352,6 @@ pub fn enumerate_midi_devices() -> Vec<MidiDevice> {
 
 /// Enumerate all available video capture devices (webcams) using GStreamer
 pub fn enumerate_video_devices() -> Vec<VideoDevice> {
-    use std::collections::HashMap;
-    
     println!("[Sacho] Enumerating video devices with GStreamer...");
     
     // Initialize GStreamer
@@ -368,6 +475,8 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
     struct DeviceInfo {
         classes: Vec<String>,
         all_caps: Vec<gst::Caps>,
+        /// GStreamer Device objects from each provider (for create_element later)
+        gst_devices: Vec<gst::Device>,
     }
     
     for device in monitor.devices() {
@@ -384,6 +493,7 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
         let entry = device_map.entry(name.clone()).or_insert_with(|| DeviceInfo {
             classes: Vec::new(),
             all_caps: Vec::new(),
+            gst_devices: Vec::new(),
         });
         
         entry.classes.push(device_class.clone());
@@ -392,9 +502,16 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
             println!("[Sacho]   {} caps: {} structures", device_class, caps.size());
             entry.all_caps.push(caps);
         }
+        
+        entry.gst_devices.push(device);
     }
     
     monitor.stop();
+    
+    // Clear previous device store and prepare to save new ones
+    if let Ok(mut store) = GST_DEVICE_STORE.lock() {
+        *store = Some(HashMap::new());
+    }
     
     // Process collected devices
     let mut devices = Vec::new();
@@ -413,59 +530,63 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
             .to_lowercase();
         let device_id = format!("video-{}", safe_name);
         
-        // Try to get supported resolutions and formats from device caps
-        let mut resolutions = Vec::new();
-        let mut supported_codecs = Vec::new();
+        // Save the GStreamer Device object with the MOST caps (richest capabilities)
+        // for later pipeline creation. Using Device::create_element() ensures the
+        // pipeline source matches the provider that enumerated this device.
+        // E.g. for C270, KS provider has 312 caps vs MF's 38 — KS is correct.
+        if let Some(gst_dev) = info.gst_devices.into_iter().max_by_key(|d| d.caps().map(|c| c.size()).unwrap_or(0)) {
+            println!("[Sacho]   Saving GStreamer device object for {} (class: {}, caps: {})",
+                device_id, gst_dev.device_class(), gst_dev.caps().map(|c| c.size()).unwrap_or(0));
+            if let Ok(mut store) = GST_DEVICE_STORE.lock() {
+                if let Some(map) = store.as_mut() {
+                    map.insert(device_id.clone(), gst_dev);
+                }
+            }
+        }
+        
         let mut detected_formats: Vec<String> = Vec::new();
+        let mut collector = CapabilityCollector::new();
         
-        // First, process DeviceMonitor caps (these are accurate for what the device reports)
+        // Process DeviceMonitor caps from all providers (MF + KS).
+        // Both Video/Source (MediaFoundation) and Source/Video (KS) are enumerated,
+        // so compressed formats (MJPEG, AV1, etc.) are detected directly from caps
+        // without needing to probe by opening the device.
         for caps in &info.all_caps {
-            process_caps(caps, &mut detected_formats, &mut supported_codecs, &mut resolutions, can_encode_raw);
+            process_caps(caps, &mut detected_formats, &mut collector, can_encode_raw);
         }
         
-        // On Windows, if we only found RAW format, probe more aggressively
-        // Some devices (like capture cards) expose video through DirectShow but not DeviceMonitor
-        #[cfg(target_os = "windows")]
-        {
-            // Check if we only have Raw codec (or nothing except Raw/DV formats)
-            // We need to probe even if Raw was added, since hardware-encoded formats might be available
-            let has_only_raw_codec = supported_codecs.iter().all(|c| *c == VideoCodec::Raw);
-            let only_raw_formats = detected_formats.iter().all(|f| f == "RAW" || f == "DV");
-            
-            if has_only_raw_codec && only_raw_formats {
-                println!("[Sacho]   Only RAW detected, probing for compressed formats...");
-                probe_compressed_formats(&name, &mut detected_formats, &mut supported_codecs);
-            }
+        // Log all detected formats
+        println!("[Sacho]   All formats: {:?}", detected_formats);
+        
+        if detected_formats.is_empty() {
+            println!("[Sacho]   No caps available for device");
         }
-            
-            // Log all detected formats
-            println!("[Sacho]   All formats: {:?}", detected_formats);
-            
-            if detected_formats.is_empty() {
-                println!("[Sacho]   No caps available for device");
-            }
-            
-            // Default resolutions if none detected
-            if resolutions.is_empty() {
-                resolutions = vec![
-                    Resolution { width: 1920, height: 1080, fps: 30 },
-                    Resolution { width: 1280, height: 720, fps: 30 },
-                    Resolution { width: 640, height: 480, fps: 30 },
-                ];
-            }
-            
-            // Sort by resolution (highest first)
-            resolutions.sort_by(|a, b| (b.width * b.height).cmp(&(a.width * a.height)));
-            
-            let codec_names: Vec<_> = supported_codecs.iter().map(|c| c.display_name()).collect();
-            println!("[Sacho] Video {}: {} ({} resolutions, codecs: {:?})", 
-                device_id, name, resolutions.len(), codec_names);
-            
+        
+        // Finalize capabilities
+        let mut capabilities = collector.finalize();
+        
+        // If no capabilities detected, add defaults for Raw
+        if capabilities.is_empty() && can_encode_raw {
+            capabilities.insert(VideoCodec::Raw, vec![
+                CodecCapability { width: 1920, height: 1080, framerates: vec![30.0] },
+                CodecCapability { width: 1280, height: 720, framerates: vec![30.0] },
+                CodecCapability { width: 640, height: 480, framerates: vec![30.0] },
+            ]);
+        }
+        
+        // Derive supported_codecs from capabilities keys
+        let supported_codecs: Vec<VideoCodec> = capabilities.keys().copied().collect();
+        
+        let codec_names: Vec<_> = supported_codecs.iter().map(|c| c.display_name()).collect();
+        let total_modes: usize = capabilities.values().map(|v| v.iter().map(|c| c.framerates.len()).sum::<usize>()).sum();
+        println!("[Sacho] Video {}: {} ({} modes, codecs: {:?})", 
+            device_id, name, total_modes, codec_names);
+        
         devices.push(VideoDevice {
             id: device_id,
             name,
-            resolutions,
             supported_codecs,
+            capabilities,
             all_formats: detected_formats,
         });
     }

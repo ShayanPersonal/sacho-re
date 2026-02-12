@@ -79,10 +79,10 @@ pub struct Config {
     /// Selected video device IDs
     pub selected_video_devices: Vec<String>,
     
-    /// Selected codec per video device (device_id -> codec)
-    /// If not set for a device, the preferred codec is used automatically
+    /// Per-device video configuration (device_id -> config)
+    /// Stores source codec, source resolution/fps, and target resolution/fps per device
     #[serde(default)]
-    pub video_device_codecs: HashMap<String, VideoCodec>,
+    pub video_device_configs: HashMap<String, VideoDeviceConfig>,
     
     /// Encoder quality preset level per encoding mode (1=lightest, 5=highest quality)
     /// Keys are the encoding mode names: "av1", "vp9", "vp8"
@@ -194,6 +194,55 @@ impl Default for VideoEncodingMode {
     }
 }
 
+/// Per-device video source configuration.
+/// Stores the selected source codec, source resolution/fps, and target encoding resolution/fps.
+/// When source_codec is not Raw, the video is recorded as passthrough and target fields are ignored.
+///
+/// A target value of 0 (or 0.0 for fps) means "Match Source" — the encoding will use the
+/// source resolution/fps directly without scaling or rate conversion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VideoDeviceConfig {
+    /// Source codec to capture from the device
+    pub source_codec: VideoCodec,
+    /// Source capture width
+    pub source_width: u32,
+    /// Source capture height
+    pub source_height: u32,
+    /// Source capture framerate (f64 to preserve fractional rates like 29.97)
+    pub source_fps: f64,
+    /// Target encoding width (0 = match source). Only used when source_codec is Raw.
+    pub target_width: u32,
+    /// Target encoding height (0 = match source). Only used when source_codec is Raw.
+    pub target_height: u32,
+    /// Target encoding framerate (0.0 = match source). Only used when source_codec is Raw.
+    pub target_fps: f64,
+}
+
+impl PartialEq for VideoDeviceConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.source_codec == other.source_codec
+            && self.source_width == other.source_width
+            && self.source_height == other.source_height
+            && (self.source_fps - other.source_fps).abs() < 0.001
+            && self.target_width == other.target_width
+            && self.target_height == other.target_height
+            && (self.target_fps - other.target_fps).abs() < 0.001
+    }
+}
+
+impl VideoDeviceConfig {
+    /// Resolve "Match Source" sentinel values (0 / 0.0) to actual source values.
+    /// Returns a config with concrete target dimensions/fps.
+    pub fn resolved(&self) -> Self {
+        Self {
+            target_width: if self.target_width == 0 { self.source_width } else { self.target_width },
+            target_height: if self.target_height == 0 { self.source_height } else { self.target_height },
+            target_fps: if self.target_fps == 0.0 { self.source_fps } else { self.target_fps },
+            ..self.clone()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DevicePreset {
     pub name: String,
@@ -225,7 +274,7 @@ impl Default for Config {
             selected_midi_devices: Vec::new(),
             trigger_midi_devices: Vec::new(),
             selected_video_devices: Vec::new(),
-            video_device_codecs: HashMap::new(),
+            video_device_configs: HashMap::new(),
             encoder_preset_levels: HashMap::new(),
             encode_during_preroll: false,
             combine_audio_video: false,

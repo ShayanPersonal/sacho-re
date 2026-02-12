@@ -178,8 +178,8 @@ pub struct VideoCapturePipeline {
     /// Video dimensions
     pub width: u32,
     pub height: u32,
-    /// Frame rate
-    pub fps: u32,
+    /// Frame rate (f64 to preserve fractional rates like 29.97)
+    pub fps: f64,
     /// Is currently recording
     is_recording: bool,
     /// File handle for recording (for pre-encoded video)
@@ -207,6 +207,12 @@ pub struct VideoCapturePipeline {
     preroll_encoder: Option<PrerollVideoEncoder>,
     /// Shared output from pre-roll encoder
     preroll_encoder_output: Option<Arc<Mutex<PrerollEncoderOutput>>>,
+    /// Target encoding width (may differ from source width for raw codec)
+    target_width: u32,
+    /// Target encoding height (may differ from source height for raw codec)
+    target_height: u32,
+    /// Target encoding fps (may differ from source fps for raw codec)
+    target_fps: f64,
 }
 
 /// Generic video file writer that handles different codecs and containers
@@ -223,7 +229,9 @@ struct VideoWriter {
 
 impl VideoWriter {
     /// Create a new video writer for the specified codec
-    fn new(path: &PathBuf, codec: crate::encoding::VideoCodec, width: u32, height: u32, fps: u32) -> Result<Self> {
+    fn new(path: &PathBuf, codec: crate::encoding::VideoCodec, width: u32, height: u32, fps: f64) -> Result<Self> {
+        use crate::encoding::encoder::fps_to_gst_fraction;
+        
         let pipeline = gst::Pipeline::new();
         let container = codec.container();
         
@@ -234,7 +242,7 @@ impl VideoWriter {
         let caps = gst::Caps::builder(codec.gst_caps_name())
             .field("width", width as i32)
             .field("height", height as i32)
-            .field("framerate", gst::Fraction::new(fps as i32, 1))
+            .field("framerate", fps_to_gst_fraction(fps))
             .build();
         
         let appsrc = gst_app::AppSrc::builder()
@@ -527,10 +535,13 @@ impl PrerollVideoEncoder {
     fn new(
         width: u32,
         height: u32,
-        fps: u32,
+        fps: f64,
         target_codec: crate::encoding::VideoCodec,
         preset_level: u8,
         max_preroll_secs: u32,
+        target_width: Option<u32>,
+        target_height: Option<u32>,
+        target_fps: Option<f64>,
     ) -> Result<Self> {
         use crate::encoding::encoder::{
             AsyncVideoEncoder, EncoderConfig,
@@ -541,16 +552,21 @@ impl PrerollVideoEncoder {
         println!("[PrerollEncoder] Using {} for {} encoding (pre-roll)", 
             hw_type.display_name(), target_codec.display_name());
         
+        let effective_fps = target_fps.unwrap_or(fps);
         let config = EncoderConfig {
-            keyframe_interval: fps * 2,
+            keyframe_interval: (effective_fps * 2.0).round() as u32,
             target_codec,
             preset_level,
+            target_width,
+            target_height,
+            target_fps,
         };
         
-        // Create the common pipeline start (appsrc, queue, videoconvert)
+        // Create the common pipeline start (appsrc, queue, videoconvert, optional scale/rate)
         let (pipeline, appsrc, queue, videoconvert) = 
-            AsyncVideoEncoder::create_common_pipeline_start(width, height, fps)
-                .map_err(|e| VideoError::Pipeline(format!("PrerollEncoder pipeline: {}", e)))?;
+            AsyncVideoEncoder::create_common_pipeline_start_with_target(
+                width, height, fps, target_width, target_height, target_fps,
+            ).map_err(|e| VideoError::Pipeline(format!("PrerollEncoder pipeline: {}", e)))?;
         
         // Create encoder element based on target codec
         let encoder = match target_codec {
@@ -653,25 +669,34 @@ impl Drop for PrerollVideoEncoder {
 }
 
 impl VideoCapturePipeline {
-    /// Create a new capture pipeline for a webcam device with passthrough
-    /// 
-    /// This pipeline captures video directly from the camera without re-encoding,
-    /// which is much more efficient than decode+encode.
-    /// 
-    /// - `device_index`: Device index (used on Linux/macOS)
-    /// - `device_name`: Device name (used on Windows with DirectShow)
-    /// - `codec`: Video codec to capture
-    /// - `pre_roll_secs`: Pre-roll buffer duration
-    pub fn new_webcam(device_index: u32, device_name_hint: &str, codec: crate::encoding::VideoCodec, pre_roll_secs: u32) -> Result<Self> {
-        // Initialize GStreamer if not already done
-        gst::init().map_err(|e| VideoError::Gst(e))?;
+    /// Create the GStreamer source element for a video device.
+    ///
+    /// First tries to use a saved `gst::Device` object from the device monitor
+    /// (via `Device::create_element`), which ensures the pipeline uses the same
+    /// provider (KS, DirectShow, MediaFoundation) that originally enumerated the device.
+    /// Falls back to platform-specific defaults if no saved device is available.
+    fn create_source_element(device_id: &str, _device_index: u32, device_name_hint: &str) -> Result<(gst::Element, String)> {
+        // Try to use the saved GStreamer Device object from enumeration
+        if let Some(gst_device) = crate::devices::enumeration::get_gst_device(device_id) {
+            match gst_device.create_element(Some("source")) {
+                Ok(src) => {
+                    let factory_name = src.factory()
+                        .map(|f| f.name().to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let device_name = gst_device.display_name().to_string();
+                    println!("[Video] Using saved device object -> {} for {}", factory_name, device_name);
+                    return Ok((src, device_name));
+                }
+                Err(e) => {
+                    println!("[Video] Warning: Device::create_element failed for {}: {}", device_id, e);
+                    println!("[Video] Falling back to manual source creation");
+                }
+            }
+        } else {
+            println!("[Video] No saved GStreamer device for {}, using fallback", device_id);
+        }
         
-        let pipeline = gst::Pipeline::new();
-        
-        // Create source element based on platform
-        // Windows: Use DirectShow (dshowvideosrc) to access video from capture cards
-        // Linux: Use v4l2src
-        // macOS: Use avfvideosrc
+        // Fallback: create source element manually based on platform
         #[cfg(target_os = "windows")]
         let (source, device_name) = {
             let src = gst::ElementFactory::make("dshowvideosrc")
@@ -703,25 +728,47 @@ impl VideoCapturePipeline {
             (src, name)
         };
         
+        Ok((source, device_name))
+    }
+    
+    /// Create a new capture pipeline for a webcam device with passthrough
+    /// 
+    /// This pipeline captures video directly from the camera without re-encoding,
+    /// which is much more efficient than decode+encode.
+    /// 
+    /// - `device_index`: Device index (used on Linux/macOS)
+    /// - `device_name`: Device name (used on Windows with DirectShow)
+    /// - `codec`: Video codec to capture
+    /// - `source_width`, `source_height`, `source_fps`: Exact source resolution/fps to request
+    /// - `pre_roll_secs`: Pre-roll buffer duration
+    /// - `device_id`: Our internal device ID (e.g. "video-logi_c270_hd_webcam") used to
+    ///    look up the saved GStreamer Device object from enumeration
+    pub fn new_webcam(device_index: u32, device_name_hint: &str, device_id: &str, codec: crate::encoding::VideoCodec, source_width: u32, source_height: u32, source_fps: f64, pre_roll_secs: u32) -> Result<Self> {
+        // Initialize GStreamer if not already done
+        gst::init().map_err(|e| VideoError::Gst(e))?;
+        
+        let pipeline = gst::Pipeline::new();
+        
+        let (source, device_name) = Self::create_source_element(device_id, device_index, device_name_hint)?;
+        
         println!("[Video] Creating {} passthrough pipeline for {} (device {})", 
             codec.display_name(), device_name, device_index);
         
-        // Passthrough pipeline: source -> capsfilter(codec) -> parser -> capsfilter(byte-stream) -> queue -> appsink
-        // We force byte-stream output so the writer's parser can properly convert to AVC for muxing
-        
-        // Capsfilter to force the specified codec output from camera
-        // Use width/height ranges to prefer higher resolutions while allowing negotiation
-        let input_caps = gst::Caps::builder(codec.gst_caps_name())
-            .field("width", gst::IntRange::new(640, 1920))
-            .field("height", gst::IntRange::new(480, 1080))
-            .field("framerate", gst::FractionRange::new(
-                gst::Fraction::new(15, 1),
-                gst::Fraction::new(60, 1)
-            ))
-            .build();
+        // Passthrough pipeline: source -> capsfilter(codec) -> queue -> appsink
+        // Use the device's EXACT caps when available (includes format, PAR, colorimetry etc.)
+        let input_caps = crate::devices::enumeration::get_device_exact_caps(
+            device_id, codec.gst_caps_name(), source_width, source_height, source_fps,
+        ).unwrap_or_else(|| {
+            println!("[Video] Using fallback partial caps (no exact device caps available)");
+            gst::Caps::builder(codec.gst_caps_name())
+                .field("width", source_width as i32)
+                .field("height", source_height as i32)
+                .field("framerate", crate::encoding::encoder::fps_to_gst_fraction(source_fps))
+                .build()
+        });
         
         let capsfilter = gst::ElementFactory::make("capsfilter")
-            .property("caps", input_caps)
+            .property("caps", &input_caps)
             .build()
             .map_err(|e| VideoError::Pipeline(format!("Failed to create capsfilter: {}", e)))?;
         
@@ -755,7 +802,7 @@ impl VideoCapturePipeline {
         // Debug: Print the caps being used
         println!("[Video] {} passthrough pipeline created for {} (device {})", 
             codec.display_name(), device_name, device_index);
-        println!("[Video]   Capsfilter set to: {}", codec.gst_caps_name());
+        println!("[Video]   Capsfilter set to: {} {}x{} @ {}fps", codec.gst_caps_name(), source_width, source_height, source_fps);
         
         // Create pre-roll buffer
         let preroll_buffer = Arc::new(Mutex::new(VideoPrerollBuffer::new(pre_roll_secs)));
@@ -826,9 +873,9 @@ impl VideoCapturePipeline {
             recording_start: None,
             pts_offset: None,
             frames_written: 0,
-            width: 1280,
-            height: 720,
-            fps: 30,
+            width: source_width,
+            height: source_height,
+            fps: source_fps,
             is_recording: false,
             file_writer: None,
             raw_encoder: None,
@@ -842,6 +889,9 @@ impl VideoCapturePipeline {
             needs_frames,
             preroll_encoder: None,
             preroll_encoder_output: None,
+            target_width: source_width,
+            target_height: source_height,
+            target_fps: source_fps,
         })
     }
     
@@ -851,11 +901,16 @@ impl VideoCapturePipeline {
     /// 
     /// - `device_index`: Device index (used on Linux/macOS)
     /// - `device_name`: Device name (used on Windows with DirectShow)
+    /// - `source_width`, `source_height`, `source_fps`: Exact source resolution/fps to request
     /// - `pre_roll_secs`: Pre-roll buffer duration
     /// - `encoding_mode`: How to encode the raw video
     pub fn new_webcam_raw(
         device_index: u32, 
-        device_name_hint: &str, 
+        device_name_hint: &str,
+        device_id: &str,
+        source_width: u32,
+        source_height: u32,
+        source_fps: f64,
         pre_roll_secs: u32,
         encoding_mode: VideoEncodingMode,
         encode_during_preroll: bool,
@@ -865,54 +920,28 @@ impl VideoCapturePipeline {
         
         let pipeline = gst::Pipeline::new();
         
-        // Create source element based on platform
-        #[cfg(target_os = "windows")]
-        let (source, device_name) = {
-            let src = gst::ElementFactory::make("dshowvideosrc")
-                .property("device-name", device_name_hint)
-                .build()
-                .map_err(|e| VideoError::Pipeline(format!("Failed to create dshowvideosrc: {}", e)))?;
-            (src, device_name_hint.to_string())
-        };
-        
-        #[cfg(target_os = "linux")]
-        let (source, device_name) = {
-            let src = gst::ElementFactory::make("v4l2src")
-                .property("device", format!("/dev/video{}", device_index))
-                .build()
-                .map_err(|e| VideoError::Pipeline(format!("Failed to create v4l2src: {}", e)))?;
-            let name = src.property::<Option<String>>("device-name")
-                .unwrap_or_else(|| format!("Webcam {}", device_index));
-            (src, name)
-        };
-        
-        #[cfg(target_os = "macos")]
-        let (source, device_name) = {
-            let src = gst::ElementFactory::make("avfvideosrc")
-                .property("device-index", device_index as i32)
-                .build()
-                .map_err(|e| VideoError::Pipeline(format!("Failed to create avfvideosrc: {}", e)))?;
-            let name = src.property::<Option<String>>("device-name")
-                .unwrap_or_else(|| format!("Webcam {}", device_index));
-            (src, name)
-        };
+        let (source, device_name) = Self::create_source_element(device_id, device_index, device_name_hint)?;
         
         println!("[Video] Creating RAW capture pipeline for {} (device {})", device_name, device_index);
         println!("[Video]   Encoding mode: {:?}", encoding_mode);
         
         // Raw video pipeline: source -> capsfilter(raw) -> videoconvert -> queue -> appsink
-        // We prefer NV12 format as it's efficient for hardware encoders
-        let input_caps = gst::Caps::builder("video/x-raw")
-            .field("width", gst::IntRange::new(640, 1920))
-            .field("height", gst::IntRange::new(480, 1080))
-            .field("framerate", gst::FractionRange::new(
-                gst::Fraction::new(15, 1),
-                gst::Fraction::new(60, 1)
-            ))
-            .build();
+        // Use the device's EXACT caps (including format, pixel-aspect-ratio, colorimetry)
+        // when available. Partial caps (missing format etc.) cause negotiation failures
+        // on Windows KS/MF sources.
+        let input_caps = crate::devices::enumeration::get_device_exact_caps(
+            device_id, "video/x-raw", source_width, source_height, source_fps,
+        ).unwrap_or_else(|| {
+            println!("[Video] Using fallback partial caps (no exact device caps available)");
+            gst::Caps::builder("video/x-raw")
+                .field("width", source_width as i32)
+                .field("height", source_height as i32)
+                .field("framerate", crate::encoding::encoder::fps_to_gst_fraction(source_fps))
+                .build()
+        });
         
         let capsfilter = gst::ElementFactory::make("capsfilter")
-            .property("caps", input_caps)
+            .property("caps", &input_caps)
             .build()
             .map_err(|e| VideoError::Pipeline(format!("Failed to create capsfilter: {}", e)))?;
         
@@ -1035,9 +1064,9 @@ impl VideoCapturePipeline {
             recording_start: None,
             pts_offset: None,
             frames_written: 0,
-            width: 1280,
-            height: 720,
-            fps: 30,
+            width: source_width,
+            height: source_height,
+            fps: source_fps,
             is_recording: false,
             file_writer: None,
             raw_encoder: None,
@@ -1051,6 +1080,9 @@ impl VideoCapturePipeline {
             needs_frames,
             preroll_encoder: None,          // Created in start() after cap negotiation
             preroll_encoder_output: None,   // Created in start() after cap negotiation
+            target_width: source_width,     // Will be overridden by caller if target differs
+            target_height: source_height,
+            target_fps: source_fps,
         })
     }
     
@@ -1059,10 +1091,11 @@ impl VideoCapturePipeline {
         self.pipeline.set_state(gst::State::Playing)?;
         println!("[Video] Started capture pipeline for {}", self.device_name);
         
-        // Query the negotiated caps to get actual resolution
-        // Give the pipeline a moment to negotiate
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        // Query the negotiated caps to get actual resolution.
+        // Give the pipeline a moment to negotiate — live sources may need more time.
+        std::thread::sleep(std::time::Duration::from_millis(250));
         
+        let mut negotiated = false;
         if let Some(pad) = self.appsink.static_pad("sink") {
             if let Some(caps) = pad.current_caps() {
                 if let Some(structure) = caps.structure(0) {
@@ -1072,11 +1105,44 @@ impl VideoCapturePipeline {
                         .map(|f| {
                             let numer = f.numer() as f64;
                             let denom = (f.denom() as f64).max(1.0);
-                            (numer / denom).round() as u32
+                            numer / denom
                         })
-                        .unwrap_or(30);
+                        .unwrap_or(30.0);
                     
-                    println!("[Video]   Negotiated: {}x{} @ {}fps", self.width, self.height, self.fps);
+                    println!("[Video]   Negotiated: {}x{} @ {:.2}fps", self.width, self.height, self.fps);
+                    negotiated = true;
+                }
+            }
+        }
+        
+        if !negotiated {
+            println!("[Video] WARNING: Pipeline for {} did not negotiate caps after 250ms!", self.device_name);
+            println!("[Video]   Requested: {}x{} @ {:.2}fps, codec: {}", 
+                self.width, self.height, self.fps, self.codec.display_name());
+            println!("[Video]   This usually means the device does not support this combination.");
+            println!("[Video]   The recording may produce an empty file.");
+            
+            // Check if the pipeline is in an error state
+            let (state_result, current, pending) = self.pipeline.state(Some(gst::ClockTime::from_mseconds(100)));
+            println!("[Video]   Pipeline state: {:?}, current: {:?}, pending: {:?}", state_result, current, pending);
+            
+            // Check bus for error messages — these reveal the actual GStreamer failure reason
+            if let Some(bus) = self.pipeline.bus() {
+                while let Some(msg) = bus.pop_filtered(&[gst::MessageType::Error, gst::MessageType::Warning]) {
+                    match msg.view() {
+                        gst::MessageView::Error(err) => {
+                            let src_name = err.src().map(|s| s.name().to_string()).unwrap_or_default();
+                            println!("[Video]   GStreamer ERROR from {}: {}", src_name, err.error());
+                            if let Some(debug) = err.debug() {
+                                println!("[Video]   Debug: {}", debug);
+                            }
+                        }
+                        gst::MessageView::Warning(warn) => {
+                            let src_name = warn.src().map(|s| s.name().to_string()).unwrap_or_default();
+                            println!("[Video]   GStreamer WARNING from {}: {}", src_name, warn.error());
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -1097,10 +1163,16 @@ impl VideoCapturePipeline {
                 VideoEncodingMode::Raw => crate::encoding::VideoCodec::Vp8, // Fallback
             };
             
+            // Compute target dimensions for preroll encoder
+            let pe_tw = if self.target_width != self.width { Some(self.target_width) } else { None };
+            let pe_th = if self.target_height != self.height { Some(self.target_height) } else { None };
+            let pe_tf = if (self.target_fps - self.fps).abs() > 0.01 { Some(self.target_fps) } else { None };
+            
             match PrerollVideoEncoder::new(
                 self.width, self.height, self.fps,
                 target_codec, self.preset_level,
                 self.pre_roll_secs,
+                pe_tw, pe_th, pe_tf,
             ) {
                 Ok(encoder) => {
                     let output = encoder.output.clone();
@@ -1174,7 +1246,8 @@ impl VideoCapturePipeline {
             let target_codec = self.preroll_encoder_output.as_ref().unwrap().lock().target_codec;
             
             // Create the writer OUTSIDE the lock (pipeline creation takes a moment)
-            let mut writer = VideoWriter::new(&output_path, target_codec, self.width, self.height, self.fps)?;
+            // Use target dimensions since the preroll encoder outputs at target resolution/fps
+            let mut writer = VideoWriter::new(&output_path, target_codec, self.target_width, self.target_height, self.target_fps)?;
             
             // Lock the output, drain, write pre-roll, and atomically switch to recording
             let mut output = self.preroll_encoder_output.as_ref().unwrap().lock();
@@ -1226,14 +1299,22 @@ impl VideoCapturePipeline {
             };
             
             // Raw video - use async encoder
+            // Use target dimensions if they differ from source
+            let use_target_w = if self.target_width != self.width { Some(self.target_width) } else { None };
+            let use_target_h = if self.target_height != self.height { Some(self.target_height) } else { None };
+            let use_target_fps = if (self.target_fps - self.fps).abs() > 0.01 { Some(self.target_fps) } else { None };
+            
             let encoder_config = EncoderConfig {
-                keyframe_interval: self.fps * 2, // Keyframe every 2 seconds
+                keyframe_interval: (self.target_fps * 2.0).round() as u32, // Keyframe every 2 seconds at target fps
                 target_codec,
                 preset_level: self.preset_level,
+                target_width: use_target_w,
+                target_height: use_target_h,
+                target_fps: use_target_fps,
             };
             
             // Create encoder with buffer size of ~2 seconds of frames for backpressure
-            let buffer_size = (self.fps * 2) as usize;
+            let buffer_size = (self.fps * 2.0) as usize;
             let encoder = AsyncVideoEncoder::new(
                 output_path.clone(),
                 self.width,
@@ -1381,12 +1462,19 @@ impl VideoCapturePipeline {
         println!("[Video] Stopped recording {}, duration: {:?}, size: {} bytes", 
             filename, duration, file_size);
         
+        // Report output dimensions: target for raw (encoded), source for passthrough
+        let (out_w, out_h, out_fps) = if self.codec == crate::encoding::VideoCodec::Raw {
+            (self.target_width, self.target_height, self.target_fps)
+        } else {
+            (self.width, self.height, self.fps)
+        };
+        
         Ok(VideoFileInfo {
             filename,
             device_name: self.device_name.clone(),
-            width: self.width,
-            height: self.height,
-            fps: self.fps,
+            width: out_w,
+            height: out_h,
+            fps: out_fps,
             duration_secs: duration.as_secs_f64(),
             size_bytes: file_size,
             has_audio: false,
@@ -1593,14 +1681,14 @@ impl VideoCaptureManager {
         }
     }
     
-    /// Start capturing from specified devices with their codecs
+    /// Start capturing from specified devices with their per-device configs
     /// 
-    /// Each tuple is (device_id, device_name, codec)
-    pub fn start(&mut self, devices: &[(String, String, crate::encoding::VideoCodec)]) -> Result<()> {
+    /// Each tuple is (device_id, device_name, VideoDeviceConfig)
+    pub fn start(&mut self, devices: &[(String, String, crate::config::VideoDeviceConfig)]) -> Result<()> {
         // Stop any existing pipelines
         self.stop();
         
-        for (device_id, device_name, codec) in devices {
+        for (device_id, device_name, dev_config) in devices {
             // Device index is only used on Linux/macOS; Windows uses device_name
             // For name-based IDs (video-xxx), we don't have an index
             let index = device_id
@@ -1608,24 +1696,44 @@ impl VideoCaptureManager {
                 .and_then(|s| s.parse::<u32>().ok())
                 .unwrap_or(0);
             
+            let codec = dev_config.source_codec;
+            
             // Create appropriate pipeline based on codec
             let pipeline_result = if codec.requires_encoding() {
                 // Raw video - use encoding pipeline
                 VideoCapturePipeline::new_webcam_raw(
                     index, 
-                    device_name, 
+                    device_name,
+                    device_id,
+                    dev_config.source_width,
+                    dev_config.source_height,
+                    dev_config.source_fps,
                     self.pre_roll_secs,
                     self.encoding_mode.clone(),
                     self.encode_during_preroll,
                 )
             } else {
                 // Pre-encoded video - use passthrough pipeline
-                VideoCapturePipeline::new_webcam(index, device_name, *codec, self.pre_roll_secs)
+                VideoCapturePipeline::new_webcam(
+                    index, device_name, device_id, codec,
+                    dev_config.source_width,
+                    dev_config.source_height,
+                    dev_config.source_fps,
+                    self.pre_roll_secs,
+                )
             };
             
             match pipeline_result {
                 Ok(mut pipeline) => {
                     pipeline.preset_level = self.preset_level;
+                    // Set target resolution/fps for raw encoding
+                    // Resolve "Match Source" sentinels (0 / 0.0 → source values)
+                    if codec.requires_encoding() {
+                        let resolved = dev_config.resolved();
+                        pipeline.target_width = resolved.target_width;
+                        pipeline.target_height = resolved.target_height;
+                        pipeline.target_fps = resolved.target_fps;
+                    }
                     if let Err(e) = pipeline.start() {
                         println!("[Video] Failed to start pipeline for {}: {}", device_id, e);
                         continue;

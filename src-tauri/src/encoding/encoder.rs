@@ -85,6 +85,12 @@ pub struct EncoderConfig {
     /// Quality preset level (1 = lightest, 5 = maximum quality)
     /// See [`super::presets`] for per-encoder parameter mappings.
     pub preset_level: u8,
+    /// Target encoding width (if different from source, videoscale is inserted)
+    pub target_width: Option<u32>,
+    /// Target encoding height (if different from source, videoscale is inserted)
+    pub target_height: Option<u32>,
+    /// Target encoding fps (if different from source, videorate is inserted)
+    pub target_fps: Option<f64>,
 }
 
 impl Default for EncoderConfig {
@@ -93,8 +99,45 @@ impl Default for EncoderConfig {
             keyframe_interval: 60, // Every 2 seconds at 30fps
             target_codec: VideoCodec::Av1,
             preset_level: super::presets::DEFAULT_PRESET,
+            target_width: None,
+            target_height: None,
+            target_fps: None,
         }
     }
+}
+
+/// Convert an f64 framerate to a GStreamer Fraction for use in caps.
+///
+/// Handles common NTSC fractional rates (29.97, 59.94, 23.976, etc.)
+/// and integer rates. This is critical for proper cap negotiation —
+/// requesting `framerate=30/1` when a device only supports `30000/1001`
+/// will cause negotiation failure.
+pub fn fps_to_gst_fraction(fps: f64) -> gst::Fraction {
+    // Check integer framerates FIRST — exact values like 30.0, 60.0, 24.0
+    // must map to 30/1, 60/1, 24/1 (not NTSC approximations).
+    let rounded = fps.round() as i32;
+    if (fps - rounded as f64).abs() < 0.01 {
+        return gst::Fraction::new(rounded, 1);
+    }
+    
+    // Then check common NTSC fractional rates (29.97, 59.94, etc.)
+    let ntsc_pairs: &[(f64, i32, i32)] = &[
+        (23.976, 24000, 1001),
+        (29.970, 30000, 1001),
+        (47.952, 48000, 1001),
+        (59.940, 60000, 1001),
+        (119.880, 120000, 1001),
+    ];
+    
+    for &(approx, num, den) in ntsc_pairs {
+        if (fps - approx).abs() < 0.05 {
+            return gst::Fraction::new(num, den);
+        }
+    }
+    
+    // Fallback: approximate with 1001 denominator
+    let num = (fps * 1001.0).round() as i32;
+    gst::Fraction::new(num, 1001)
 }
 
 /// Type of hardware encoder backend
@@ -433,7 +476,7 @@ impl AsyncVideoEncoder {
         output_path: PathBuf,
         width: u32,
         height: u32,
-        fps: u32,
+        fps: f64,
         config: EncoderConfig,
         buffer_size: usize,
     ) -> Result<Self> {
@@ -549,7 +592,7 @@ impl AsyncVideoEncoder {
         output_path: PathBuf,
         width: u32,
         height: u32,
-        fps: u32,
+        fps: f64,
         config: EncoderConfig,
         hw_type: HardwareEncoderType,
         state: Arc<Mutex<EncoderState>>,
@@ -875,7 +918,7 @@ impl AsyncVideoEncoder {
         output_path: &PathBuf,
         width: u32,
         height: u32,
-        fps: u32,
+        fps: f64,
         config: &EncoderConfig,
         hw_type: HardwareEncoderType,
     ) -> Result<gst::Pipeline> {
@@ -889,11 +932,14 @@ impl AsyncVideoEncoder {
         }
     }
     
-    /// Create common pipeline elements (appsrc, queue, videoconvert)
-    pub(crate) fn create_common_pipeline_start(
+    /// Create common pipeline elements with optional target resolution/fps scaling.
+    pub(crate) fn create_common_pipeline_start_with_target(
         width: u32,
         height: u32,
-        fps: u32,
+        fps: f64,
+        target_width: Option<u32>,
+        target_height: Option<u32>,
+        target_fps: Option<f64>,
     ) -> Result<(gst::Pipeline, gst_app::AppSrc, gst::Element, gst::Element)> {
         let pipeline = gst::Pipeline::new();
         
@@ -903,7 +949,7 @@ impl AsyncVideoEncoder {
             .field("format", "NV12")
             .field("width", width as i32)
             .field("height", height as i32)
-            .field("framerate", gst::Fraction::new(fps as i32, 1))
+            .field("framerate", fps_to_gst_fraction(fps))
             .build();
         
         let appsrc = gst_app::AppSrc::builder()
@@ -916,13 +962,13 @@ impl AsyncVideoEncoder {
         
         // Queue to decouple appsrc from encoder.
         // Must be large enough to hold the pre-roll burst (up to 5 seconds at
-        // up to 60fps = 300 frames). During live recording the queue stays
+        // up to 120fps = 600 frames). During live recording the queue stays
         // nearly empty since frames arrive at camera rate, so these generous
         // limits only matter for the initial pre-roll burst.
         // leaky=downstream: if the encoder truly can't keep up, drop oldest
         // frames rather than blocking the capture pipeline.
         let queue = gst::ElementFactory::make("queue")
-            .property("max-size-buffers", 600u32)         // 2× max pre-roll at 60fps
+            .property("max-size-buffers", 1200u32)         // 2× max pre-roll at 120fps
             .property("max-size-time", 10_000_000_000u64) // 10 seconds of PTS span
             .property("max-size-bytes", 0u32)              // No byte limit
             .property_from_str("leaky", "downstream")      // drop oldest when full
@@ -934,7 +980,73 @@ impl AsyncVideoEncoder {
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create videoconvert: {}", e)))?;
         
-        Ok((pipeline, appsrc, queue, videoconvert))
+        // Check if we need scaling or rate conversion
+        let tw = target_width.unwrap_or(width);
+        let th = target_height.unwrap_or(height);
+        let tf = target_fps.unwrap_or(fps);
+        let needs_scale = tw != width || th != height;
+        let needs_rate = (tf - fps).abs() > 0.01;
+        
+        if needs_scale || needs_rate {
+            // Build chain: appsrc -> queue -> videoconvert -> [videoscale -> capsfilter] -> [videorate -> capsfilter]
+            let mut elements: Vec<gst::Element> = vec![appsrc.clone().upcast(), queue.clone(), videoconvert.clone()];
+            let mut last_element = videoconvert.clone();
+            
+            if needs_scale {
+                let videoscale = gst::ElementFactory::make("videoscale")
+                    .build()
+                    .map_err(|e| EncoderError::Pipeline(format!("Failed to create videoscale: {}", e)))?;
+                
+                let scale_caps = gst::Caps::builder("video/x-raw")
+                    .field("width", tw as i32)
+                    .field("height", th as i32)
+                    .build();
+                let scale_capsfilter = gst::ElementFactory::make("capsfilter")
+                    .property("caps", scale_caps)
+                    .build()
+                    .map_err(|e| EncoderError::Pipeline(format!("Failed to create scale capsfilter: {}", e)))?;
+                
+                elements.push(videoscale.clone());
+                elements.push(scale_capsfilter.clone());
+                last_element = scale_capsfilter;
+                
+                println!("[Encoder] Scaling from {}x{} to {}x{}", width, height, tw, th);
+            }
+            
+            if needs_rate {
+                let videorate = gst::ElementFactory::make("videorate")
+                    .build()
+                    .map_err(|e| EncoderError::Pipeline(format!("Failed to create videorate: {}", e)))?;
+                
+                let rate_caps = gst::Caps::builder("video/x-raw")
+                    .field("framerate", fps_to_gst_fraction(tf))
+                    .build();
+                let rate_capsfilter = gst::ElementFactory::make("capsfilter")
+                    .property("caps", rate_caps)
+                    .build()
+                    .map_err(|e| EncoderError::Pipeline(format!("Failed to create rate capsfilter: {}", e)))?;
+                
+                elements.push(videorate.clone());
+                elements.push(rate_capsfilter.clone());
+                last_element = rate_capsfilter;
+                
+                println!("[Encoder] Rate conversion from {}fps to {}fps", fps, tf);
+            }
+            
+            // Add all elements to pipeline
+            let element_refs: Vec<&gst::Element> = elements.iter().collect();
+            pipeline.add_many(&element_refs)
+                .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
+            
+            // Link chain
+            gst::Element::link_many(&element_refs)
+                .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
+            
+            // Return last_element as the "videoconvert" position (it's where the encoder will link from)
+            Ok((pipeline, appsrc, queue, last_element))
+        } else {
+            Ok((pipeline, appsrc, queue, videoconvert))
+        }
     }
     
     /// Create AV1 encoding pipeline (MKV container)
@@ -942,11 +1054,13 @@ impl AsyncVideoEncoder {
         output_path: &PathBuf,
         width: u32,
         height: u32,
-        fps: u32,
+        fps: f64,
         config: &EncoderConfig,
         hw_type: HardwareEncoderType,
     ) -> Result<gst::Pipeline> {
-        let (pipeline, appsrc, queue, videoconvert) = Self::create_common_pipeline_start(width, height, fps)?;
+        let (pipeline, appsrc, queue, videoconvert) = Self::create_common_pipeline_start_with_target(
+            width, height, fps, config.target_width, config.target_height, config.target_fps,
+        )?;
         
         // Create AV1 encoder
         let encoder = Self::create_av1_encoder(hw_type, config)?;
@@ -1012,11 +1126,13 @@ impl AsyncVideoEncoder {
         output_path: &PathBuf,
         width: u32,
         height: u32,
-        fps: u32,
+        fps: f64,
         config: &EncoderConfig,
         hw_type: HardwareEncoderType,
     ) -> Result<gst::Pipeline> {
-        let (pipeline, appsrc, queue, videoconvert) = Self::create_common_pipeline_start(width, height, fps)?;
+        let (pipeline, appsrc, queue, videoconvert) = Self::create_common_pipeline_start_with_target(
+            width, height, fps, config.target_width, config.target_height, config.target_fps,
+        )?;
         
         // Create VP8 encoder
         let encoder = Self::create_vp8_encoder(hw_type, config)?;
@@ -1089,11 +1205,13 @@ impl AsyncVideoEncoder {
         output_path: &PathBuf,
         width: u32,
         height: u32,
-        fps: u32,
+        fps: f64,
         config: &EncoderConfig,
         hw_type: HardwareEncoderType,
     ) -> Result<gst::Pipeline> {
-        let (pipeline, appsrc, queue, videoconvert) = Self::create_common_pipeline_start(width, height, fps)?;
+        let (pipeline, appsrc, queue, videoconvert) = Self::create_common_pipeline_start_with_target(
+            width, height, fps, config.target_width, config.target_height, config.target_fps,
+        )?;
         
         // Create VP9 encoder
         let encoder = Self::create_vp9_encoder(hw_type, config)?;

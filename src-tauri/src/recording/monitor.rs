@@ -12,7 +12,6 @@ use tauri::{AppHandle, Manager, Emitter};
 
 use crate::config::Config;
 use crate::devices::DeviceManager;
-use crate::encoding::VideoCodec;
 use crate::recording::RecordingState;
 use crate::recording::midi::TimestampedMidiEvent;
 use crate::recording::preroll::{MidiPrerollBuffer, AudioPrerollBuffer, MAX_PRE_ROLL_SECS, MAX_PRE_ROLL_SECS_ENCODED};
@@ -1375,34 +1374,44 @@ impl MidiMonitor {
             let pre_roll = config.pre_roll_secs.min(pre_roll_limit);
             drop(config); // Release config lock before video operations
             
-            // Look up codec and name for each selected video device
+            // Look up per-device config and name for each selected video device
             let device_manager = self.app_handle.state::<RwLock<DeviceManager>>();
             let devices = device_manager.read();
             
-            // Get user-selected codecs from config
+            // Get per-device video configs from config
             let config = self.app_handle.state::<RwLock<Config>>();
             let config_read = config.read();
-            let codec_overrides = &config_read.video_device_codecs;
+            let device_configs = &config_read.video_device_configs;
             
-            let video_with_info: Vec<(String, String, VideoCodec)> = selected_video
+            let video_with_info: Vec<(String, String, crate::config::VideoDeviceConfig)> = selected_video
                 .iter()
                 .filter_map(|device_id| {
                     // Find the device
                     let device = devices.video_devices.iter().find(|d| &d.id == device_id)?;
                     
-                    // Use user-selected codec if set, otherwise use preferred
-                    let override_codec = codec_overrides.get(device_id).copied();
-                    let preferred = device.preferred_codec();
+                    // Use user-saved config if available, otherwise compute smart defaults
+                    let dev_config = if let Some(cfg) = device_configs.get(device_id) {
+                        // Verify the saved codec is still supported
+                        if device.supported_codecs.contains(&cfg.source_codec) {
+                            println!("[Sacho] Video device {}: using saved config ({:?} {}x{} @ {:.2}fps)", 
+                                device_id, cfg.source_codec, cfg.source_width, cfg.source_height, cfg.source_fps);
+                            cfg.clone()
+                        } else {
+                            // Saved codec no longer available, fall back to defaults
+                            let default = device.default_config()?;
+                            println!("[Sacho] Video device {}: saved codec {:?} unavailable, falling back to {:?} {}x{} @ {:.2}fps", 
+                                device_id, cfg.source_codec, default.source_codec, default.source_width, default.source_height, default.source_fps);
+                            default
+                        }
+                    } else {
+                        // No saved config - compute smart defaults
+                        let default = device.default_config()?;
+                        println!("[Sacho] Video device {}: no config saved, defaulting to {:?} {}x{} @ {:.2}fps", 
+                            device_id, default.source_codec, default.source_width, default.source_height, default.source_fps);
+                        default
+                    };
                     
-                    let codec = override_codec
-                        .filter(|c| device.supported_codecs.contains(c))
-                        .or(preferred);
-                    
-                    println!("[Sacho] Video device {}: override={:?}, preferred={:?}, using={:?}", 
-                        device_id, override_codec, preferred, codec);
-                    
-                    let codec = codec?;
-                    Some((device_id.clone(), device.name.clone(), codec))
+                    Some((device_id.clone(), device.name.clone(), dev_config))
                 })
                 .collect();
             

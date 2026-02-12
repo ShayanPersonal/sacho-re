@@ -24,14 +24,35 @@ export interface MidiDevice {
 /** Supported video codecs */
 export type VideoCodec = 'mjpeg' | 'av1' | 'vp8' | 'vp9' | 'raw';
 
+/** Per-codec resolution capability with available framerates */
+export interface CodecCapability {
+  width: number;
+  height: number;
+  /** Available framerates at this resolution, sorted descending */
+  framerates: number[];
+}
+
 export interface VideoDevice {
   id: string;
   name: string;
-  resolutions: Resolution[];
-  /** Supported video codecs for this device (can be recorded) */
+  /** Supported video codecs for this device */
   supported_codecs: VideoCodec[];
+  /** Per-codec capabilities: codec -> list of resolutions with available framerates */
+  capabilities: Record<VideoCodec, CodecCapability[]>;
   /** All formats detected from the device (for display) */
   all_formats: string[];
+}
+
+/** Per-device video source configuration.
+ * target_width/height = 0 and target_fps = 0 means "Match Source" */
+export interface VideoDeviceConfig {
+  source_codec: VideoCodec;
+  source_width: number;
+  source_height: number;
+  source_fps: number;
+  target_width: number;
+  target_height: number;
+  target_fps: number;
 }
 
 /** Check if a video device supports any recording codec */
@@ -46,14 +67,119 @@ export function getCodecDisplayName(codec: VideoCodec): string {
     case 'vp8': return 'VP8';
     case 'vp9': return 'VP9';
     case 'av1': return 'AV1';
-    case 'raw': return 'RAW';
+    case 'raw': return 'Raw';
   }
 }
 
-export interface Resolution {
-  width: number;
-  height: number;
-  fps: number;
+/** Get a friendly resolution label like "1080p (1920x1080)" */
+export function getResolutionLabel(width: number, height: number): string {
+  const labels: Record<string, string> = {
+    '3840x2160': '4K',
+    '2560x1440': '1440p',
+    '1920x1080': '1080p',
+    '1280x720': '720p',
+    '854x480': '480p',
+    '640x480': '480p',
+    '640x360': '360p',
+  };
+  const key = `${width}x${height}`;
+  const label = labels[key];
+  return label ? `${label} (${width}x${height})` : `${width}x${height}`;
+}
+
+/** Generate common target resolutions that match a given aspect ratio and don't exceed source */
+export function getTargetResolutions(sourceWidth: number, sourceHeight: number): { width: number; height: number; label: string }[] {
+  const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
+  const g = gcd(sourceWidth, sourceHeight);
+  const ratioW = sourceWidth / g;
+  const ratioH = sourceHeight / g;
+  
+  // Common heights to generate resolutions for
+  const commonHeights = [2160, 1440, 1080, 720, 480, 360];
+  const results: { width: number; height: number; label: string }[] = [];
+  
+  // Always include the source resolution itself
+  results.push({ 
+    width: sourceWidth, 
+    height: sourceHeight, 
+    label: getResolutionLabel(sourceWidth, sourceHeight) 
+  });
+  
+  for (const h of commonHeights) {
+    // Compute width that matches the aspect ratio
+    const w = Math.round((h * ratioW) / ratioH);
+    // Skip if exceeds source or matches source (already added)
+    if (w > sourceWidth || h > sourceHeight) continue;
+    if (w === sourceWidth && h === sourceHeight) continue;
+    // Ensure even dimensions (required by most encoders)
+    const ew = w % 2 === 0 ? w : w - 1;
+    const eh = h % 2 === 0 ? h : h - 1;
+    if (ew <= 0 || eh <= 0) continue;
+    results.push({ width: ew, height: eh, label: getResolutionLabel(ew, eh) });
+  }
+  
+  return results;
+}
+
+/** Generate common target framerates that don't exceed the source fps.
+ * Uses a small tolerance (0.5) to include NTSC rates like 29.97 for a "30" threshold. */
+export function getTargetFramerates(sourceFps: number): number[] {
+  const common = [120, 60, 30, 24, 15];
+  return common.filter(f => f <= sourceFps + 0.5);
+}
+
+/** Format an fps value for display.
+ * Integer rates show as "30", fractional rates show as "29.97" */
+export function formatFps(fps: number): string {
+  if (fps === 0) return 'Match Source';
+  const rounded = Math.round(fps);
+  if (Math.abs(fps - rounded) < 0.01) return `${rounded}`;
+  return fps.toFixed(2);
+}
+
+/** Codec preference order for defaults: Raw > AV1 > VP9 > VP8 > MJPEG */
+const CODEC_PRIORITY: VideoCodec[] = ['raw', 'av1', 'vp9', 'vp8', 'mjpeg'];
+
+/** Compute a smart default configuration for a device.
+ * - Codec: Raw > AV1 > VP9 > VP8 > MJPEG
+ * - Resolution: min(highest available, 1080p)
+ * - FPS: min(highest available at chosen resolution, ~30)
+ * - Target: "Match Source" (0/0/0) */
+export function computeDefaultConfig(device: VideoDevice): VideoDeviceConfig | null {
+  // Pick preferred codec
+  let codec: VideoCodec | null = null;
+  for (const c of CODEC_PRIORITY) {
+    if (device.supported_codecs.includes(c)) {
+      codec = c;
+      break;
+    }
+  }
+  if (!codec) return null;
+  
+  const caps = device.capabilities[codec];
+  if (!caps || caps.length === 0) return null;
+  
+  // Find best resolution: highest that's ≤ 1080p, or smallest available
+  // Caps are sorted by resolution descending
+  const chosenCap = caps.find(c => c.height <= 1080) ?? caps[caps.length - 1];
+  
+  const width = chosenCap.width;
+  const height = chosenCap.height;
+  
+  // Find best fps: highest that's ≤ ~30, or lowest available
+  const fps = chosenCap.framerates.find(f => f <= 30.5)
+    ?? chosenCap.framerates[chosenCap.framerates.length - 1]
+    ?? 30;
+  
+  return {
+    source_codec: codec,
+    source_width: width,
+    source_height: height,
+    source_fps: fps,
+    target_width: 0,   // Match Source
+    target_height: 0,  // Match Source
+    target_fps: 0,     // Match Source
+  };
 }
 
 export interface RecordingState {
@@ -150,8 +276,8 @@ export interface Config {
   selected_midi_devices: string[];
   trigger_midi_devices: string[];
   selected_video_devices: string[];
-  /** Selected codec per video device (device_id -> codec) */
-  video_device_codecs: Record<string, VideoCodec>;
+  /** Per-device video configuration (device_id -> config) */
+  video_device_configs: Record<string, VideoDeviceConfig>;
   /** Encoder quality preset level per encoding mode (e.g. { av1: 3, vp9: 4, vp8: 3 }) */
   encoder_preset_levels: Record<string, number>;
   /** Whether to encode video during pre-roll (trades compute for memory, allows up to 30s pre-roll) */

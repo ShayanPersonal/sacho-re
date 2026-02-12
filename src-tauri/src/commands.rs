@@ -400,7 +400,7 @@ pub fn repair_session(
                         let (width, height, fps) = metadata.video_files.iter()
                             .find(|f| f.filename == fname)
                             .map(|f| (f.width, f.height, f.fps))
-                            .unwrap_or((0, 0, 0));
+                            .unwrap_or((0, 0, 0.0));
                         video_files.push(crate::session::VideoFileInfo {
                             filename: fname,
                             device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
@@ -432,7 +432,7 @@ pub fn repair_session(
                     device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
                     width: 0,
                     height: 0,
-                    fps: 0,
+                    fps: 0.0,
                     duration_secs: 0.0,
                     size_bytes: size,
                     has_audio: false,
@@ -582,7 +582,7 @@ pub fn update_config(
         let dev_changed = current.selected_midi_devices != new_config.selected_midi_devices
             || current.trigger_midi_devices != new_config.trigger_midi_devices
             || current.selected_video_devices != new_config.selected_video_devices
-            || current.video_device_codecs != new_config.video_device_codecs
+            || current.video_device_configs != new_config.video_device_configs
             || current.selected_audio_devices != new_config.selected_audio_devices
             || current.pre_roll_secs != new_config.pre_roll_secs
             || current.encode_during_preroll != new_config.encode_during_preroll
@@ -1123,12 +1123,12 @@ pub async fn auto_select_encoder_preset(
     }
     
     // 2. Read config
-    let (selected_video_devices, encoding_mode, video_device_codecs) = {
+    let (selected_video_devices, encoding_mode, video_device_configs) = {
         let cfg = config.read();
         (
             cfg.selected_video_devices.clone(),
             cfg.video_encoding_mode.clone(),
-            cfg.video_device_codecs.clone(),
+            cfg.video_device_configs.clone(),
         )
     };
     
@@ -1142,11 +1142,13 @@ pub async fn auto_select_encoder_preset(
         let devices = device_manager.read();
         selected_video_devices.iter().find_map(|device_id| {
             let device = devices.video_devices.iter().find(|d| &d.id == device_id)?;
-            let override_codec = video_device_codecs.get(device_id).copied();
-            let preferred = device.preferred_codec();
-            let codec = override_codec
-                .filter(|c| device.supported_codecs.contains(c))
-                .or(preferred)?;
+            
+            // Check per-device config; fall back to preferred codec
+            let codec = if let Some(dev_cfg) = video_device_configs.get(device_id) {
+                dev_cfg.source_codec
+            } else {
+                device.preferred_codec()?
+            };
             
             // Only test devices that use raw video (need encoding)
             if codec == VideoCodec::Raw {
@@ -1179,18 +1181,22 @@ pub async fn auto_select_encoder_preset(
     let restart_info = {
         let cfg = config.read();
         let devices = device_manager.read();
-        let codec_overrides = &cfg.video_device_codecs;
+        let dev_configs = &cfg.video_device_configs;
         
-        let info: Vec<(String, String, VideoCodec)> = cfg.selected_video_devices
+        let info: Vec<(String, String, crate::config::VideoDeviceConfig)> = cfg.selected_video_devices
             .iter()
             .filter_map(|dev_id| {
                 let device = devices.video_devices.iter().find(|d| &d.id == dev_id)?;
-                let override_codec = codec_overrides.get(dev_id).copied();
-                let preferred = device.preferred_codec();
-                let codec = override_codec
-                    .filter(|c| device.supported_codecs.contains(c))
-                    .or(preferred)?;
-                Some((dev_id.clone(), device.name.clone(), codec))
+                let dev_cfg = if let Some(c) = dev_configs.get(dev_id) {
+                    if device.supported_codecs.contains(&c.source_codec) {
+                        c.clone()
+                    } else {
+                        device.default_config()?
+                    }
+                } else {
+                    device.default_config()?
+                };
+                Some((dev_id.clone(), device.name.clone(), dev_cfg))
             })
             .collect();
         
@@ -1272,11 +1278,13 @@ async fn run_auto_select_test(
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(0);
     
-    // Create a test capture pipeline
+    // Create a test capture pipeline with default resolution
     println!("[AutoSelect] Creating test capture pipeline for {} ({})", device_name, device_id);
     let mut capture = VideoCapturePipeline::new_webcam_raw(
         device_index,
         device_name,
+        &device_id,
+        1920, 1080, 30.0, // Default test resolution
         2, // minimal pre-roll
         encoding_mode.clone(),
         false, // Don't encode during pre-roll for auto-select tests
@@ -1321,9 +1329,12 @@ async fn run_auto_select_test(
         
         // Create encoder with this preset
         let encoder_config = EncoderConfig {
-            keyframe_interval: capture.fps * 2,
+            keyframe_interval: (capture.fps * 2.0).round() as u32,
             target_codec,
             preset_level: level,
+            target_width: None,
+            target_height: None,
+            target_fps: None,
         };
         
         let encoder = match AsyncVideoEncoder::new(
@@ -1332,7 +1343,7 @@ async fn run_auto_select_test(
             capture.height,
             capture.fps,
             encoder_config,
-            (capture.fps * 2) as usize,
+            (capture.fps * 2.0) as usize,
         ) {
             Ok(enc) => enc,
             Err(e) => {

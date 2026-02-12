@@ -75,7 +75,7 @@ pub struct VideoFileInfo {
     pub device_name: String,
     pub width: u32,
     pub height: u32,
-    pub fps: u32,
+    pub fps: f64,
     pub duration_secs: f64,
     pub size_bytes: u64,
     /// Whether this MKV file contains an embedded audio track

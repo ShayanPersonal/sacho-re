@@ -1,11 +1,9 @@
 // Device list and selection store
 
-import { writable, derived } from 'svelte/store';
-import type { AudioDevice, MidiDevice, VideoDevice, Config } from '$lib/api';
+import { writable, derived, get } from 'svelte/store';
+import type { AudioDevice, MidiDevice, VideoDevice, VideoDeviceConfig, Config } from '$lib/api';
 import { getAudioDevices, getMidiDevices, getVideoDevices, getConfig, updateConfig } from '$lib/api';
 import { settings } from './settings';
-
-import type { VideoCodec } from '$lib/api';
 
 // Save status for device changes: 'idle' | 'saving' | 'saved' | 'error'
 export const deviceSaveStatus = writable<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -22,8 +20,8 @@ export const selectedMidiDevices = writable<Set<string>>(new Set());
 export const triggerMidiDevices = writable<Set<string>>(new Set());
 export const selectedVideoDevices = writable<Set<string>>(new Set());
 
-// Video device codec selection (device_id -> codec)
-export const videoDeviceCodecs = writable<Record<string, VideoCodec>>({});
+// Per-device video configuration (device_id -> config)
+export const videoDeviceConfigs = writable<Record<string, VideoDeviceConfig>>({});
 
 // Config reference
 export const config = writable<Config | null>(null);
@@ -81,7 +79,7 @@ export async function loadConfig() {
     selectedMidiDevices.set(new Set(cfg.selected_midi_devices));
     triggerMidiDevices.set(new Set(cfg.trigger_midi_devices));
     selectedVideoDevices.set(new Set(cfg.selected_video_devices));
-    videoDeviceCodecs.set(cfg.video_device_codecs ?? {});
+    videoDeviceConfigs.set(cfg.video_device_configs ?? {});
   } catch (error) {
     console.error('Failed to load config:', error);
   }
@@ -89,16 +87,10 @@ export async function loadConfig() {
 
 /** Clean up stale device IDs from config that no longer match any existing devices */
 export async function cleanupStaleDeviceIds() {
-  let currentAudio: AudioDevice[] = [];
-  let currentMidi: MidiDevice[] = [];
-  let currentVideo: VideoDevice[] = [];
-  let currentConfig: Config | null = null;
-  
-  const unsub1 = audioDevices.subscribe(d => currentAudio = d);
-  const unsub2 = midiDevices.subscribe(d => currentMidi = d);
-  const unsub3 = videoDevices.subscribe(d => currentVideo = d);
-  const unsub4 = config.subscribe(c => currentConfig = c);
-  unsub1(); unsub2(); unsub3(); unsub4();
+  const currentAudio = get(audioDevices);
+  const currentMidi = get(midiDevices);
+  const currentVideo = get(videoDevices);
+  const currentConfig = get(config);
   
   if (!currentConfig) return;
   
@@ -111,10 +103,10 @@ export async function cleanupStaleDeviceIds() {
   const cleanedMidi = currentConfig.selected_midi_devices.filter(id => midiIds.has(id));
   const cleanedTriggers = currentConfig.trigger_midi_devices.filter(id => midiIds.has(id));
   const cleanedVideo = currentConfig.selected_video_devices.filter(id => videoIds.has(id));
-  const cleanedCodecs: Record<string, VideoCodec> = {};
-  for (const [id, codec] of Object.entries(currentConfig.video_device_codecs)) {
+  const cleanedConfigs: Record<string, VideoDeviceConfig> = {};
+  for (const [id, cfg] of Object.entries(currentConfig.video_device_configs)) {
     if (videoIds.has(id)) {
-      cleanedCodecs[id] = codec;
+      cleanedConfigs[id] = cfg;
     }
   }
   
@@ -124,7 +116,7 @@ export async function cleanupStaleDeviceIds() {
     cleanedMidi.length !== currentConfig.selected_midi_devices.length ||
     cleanedTriggers.length !== currentConfig.trigger_midi_devices.length ||
     cleanedVideo.length !== currentConfig.selected_video_devices.length ||
-    Object.keys(cleanedCodecs).length !== Object.keys(currentConfig.video_device_codecs).length;
+    Object.keys(cleanedConfigs).length !== Object.keys(currentConfig.video_device_configs).length;
   
   if (hasChanges) {
     console.log('[Sacho] Cleaning up stale device IDs from config');
@@ -132,7 +124,7 @@ export async function cleanupStaleDeviceIds() {
     selectedMidiDevices.set(new Set(cleanedMidi));
     triggerMidiDevices.set(new Set(cleanedTriggers));
     selectedVideoDevices.set(new Set(cleanedVideo));
-    videoDeviceCodecs.set(cleanedCodecs);
+    videoDeviceConfigs.set(cleanedConfigs);
     await saveDeviceSelection();
   }
 }
@@ -148,30 +140,20 @@ export async function saveDeviceSelection() {
   
   // Use the settings store as the source of truth for current config
   // This ensures we don't overwrite settings changed elsewhere (like video_encoding_mode)
-  let currentConfig: Config | null = null;
-  const unsubConfig = settings.subscribe(c => currentConfig = c);
-  unsubConfig();
+  let currentConfig: Config | null = get(settings);
   
   if (!currentConfig) {
     // Fallback to local config if settings not available
-    const unsubLocal = config.subscribe(c => currentConfig = c);
-    unsubLocal();
+    currentConfig = get(config);
   }
   
   if (!currentConfig) return;
   
-  let audioSelected: Set<string> = new Set();
-  let midiSelected: Set<string> = new Set();
-  let midiTriggers: Set<string> = new Set();
-  let videoSelected: Set<string> = new Set();
-  let codecSelections: Record<string, VideoCodec> = {};
-  
-  const unsub1 = selectedAudioDevices.subscribe(s => audioSelected = s);
-  const unsub2 = selectedMidiDevices.subscribe(s => midiSelected = s);
-  const unsub3 = triggerMidiDevices.subscribe(s => midiTriggers = s);
-  const unsub4 = selectedVideoDevices.subscribe(s => videoSelected = s);
-  const unsub5 = videoDeviceCodecs.subscribe(c => codecSelections = c);
-  unsub1(); unsub2(); unsub3(); unsub4(); unsub5();
+  const audioSelected = get(selectedAudioDevices);
+  const midiSelected = get(selectedMidiDevices);
+  const midiTriggers = get(triggerMidiDevices);
+  const videoSelected = get(selectedVideoDevices);
+  const deviceConfigs = get(videoDeviceConfigs);
   
   const newConfig: Config = {
     ...(currentConfig as Config),
@@ -179,7 +161,7 @@ export async function saveDeviceSelection() {
     selected_midi_devices: Array.from(midiSelected),
     trigger_midi_devices: Array.from(midiTriggers),
     selected_video_devices: Array.from(videoSelected),
-    video_device_codecs: codecSelections
+    video_device_configs: deviceConfigs
   };
   
   try {
@@ -264,21 +246,13 @@ export function toggleVideoDevice(deviceId: string) {
   autoSaveDevices();
 }
 
-/** Set the codec to use for a video device */
-export function setVideoDeviceCodec(deviceId: string, codec: VideoCodec) {
-  videoDeviceCodecs.update(codecs => ({
-    ...codecs,
-    [deviceId]: codec
+/** Set the full configuration for a video device */
+export function setVideoDeviceConfig(deviceId: string, deviceConfig: VideoDeviceConfig) {
+  videoDeviceConfigs.update(configs => ({
+    ...configs,
+    [deviceId]: deviceConfig
   }));
   autoSaveDevices();
-}
-
-/** Get the selected codec for a video device, or undefined if using default */
-export function getVideoDeviceCodec(deviceId: string): VideoCodec | undefined {
-  let codecs: Record<string, VideoCodec> = {};
-  const unsub = videoDeviceCodecs.subscribe(c => codecs = c);
-  unsub();
-  return codecs[deviceId];
 }
 
 // Initialize

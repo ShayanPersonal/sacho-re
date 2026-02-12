@@ -164,7 +164,7 @@
       localSettings.selected_midi_devices = $settings.selected_midi_devices;
       localSettings.trigger_midi_devices = $settings.trigger_midi_devices;
       localSettings.selected_video_devices = $settings.selected_video_devices;
-      localSettings.video_device_codecs = $settings.video_device_codecs;
+      localSettings.video_device_configs = $settings.video_device_configs;
     }
   });
   
