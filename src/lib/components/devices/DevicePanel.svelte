@@ -91,7 +91,6 @@
   
   function handleConfigSave(deviceId: string, cfg: VideoDeviceConfig) {
     setVideoDeviceConfig(deviceId, cfg);
-    configuringDevice = null;
   }
   
   let expandedSections = $state<Set<string>>(new Set(['audio', 'midi']));

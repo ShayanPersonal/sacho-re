@@ -669,20 +669,22 @@ impl Drop for PrerollVideoEncoder {
 impl VideoCapturePipeline {
     /// Create the GStreamer source element for a video device.
     ///
-    /// First tries to use a saved `gst::Device` object from the device monitor
-    /// (via `Device::create_element`), which ensures the pipeline uses the same
-    /// provider (KS, DirectShow, MediaFoundation) that originally enumerated the device.
-    /// Falls back to platform-specific defaults if no saved device is available.
-    fn create_source_element(device_id: &str, _device_index: u32, device_name_hint: &str) -> Result<(gst::Element, String)> {
-        // Try to use the saved GStreamer Device object from enumeration
-        if let Some(gst_device) = crate::devices::enumeration::get_gst_device(device_id) {
+    /// When `matched_device` is provided (from `get_device_for_caps`), it uses that
+    /// exact provider, ensuring the pipeline source matches the caps that were validated.
+    /// Otherwise, falls back to the first stored device or platform-specific defaults.
+    fn create_source_element(device_id: &str, _device_index: u32, device_name_hint: &str, matched_device: Option<gstreamer::Device>) -> Result<(gst::Element, String)> {
+        // Use the matched device (from caps lookup) or fall back to any stored device
+        let gst_device = matched_device.or_else(|| crate::devices::enumeration::get_gst_device(device_id));
+        
+        if let Some(gst_device) = gst_device {
             match gst_device.create_element(Some("source")) {
                 Ok(src) => {
                     let factory_name = src.factory()
                         .map(|f| f.name().to_string())
                         .unwrap_or_else(|| "unknown".to_string());
                     let device_name = gst_device.display_name().to_string();
-                    println!("[Video] Using saved device object -> {} for {}", factory_name, device_name);
+                    println!("[Video] Using device provider '{}' -> {} for {}", 
+                        gst_device.device_class(), factory_name, device_name);
                     return Ok((src, device_name));
                 }
                 Err(e) => {
@@ -747,23 +749,26 @@ impl VideoCapturePipeline {
         
         let pipeline = gst::Pipeline::new();
         
-        let (source, device_name) = Self::create_source_element(device_id, device_index, device_name_hint)?;
-        
-        println!("[Video] Creating {} passthrough pipeline for {} (device {})", 
-            codec.display_name(), device_name, device_index);
-        
-        // Passthrough pipeline: source -> capsfilter(codec) -> queue -> appsink
-        // Use the device's EXACT caps when available (includes format, PAR, colorimetry etc.)
-        let input_caps = crate::devices::enumeration::get_device_exact_caps(
+        // Find the exact caps AND the provider that supports them.
+        // The matched device is then used to create the source element, ensuring
+        // the pipeline uses the correct provider (KS vs MF vs DirectShow).
+        let (input_caps, matched_device) = crate::devices::enumeration::get_device_for_caps(
             device_id, codec.gst_caps_name(), source_width, source_height, source_fps,
-        ).unwrap_or_else(|| {
-            println!("[Video] Using fallback partial caps (no exact device caps available)");
-            gst::Caps::builder(codec.gst_caps_name())
+        ).map(|(caps, dev)| (caps, Some(dev)))
+        .unwrap_or_else(|| {
+            println!("[Video] Using fallback partial caps (no exact provider match available)");
+            let caps = gst::Caps::builder(codec.gst_caps_name())
                 .field("width", source_width as i32)
                 .field("height", source_height as i32)
                 .field("framerate", crate::encoding::encoder::fps_to_gst_fraction(source_fps))
-                .build()
+                .build();
+            (caps, None)
         });
+        
+        let (source, device_name) = Self::create_source_element(device_id, device_index, device_name_hint, matched_device)?;
+        
+        println!("[Video] Creating {} passthrough pipeline for {} (device {})", 
+            codec.display_name(), device_name, device_index);
         
         let capsfilter = gst::ElementFactory::make("capsfilter")
             .property("caps", &input_caps)
@@ -918,25 +923,24 @@ impl VideoCapturePipeline {
         
         let pipeline = gst::Pipeline::new();
         
-        let (source, device_name) = Self::create_source_element(device_id, device_index, device_name_hint)?;
-        
-        println!("[Video] Creating RAW capture pipeline for {} (device {})", device_name, device_index);
-        println!("[Video]   Encoding mode: {:?}", encoding_mode);
-        
-        // Raw video pipeline: source -> capsfilter(raw) -> videoconvert -> queue -> appsink
-        // Use the device's EXACT caps (including format, pixel-aspect-ratio, colorimetry)
-        // when available. Partial caps (missing format etc.) cause negotiation failures
-        // on Windows KS/MF sources.
-        let input_caps = crate::devices::enumeration::get_device_exact_caps(
+        // Find exact caps AND the matching provider for raw video.
+        let (input_caps, matched_device) = crate::devices::enumeration::get_device_for_caps(
             device_id, "video/x-raw", source_width, source_height, source_fps,
-        ).unwrap_or_else(|| {
-            println!("[Video] Using fallback partial caps (no exact device caps available)");
-            gst::Caps::builder("video/x-raw")
+        ).map(|(caps, dev)| (caps, Some(dev)))
+        .unwrap_or_else(|| {
+            println!("[Video] Using fallback partial caps (no exact provider match available)");
+            let caps = gst::Caps::builder("video/x-raw")
                 .field("width", source_width as i32)
                 .field("height", source_height as i32)
                 .field("framerate", crate::encoding::encoder::fps_to_gst_fraction(source_fps))
-                .build()
+                .build();
+            (caps, None)
         });
+        
+        let (source, device_name) = Self::create_source_element(device_id, device_index, device_name_hint, matched_device)?;
+        
+        println!("[Video] Creating RAW capture pipeline for {} (device {})", device_name, device_index);
+        println!("[Video]   Encoding mode: {:?}", encoding_mode);
         
         let capsfilter = gst::ElementFactory::make("capsfilter")
             .property("caps", &input_caps)

@@ -10,28 +10,81 @@ use std::sync::Mutex;
 
 /// Global storage for GStreamer Device objects, keyed by our device ID.
 ///
-/// These are saved during enumeration and used when creating capture pipelines.
-/// Using the saved `gst::Device` ensures the pipeline's source element matches
-/// the same provider (KS, DirectShow, MediaFoundation) that reported the caps.
-/// Without this, a mismatch (e.g. caps from KS but pipeline using dshowvideosrc)
-/// can cause negotiation failures.
-static GST_DEVICE_STORE: Mutex<Option<HashMap<String, gst::Device>>> = Mutex::new(None);
+/// Each physical device may have multiple GStreamer providers (e.g. Kernel Streaming,
+/// MediaFoundation, DirectShow on Windows). We store ALL provider `gst::Device` objects
+/// so that at pipeline creation time we can pick the provider whose caps actually match
+/// the requested mode. This avoids phantom framerates (e.g. 60fps reported by MF but
+/// only 59.94 supported by KS) and ensures we always use the correct provider.
+static GST_DEVICE_STORE: Mutex<Option<HashMap<String, Vec<gst::Device>>>> = Mutex::new(None);
 
-/// Retrieve a saved GStreamer Device object by device ID.
-/// Returns None if no device was stored for this ID.
+/// Retrieve the first (fallback) GStreamer Device object by device ID.
+/// Prefer `get_device_for_caps` when you have a specific mode to match.
 pub fn get_gst_device(device_id: &str) -> Option<gst::Device> {
     let store = GST_DEVICE_STORE.lock().ok()?;
-    store.as_ref()?.get(device_id).cloned()
+    store.as_ref()?.get(device_id)?.first().cloned()
 }
 
-/// Get exact caps from a stored GStreamer device that match the desired mode.
+/// Validate that a video device configuration will produce a working pipeline.
 ///
-/// This intersects the device's full caps (which include format, pixel-aspect-ratio,
-/// colorimetry, etc.) with a filter for the desired resolution/fps. The result
-/// preserves ALL fields from the device caps — critical for Windows KS/MF sources
-/// where partial caps (missing format or colorimetry) cause negotiation failures.
+/// Checks whether ANY stored GStreamer provider for this device has exact caps
+/// matching the requested codec, resolution, and framerate. Returns true if at
+/// least one provider can handle the configuration.
+pub fn validate_video_config(device_id: &str, codec: &str, width: u32, height: u32, fps: f64) -> bool {
+    let caps_name = match codec {
+        "raw" => "video/x-raw",
+        "mjpeg" => "image/jpeg",
+        "av1" => "video/x-av1",
+        "vp8" => "video/x-vp8",
+        "vp9" => "video/x-vp9",
+        _ => return false,
+    };
+    get_device_for_caps(device_id, caps_name, width, height, fps).is_some()
+}
+
+/// Find the best GStreamer Device + exact caps that match the desired mode.
 ///
-/// Returns `None` if no matching caps are found.
+/// Loops through ALL stored providers for the given device ID and returns the
+/// first provider whose caps intersect with the requested codec/resolution/fps.
+/// The returned caps preserve ALL fields (format, pixel-aspect-ratio, colorimetry,
+/// etc.) from the device — critical for Windows KS/MF sources where partial caps
+/// cause negotiation failures.
+///
+/// Returns `(exact_caps, matching_gst_device)`, or `None` if no provider matches.
+pub fn get_device_for_caps(
+    device_id: &str,
+    caps_name: &str,
+    width: u32,
+    height: u32,
+    fps: f64,
+) -> Option<(gst::Caps, gst::Device)> {
+    let store = GST_DEVICE_STORE.lock().ok()?;
+    let devices = store.as_ref()?.get(device_id)?;
+    let target_fps = crate::encoding::encoder::fps_to_gst_fraction(fps);
+
+    let filter = gst::Caps::builder(caps_name)
+        .field("width", width as i32)
+        .field("height", height as i32)
+        .field("framerate", target_fps)
+        .build();
+
+    for gst_dev in devices {
+        if let Some(device_caps) = gst_dev.caps() {
+            let matched = device_caps.intersect_with_mode(&filter, gst::CapsIntersectMode::First);
+            if !matched.is_empty() {
+                println!("[Video] Found exact caps via provider '{}': {}",
+                    gst_dev.device_class(), matched);
+                return Some((matched, gst_dev.clone()));
+            }
+        }
+    }
+
+    println!("[Video] No provider has exact caps for {} {}x{} @ {:.2}fps in device {}",
+        caps_name, width, height, fps, device_id);
+    None
+}
+
+/// Convenience wrapper that returns only the caps (without the device).
+/// Used when the caller doesn't need the matching device object.
 pub fn get_device_exact_caps(
     device_id: &str,
     caps_name: &str,
@@ -39,26 +92,7 @@ pub fn get_device_exact_caps(
     height: u32,
     fps: f64,
 ) -> Option<gst::Caps> {
-    let device = get_gst_device(device_id)?;
-    let device_caps = device.caps()?;
-    let target_fps = crate::encoding::encoder::fps_to_gst_fraction(fps);
-    
-    let filter = gst::Caps::builder(caps_name)
-        .field("width", width as i32)
-        .field("height", height as i32)
-        .field("framerate", target_fps)
-        .build();
-    
-    let matched = device_caps.intersect_with_mode(&filter, gst::CapsIntersectMode::First);
-    
-    if matched.is_empty() {
-        println!("[Video] No exact caps match for {} {}x{} @ {:.2}fps in device {}", 
-            caps_name, width, height, fps, device_id);
-        None
-    } else {
-        println!("[Video] Found exact device caps: {}", matched);
-        Some(matched)
-    }
+    get_device_for_caps(device_id, caps_name, width, height, fps).map(|(caps, _)| caps)
 }
 
 /// Intermediate structure for collecting per-codec capabilities during enumeration
@@ -474,7 +508,6 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
     
     struct DeviceInfo {
         classes: Vec<String>,
-        all_caps: Vec<gst::Caps>,
         /// GStreamer Device objects from each provider (for create_element later)
         gst_devices: Vec<gst::Device>,
     }
@@ -488,21 +521,15 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
             continue;
         }
         
-        println!("[Sacho] Found device: {} (class: {})", name, device_class);
+        let caps_count = device.caps().map(|c| c.size()).unwrap_or(0);
+        println!("[Sacho] Found device: {} (class: {}, caps: {})", name, device_class, caps_count);
         
         let entry = device_map.entry(name.clone()).or_insert_with(|| DeviceInfo {
             classes: Vec::new(),
-            all_caps: Vec::new(),
             gst_devices: Vec::new(),
         });
         
-        entry.classes.push(device_class.clone());
-        
-        if let Some(caps) = device.caps() {
-            println!("[Sacho]   {} caps: {} structures", device_class, caps.size());
-            entry.all_caps.push(caps);
-        }
-        
+        entry.classes.push(device_class);
         entry.gst_devices.push(device);
     }
     
@@ -530,29 +557,27 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
             .to_lowercase();
         let device_id = format!("video-{}", safe_name);
         
-        // Save the GStreamer Device object with the MOST caps (richest capabilities)
-        // for later pipeline creation. Using Device::create_element() ensures the
-        // pipeline source matches the provider that enumerated this device.
-        // E.g. for C270, KS provider has 312 caps vs MF's 38 — KS is correct.
-        if let Some(gst_dev) = info.gst_devices.into_iter().max_by_key(|d| d.caps().map(|c| c.size()).unwrap_or(0)) {
-            println!("[Sacho]   Saving GStreamer device object for {} (class: {}, caps: {})",
-                device_id, gst_dev.device_class(), gst_dev.caps().map(|c| c.size()).unwrap_or(0));
-            if let Ok(mut store) = GST_DEVICE_STORE.lock() {
-                if let Some(map) = store.as_mut() {
-                    map.insert(device_id.clone(), gst_dev);
-                }
-            }
-        }
-        
         let mut detected_formats: Vec<String> = Vec::new();
         let mut collector = CapabilityCollector::new();
         
-        // Process DeviceMonitor caps from all providers (MF + KS).
-        // Both Video/Source (MediaFoundation) and Source/Video (KS) are enumerated,
-        // so compressed formats (MJPEG, AV1, etc.) are detected directly from caps
-        // without needing to probe by opening the device.
-        for caps in &info.all_caps {
-            process_caps(caps, &mut detected_formats, &mut collector, can_encode_raw);
+        // Store ALL GStreamer Device objects for this physical device so we can
+        // pick the right provider at pipeline creation time. Process capabilities
+        // from every provider — `get_device_for_caps` will match the exact provider
+        // when building the pipeline, so only truly supported modes succeed.
+        for gst_dev in &info.gst_devices {
+            println!("[Sacho]   Processing provider '{}' for {} (caps: {})",
+                gst_dev.device_class(), device_id, gst_dev.caps().map(|c| c.size()).unwrap_or(0));
+            
+            if let Some(caps) = gst_dev.caps() {
+                process_caps(&caps, &mut detected_formats, &mut collector, can_encode_raw);
+            }
+        }
+        
+        // Save all providers for this device
+        if let Ok(mut store) = GST_DEVICE_STORE.lock() {
+            if let Some(map) = store.as_mut() {
+                map.insert(device_id.clone(), info.gst_devices);
+            }
         }
         
         // Log all detected formats

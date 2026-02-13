@@ -36,6 +36,19 @@ pub fn get_video_devices(
     device_manager.read().video_devices.clone()
 }
 
+/// Validate that a video device configuration will work at runtime.
+/// Checks if the stored GStreamer device has exact caps for the requested mode.
+#[tauri::command]
+pub fn validate_video_device_config(
+    device_id: String,
+    codec: String,
+    width: u32,
+    height: u32,
+    fps: f64,
+) -> bool {
+    crate::devices::enumeration::validate_video_config(&device_id, &codec, width, height, fps)
+}
+
 // ============================================================================
 // Recording Commands
 // ============================================================================

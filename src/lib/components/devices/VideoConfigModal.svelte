@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { VideoDevice, VideoDeviceConfig, VideoCodec, CodecCapability } from '$lib/api';
-  import { getCodecDisplayName, getResolutionLabel, getTargetResolutions, getTargetFramerates, formatFps, computeDefaultConfig } from '$lib/api';
+  import { getCodecDisplayName, getResolutionLabel, getTargetResolutions, getTargetFramerates, formatFps, computeDefaultConfig, validateVideoDeviceConfig } from '$lib/api';
   import { settings } from '$lib/stores/settings';
+  import { deviceSaveStatus } from '$lib/stores/devices';
 
   interface Props {
     device: VideoDevice;
@@ -138,7 +139,50 @@
     }
   }
 
-  function handleSave() {
+  let validationError = $state<string | null>(null);
+
+  // Auto-save: validate & save whenever any selection changes.
+  // Track a "config fingerprint" so we only fire on real changes.
+  let autoSaveTimeout: ReturnType<typeof setTimeout> | null = null;
+  let initialised = false;
+
+  $effect(() => {
+    // Read all reactive deps so this effect re-runs on any change
+    const _codec = selectedCodec;
+    const _w = selectedWidth;
+    const _h = selectedHeight;
+    const _fps = selectedFps;
+    const _tw = selectedTargetWidth;
+    const _th = selectedTargetHeight;
+    const _tfps = selectedTargetFps;
+    const _isRaw = isRawCodec;
+
+    // Skip the very first run (initial mount with existing config)
+    if (!initialised) {
+      initialised = true;
+      return;
+    }
+
+    // Debounce: wait 300ms after last change before saving
+    if (autoSaveTimeout) clearTimeout(autoSaveTimeout);
+    autoSaveTimeout = setTimeout(() => {
+      triggerAutoSave();
+    }, 300);
+  });
+
+  async function triggerAutoSave() {
+    validationError = null;
+
+    // Validate that the device actually supports this exact configuration
+    const valid = await validateVideoDeviceConfig(
+      device.id, selectedCodec, selectedWidth, selectedHeight, selectedFps,
+    );
+
+    if (!valid) {
+      validationError = `This device does not support ${selectedWidth}x${selectedHeight} @ ${formatFps(selectedFps)}fps with ${getCodecDisplayName(selectedCodec)}. Try a different combination.`;
+      return;
+    }
+
     const config: VideoDeviceConfig = {
       source_codec: selectedCodec,
       source_width: selectedWidth,
@@ -150,15 +194,38 @@
     };
     onSave(config);
   }
+
+  // Whether the modal can be closed (not while pipeline is resetting)
+  const canClose = $derived($deviceSaveStatus !== 'saving');
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="modal-overlay" onclick={onClose} onkeydown={(e) => e.key === 'Escape' && onClose()}>
+<div class="modal-overlay" onclick={() => canClose && onClose()} onkeydown={(e) => e.key === 'Escape' && canClose && onClose()}>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal-content" onclick={(e) => e.stopPropagation()}>
     <div class="modal-header">
-      <h3>Configure Video Source</h3>
-      <span class="device-name-label">{device.name}</span>
+      <div class="header-left">
+        <h3>Configure Video Source</h3>
+        <span class="device-name-label">{device.name}</span>
+      </div>
+      {#if $deviceSaveStatus === 'saving' || $deviceSaveStatus === 'saved' || $deviceSaveStatus === 'error'}
+        <div class="save-status" class:saving={$deviceSaveStatus === 'saving'} class:saved={$deviceSaveStatus === 'saved'} class:error={$deviceSaveStatus === 'error'}>
+          {#if $deviceSaveStatus === 'saving'}
+            <svg class="icon spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>
+            </svg>
+            Saving...
+          {:else if $deviceSaveStatus === 'saved'}
+            <svg class="icon check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            Saved
+          {:else if $deviceSaveStatus === 'error'}
+            Save failed
+          {/if}
+        </div>
+      {/if}
     </div>
 
     <div class="modal-body">
@@ -257,9 +324,14 @@
       </div>
     </div>
 
+    {#if validationError}
+      <div class="validation-error">{validationError}</div>
+    {/if}
+
     <div class="modal-footer">
-      <button class="btn-secondary" onclick={onClose}>Cancel</button>
-      <button class="btn-primary" onclick={handleSave}>Save</button>
+      <button class="btn-close" onclick={onClose} disabled={!canClose}>
+        Close
+      </button>
     </div>
   </div>
 </div>
@@ -288,6 +360,14 @@
   .modal-header {
     padding: 1.25rem 1.5rem 0.75rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+
+  .header-left {
+    display: flex;
+    flex-direction: column;
   }
 
   .modal-header h3 {
@@ -302,6 +382,57 @@
   .device-name-label {
     font-size: 0.75rem;
     color: #6b6b6b;
+  }
+
+  .save-status {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 0.25rem;
+    font-size: 0.6875rem;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .save-status .icon {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+  }
+
+  .save-status.saving {
+    background: rgba(113, 113, 122, 0.1);
+    color: #8a8a8a;
+  }
+
+  .save-status.saving .spinner {
+    animation: spin 1s linear infinite;
+  }
+
+  .save-status.saved {
+    background: rgba(201, 169, 98, 0.15);
+    color: #c9a962;
+    animation: fadeOut 2s ease forwards;
+    animation-delay: 1s;
+  }
+
+  .save-status.error {
+    background: rgba(239, 68, 68, 0.1);
+    color: #fca5a5;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
   }
 
   .modal-body {
@@ -378,16 +509,24 @@
     font-weight: 500;
   }
 
+  .validation-error {
+    margin: 0 1.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    background: rgba(220, 38, 38, 0.12);
+    color: #f87171;
+    font-size: 0.8rem;
+    line-height: 1.4;
+  }
+
   .modal-footer {
     padding: 0.75rem 1.5rem 1.25rem;
     display: flex;
     justify-content: flex-end;
-    gap: 0.5rem;
     border-top: 1px solid rgba(255, 255, 255, 0.04);
   }
 
-  .btn-secondary,
-  .btn-primary {
+  .btn-close {
     padding: 0.5rem 1rem;
     border-radius: 0.25rem;
     font-family: inherit;
@@ -395,28 +534,19 @@
     letter-spacing: 0.02em;
     cursor: pointer;
     transition: all 0.15s ease;
-    border: none;
-  }
-
-  .btn-secondary {
     background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.08);
     color: #8a8a8a;
   }
 
-  .btn-secondary:hover {
+  .btn-close:hover:not(:disabled) {
     border-color: rgba(255, 255, 255, 0.15);
     color: #a8a8a8;
   }
 
-  .btn-primary {
-    background: rgba(201, 169, 98, 0.15);
-    color: #c9a962;
-    border: 1px solid rgba(201, 169, 98, 0.3);
-  }
-
-  .btn-primary:hover {
-    background: rgba(201, 169, 98, 0.25);
+  .btn-close:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
 
   /* Light mode */
@@ -459,19 +589,33 @@
     background: rgba(0, 0, 0, 0.06);
   }
 
+  :global(body.light-mode) .validation-error {
+    background: rgba(220, 38, 38, 0.08);
+    color: #dc2626;
+  }
+
   :global(body.light-mode) .modal-footer {
     border-top-color: rgba(0, 0, 0, 0.06);
   }
 
-  :global(body.light-mode) .btn-secondary {
+  :global(body.light-mode) .btn-close {
     border-color: rgba(0, 0, 0, 0.12);
     color: #5a5a5a;
   }
 
-  :global(body.light-mode) .btn-primary {
-    background: rgba(160, 128, 48, 0.15);
+  :global(body.light-mode) .save-status.saving {
+    background: rgba(0, 0, 0, 0.05);
+    color: #6a6a6a;
+  }
+
+  :global(body.light-mode) .save-status.saved {
+    background: rgba(160, 128, 48, 0.12);
     color: #8a6a20;
-    border-color: rgba(160, 128, 48, 0.3);
+  }
+
+  :global(body.light-mode) .save-status.error {
+    background: rgba(200, 60, 60, 0.1);
+    color: #a04040;
   }
 
   :global(body.light-mode) .badge {

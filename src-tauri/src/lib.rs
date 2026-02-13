@@ -156,6 +156,7 @@ pub fn run() {
             commands::get_audio_devices,
             commands::get_midi_devices,
             commands::get_video_devices,
+            commands::validate_video_device_config,
             commands::get_recording_state,
             commands::start_recording,
             commands::stop_recording,

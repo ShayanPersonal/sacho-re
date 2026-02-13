@@ -342,6 +342,19 @@ export async function getVideoDevices(): Promise<VideoDevice[]> {
   return invoke('get_video_devices');
 }
 
+/** Validate that a video device configuration will work at runtime. */
+export async function validateVideoDeviceConfig(
+  deviceId: string,
+  codec: VideoCodec,
+  width: number,
+  height: number,
+  fps: number,
+): Promise<boolean> {
+  return invoke('validate_video_device_config', {
+    deviceId, codec, width, height, fps,
+  });
+}
+
 // ============================================================================
 // Encoder Availability
 // ============================================================================
