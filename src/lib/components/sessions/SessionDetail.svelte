@@ -571,7 +571,7 @@
         {/if}
       </div>
       {#if currentVideoFile}
-        <p class="source-label">{currentVideoFile.device_name}{useCustomPlayer ? ' (frame player)' : ''}{videoUnsupportedCodec ? ' (unsupported)' : ''}</p>
+        <p class="source-label">{useCustomPlayer ? ' (frame player)' : ''}{videoUnsupportedCodec ? ' (unsupported)' : ''}</p>
       {/if}
     {:else}
       <div class="no-video">
@@ -1333,7 +1333,7 @@
   }
 
   :global(body.light-mode) .source-label {
-    color: #7a7a7a;
+    color: #a7a7a7;
   }
 
   :global(body.light-mode) .no-video {

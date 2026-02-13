@@ -791,10 +791,6 @@
     color: #8a8a8a;
   }
 
-  /* Source labels */
-  :global(body.light-mode .source-label) {
-    color: #7a7a7a;
-  }
 
   /* Error states */
   :global(body.light-mode .error-banner) {

@@ -562,8 +562,8 @@ impl PrerollVideoEncoder {
             target_fps,
         };
         
-        // Create the common pipeline start (appsrc, queue, videoconvert, optional scale/rate)
-        let (pipeline, appsrc, queue, videoconvert) = 
+        // Create the common pipeline start (appsrc -> queue -> videoconvert [-> scale] [-> rate])
+        let (pipeline, appsrc, chain_tail) = 
             AsyncVideoEncoder::create_common_pipeline_start_with_target(
                 width, height, fps, target_width, target_height, target_fps,
             ).map_err(|e| VideoError::Pipeline(format!("PrerollEncoder pipeline: {}", e)))?;
@@ -584,12 +584,10 @@ impl PrerollVideoEncoder {
             .sync(false)
             .build();
         
-        // Add all elements to pipeline
-        pipeline.add_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, appsink.upcast_ref()])
+        // Add encoder-specific elements and link from the common chain tail
+        pipeline.add_many([&encoder, appsink.upcast_ref()])
             .map_err(|e| VideoError::Pipeline(format!("Failed to add PrerollEncoder elements: {}", e)))?;
-        
-        // Link: appsrc -> queue -> videoconvert -> encoder -> appsink
-        gst::Element::link_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, appsink.upcast_ref()])
+        gst::Element::link_many([&chain_tail, &encoder, appsink.upcast_ref()])
             .map_err(|e| VideoError::Pipeline(format!("Failed to link PrerollEncoder elements: {}", e)))?;
         
         // Create shared output.

@@ -933,6 +933,15 @@ impl AsyncVideoEncoder {
     }
     
     /// Create common pipeline elements with optional target resolution/fps scaling.
+    ///
+    /// Builds and links the common chain:
+    ///   `appsrc -> queue -> videoconvert [-> videoscale -> capsfilter] [-> videorate -> capsfilter]`
+    ///
+    /// All elements are added to the pipeline and linked. Callers should only add
+    /// their own elements (encoder, muxer, sink) and link from `chain_tail` onward.
+    ///
+    /// Returns `(pipeline, appsrc, chain_tail)` where `chain_tail` is the last
+    /// element in the common chain (videoconvert, scale capsfilter, or rate capsfilter).
     pub(crate) fn create_common_pipeline_start_with_target(
         width: u32,
         height: u32,
@@ -940,7 +949,7 @@ impl AsyncVideoEncoder {
         target_width: Option<u32>,
         target_height: Option<u32>,
         target_fps: Option<f64>,
-    ) -> Result<(gst::Pipeline, gst_app::AppSrc, gst::Element, gst::Element)> {
+    ) -> Result<(gst::Pipeline, gst_app::AppSrc, gst::Element)> {
         let pipeline = gst::Pipeline::new();
         
         // Create appsrc with raw video caps - must specify format for proper negotiation
@@ -980,73 +989,64 @@ impl AsyncVideoEncoder {
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create videoconvert: {}", e)))?;
         
+        // Build the element chain, optionally adding videoscale and/or videorate
+        let mut elements: Vec<gst::Element> = vec![appsrc.clone().upcast(), queue, videoconvert.clone()];
+        let mut chain_tail = videoconvert;
+        
         // Check if we need scaling or rate conversion
         let tw = target_width.unwrap_or(width);
         let th = target_height.unwrap_or(height);
         let tf = target_fps.unwrap_or(fps);
-        let needs_scale = tw != width || th != height;
-        let needs_rate = (tf - fps).abs() > 0.01;
         
-        if needs_scale || needs_rate {
-            // Build chain: appsrc -> queue -> videoconvert -> [videoscale -> capsfilter] -> [videorate -> capsfilter]
-            let mut elements: Vec<gst::Element> = vec![appsrc.clone().upcast(), queue.clone(), videoconvert.clone()];
-            let mut last_element = videoconvert.clone();
+        if tw != width || th != height {
+            let videoscale = gst::ElementFactory::make("videoscale")
+                .build()
+                .map_err(|e| EncoderError::Pipeline(format!("Failed to create videoscale: {}", e)))?;
             
-            if needs_scale {
-                let videoscale = gst::ElementFactory::make("videoscale")
-                    .build()
-                    .map_err(|e| EncoderError::Pipeline(format!("Failed to create videoscale: {}", e)))?;
-                
-                let scale_caps = gst::Caps::builder("video/x-raw")
-                    .field("width", tw as i32)
-                    .field("height", th as i32)
-                    .build();
-                let scale_capsfilter = gst::ElementFactory::make("capsfilter")
-                    .property("caps", scale_caps)
-                    .build()
-                    .map_err(|e| EncoderError::Pipeline(format!("Failed to create scale capsfilter: {}", e)))?;
-                
-                elements.push(videoscale.clone());
-                elements.push(scale_capsfilter.clone());
-                last_element = scale_capsfilter;
-                
-                println!("[Encoder] Scaling from {}x{} to {}x{}", width, height, tw, th);
-            }
+            let scale_caps = gst::Caps::builder("video/x-raw")
+                .field("width", tw as i32)
+                .field("height", th as i32)
+                .build();
+            let scale_capsfilter = gst::ElementFactory::make("capsfilter")
+                .property("caps", scale_caps)
+                .build()
+                .map_err(|e| EncoderError::Pipeline(format!("Failed to create scale capsfilter: {}", e)))?;
             
-            if needs_rate {
-                let videorate = gst::ElementFactory::make("videorate")
-                    .build()
-                    .map_err(|e| EncoderError::Pipeline(format!("Failed to create videorate: {}", e)))?;
-                
-                let rate_caps = gst::Caps::builder("video/x-raw")
-                    .field("framerate", fps_to_gst_fraction(tf))
-                    .build();
-                let rate_capsfilter = gst::ElementFactory::make("capsfilter")
-                    .property("caps", rate_caps)
-                    .build()
-                    .map_err(|e| EncoderError::Pipeline(format!("Failed to create rate capsfilter: {}", e)))?;
-                
-                elements.push(videorate.clone());
-                elements.push(rate_capsfilter.clone());
-                last_element = rate_capsfilter;
-                
-                println!("[Encoder] Rate conversion from {}fps to {}fps", fps, tf);
-            }
+            elements.push(videoscale);
+            elements.push(scale_capsfilter.clone());
+            chain_tail = scale_capsfilter;
             
-            // Add all elements to pipeline
-            let element_refs: Vec<&gst::Element> = elements.iter().collect();
-            pipeline.add_many(&element_refs)
-                .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
-            
-            // Link chain
-            gst::Element::link_many(&element_refs)
-                .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
-            
-            // Return last_element as the "videoconvert" position (it's where the encoder will link from)
-            Ok((pipeline, appsrc, queue, last_element))
-        } else {
-            Ok((pipeline, appsrc, queue, videoconvert))
+            println!("[Encoder] Scaling from {}x{} to {}x{}", width, height, tw, th);
         }
+        
+        if (tf - fps).abs() > 0.01 {
+            let videorate = gst::ElementFactory::make("videorate")
+                .build()
+                .map_err(|e| EncoderError::Pipeline(format!("Failed to create videorate: {}", e)))?;
+            
+            let rate_caps = gst::Caps::builder("video/x-raw")
+                .field("framerate", fps_to_gst_fraction(tf))
+                .build();
+            let rate_capsfilter = gst::ElementFactory::make("capsfilter")
+                .property("caps", rate_caps)
+                .build()
+                .map_err(|e| EncoderError::Pipeline(format!("Failed to create rate capsfilter: {}", e)))?;
+            
+            elements.push(videorate);
+            elements.push(rate_capsfilter.clone());
+            chain_tail = rate_capsfilter;
+            
+            println!("[Encoder] Rate conversion from {:.2}fps to {:.2}fps", fps, tf);
+        }
+        
+        // Add all elements to pipeline and link the chain
+        let element_refs: Vec<&gst::Element> = elements.iter().collect();
+        pipeline.add_many(&element_refs)
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to add common elements: {}", e)))?;
+        gst::Element::link_many(&element_refs)
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to link common elements: {}", e)))?;
+        
+        Ok((pipeline, appsrc, chain_tail))
     }
     
     /// Create AV1 encoding pipeline (MKV container)
@@ -1058,7 +1058,7 @@ impl AsyncVideoEncoder {
         config: &EncoderConfig,
         hw_type: HardwareEncoderType,
     ) -> Result<gst::Pipeline> {
-        let (pipeline, appsrc, queue, videoconvert) = Self::create_common_pipeline_start_with_target(
+        let (pipeline, _appsrc, chain_tail) = Self::create_common_pipeline_start_with_target(
             width, height, fps, config.target_width, config.target_height, config.target_fps,
         )?;
         
@@ -1084,12 +1084,10 @@ impl AsyncVideoEncoder {
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
         
-        // Add elements to pipeline
-        pipeline.add_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, &parser, &muxer, &filesink])
+        // Add encoder-specific elements and link from the common chain tail
+        pipeline.add_many([&encoder, &parser, &muxer, &filesink])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
-        
-        // Link elements
-        gst::Element::link_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, &parser, &muxer, &filesink])
+        gst::Element::link_many([&chain_tail, &encoder, &parser, &muxer, &filesink])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
         
         Ok(pipeline)
@@ -1130,7 +1128,7 @@ impl AsyncVideoEncoder {
         config: &EncoderConfig,
         hw_type: HardwareEncoderType,
     ) -> Result<gst::Pipeline> {
-        let (pipeline, appsrc, queue, videoconvert) = Self::create_common_pipeline_start_with_target(
+        let (pipeline, _appsrc, chain_tail) = Self::create_common_pipeline_start_with_target(
             width, height, fps, config.target_width, config.target_height, config.target_fps,
         )?;
         
@@ -1151,12 +1149,10 @@ impl AsyncVideoEncoder {
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
         
-        // Add elements to pipeline (no parser needed for VP8)
-        pipeline.add_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, &muxer, &filesink])
+        // Add encoder-specific elements and link from the common chain tail
+        pipeline.add_many([&encoder, &muxer, &filesink])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
-        
-        // Link elements
-        gst::Element::link_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, &muxer, &filesink])
+        gst::Element::link_many([&chain_tail, &encoder, &muxer, &filesink])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
         
         Ok(pipeline)
@@ -1209,7 +1205,7 @@ impl AsyncVideoEncoder {
         config: &EncoderConfig,
         hw_type: HardwareEncoderType,
     ) -> Result<gst::Pipeline> {
-        let (pipeline, appsrc, queue, videoconvert) = Self::create_common_pipeline_start_with_target(
+        let (pipeline, _appsrc, chain_tail) = Self::create_common_pipeline_start_with_target(
             width, height, fps, config.target_width, config.target_height, config.target_fps,
         )?;
         
@@ -1230,12 +1226,10 @@ impl AsyncVideoEncoder {
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
         
-        // Add elements to pipeline (no parser needed for VP9)
-        pipeline.add_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, &muxer, &filesink])
+        // Add encoder-specific elements and link from the common chain tail
+        pipeline.add_many([&encoder, &muxer, &filesink])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
-        
-        // Link elements
-        gst::Element::link_many([appsrc.upcast_ref(), &queue, &videoconvert, &encoder, &muxer, &filesink])
+        gst::Element::link_many([&chain_tail, &encoder, &muxer, &filesink])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
         
         Ok(pipeline)
