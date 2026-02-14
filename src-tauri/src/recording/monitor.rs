@@ -1497,7 +1497,8 @@ impl MidiMonitor {
     fn start_video_poller(&mut self) {
         let is_monitoring = self.is_monitoring.clone();
         let video_manager = self.video_manager.clone();
-        
+        let app_handle = self.app_handle.clone();
+
         let handle = std::thread::Builder::new()
             .name("sacho-video-poller".into())
             .spawn(move || {
@@ -1505,12 +1506,18 @@ impl MidiMonitor {
                     {
                         let mut mgr = video_manager.lock();
                         mgr.poll();
+
+                        // Check for FPS mismatch warnings
+                        let warnings = mgr.collect_fps_warnings();
+                        for warning in warnings {
+                            let _ = app_handle.emit("video-fps-warning", warning);
+                        }
                     }
                     std::thread::sleep(Duration::from_millis(10)); // Poll at ~100Hz
                 }
             })
             .expect("Failed to spawn video poller thread");
-        
+
         self.video_poller_handle = Some(handle);
     }
     

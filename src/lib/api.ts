@@ -182,6 +182,13 @@ export function computeDefaultConfig(device: VideoDevice): VideoDeviceConfig | n
   };
 }
 
+/** Warning emitted when a video device delivers frames below its negotiated rate */
+export interface VideoFpsWarning {
+  device_name: string;
+  actual_fps: number;
+  expected_fps: number;
+}
+
 export interface RecordingState {
   status: 'idle' | 'recording' | 'stopping' | 'initializing';
   started_at: string | null;

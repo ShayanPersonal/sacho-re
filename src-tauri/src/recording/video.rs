@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 
@@ -23,6 +23,15 @@ use crate::encoding::{AsyncVideoEncoder, EncoderConfig, RawVideoFrame};
 use crate::session::VideoFileInfo;
 
 use super::preroll::MAX_PRE_ROLL_SECS_ENCODED;
+
+/// Warning emitted when a video device delivers frames at a significantly
+/// lower rate than the negotiated/requested framerate.
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct VideoFpsWarning {
+    pub device_name: String,
+    pub actual_fps: f64,
+    pub expected_fps: f64,
+}
 
 /// Error type for video capture operations
 #[derive(Debug, thiserror::Error)]
@@ -213,6 +222,14 @@ pub struct VideoCapturePipeline {
     target_height: u32,
     /// Target encoding fps (may differ from source fps for raw codec)
     target_fps: f64,
+    /// Shared frame counter from the appsink callback (for FPS measurement)
+    frame_counter: Arc<AtomicU64>,
+    /// Timestamp when FPS measurement started
+    fps_check_start: Instant,
+    /// Frame count snapshot at last FPS check
+    frames_at_last_check: u64,
+    /// Whether we've already emitted a FPS mismatch warning
+    fps_warning_emitted: bool,
 }
 
 /// Generic video file writer that handles different codecs and containers
@@ -597,6 +614,8 @@ impl PrerollVideoEncoder {
         
         // Set up appsink callback to route encoded frames
         let output_clone = output.clone();
+        // Compute default frame duration from target fps (fallback when buffer lacks duration metadata)
+        let enc_default_duration_ns = (1_000_000_000.0 / target_fps.unwrap_or(fps)).round() as u64;
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
@@ -604,7 +623,7 @@ impl PrerollVideoEncoder {
                         Ok(sample) => {
                             if let Some(buffer) = sample.buffer() {
                                 let pts = buffer.pts().map(|t| t.nseconds()).unwrap_or(0);
-                                let duration = buffer.duration().map(|t| t.nseconds()).unwrap_or(33_333_333);
+                                let duration = buffer.duration().map(|t| t.nseconds()).unwrap_or(enc_default_duration_ns);
                                 let is_delta = buffer.flags().contains(gst::BufferFlags::DELTA_UNIT);
                                 
                                 if let Ok(map) = buffer.map_readable() {
@@ -819,7 +838,9 @@ impl VideoCapturePipeline {
         let needs_frames_clone = needs_frames.clone();
         let frame_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let frame_counter_clone = frame_counter.clone();
-        
+        // Compute default frame duration from source fps (fallback when buffer lacks duration metadata)
+        let default_duration_ns = (1_000_000_000.0 / source_fps).round() as u64;
+
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
@@ -832,17 +853,12 @@ impl VideoCapturePipeline {
                         Ok(sample) => {
                             if let Some(buffer) = sample.buffer() {
                                 let pts = buffer.pts().map(|t| t.nseconds()).unwrap_or(0);
-                                let duration = buffer.duration().map(|t| t.nseconds()).unwrap_or(33_333_333); // ~30fps default
-                                
+                                let duration = buffer.duration().map(|t| t.nseconds()).unwrap_or(default_duration_ns);
+
                                 if let Ok(map) = buffer.map_readable() {
                                     let data = map.as_slice().to_vec();
-                                    let frame_num = frame_counter_clone.fetch_add(1, Ordering::Relaxed);
-                                    
-                                    // Minimal logging - only first frame
-                                    if frame_num == 0 {
-                                        println!("[Video] First frame: {} bytes, pts={}", data.len(), pts);
-                                    }
-                                    
+                                    frame_counter_clone.fetch_add(1, Ordering::Relaxed);
+
                                     let frame = BufferedFrame {
                                         data,
                                         pts,
@@ -861,9 +877,6 @@ impl VideoCapturePipeline {
                 })
                 .build()
         );
-        
-        // Store frame counter for later reference (unused for now but useful for debugging)
-        let _ = frame_counter;
         
         Ok(Self {
             device_id: format!("webcam-{}", device_index),
@@ -895,6 +908,10 @@ impl VideoCapturePipeline {
             target_width: source_width,
             target_height: source_height,
             target_fps: source_fps,
+            frame_counter,
+            fps_check_start: Instant::now(),
+            frames_at_last_check: 0,
+            fps_warning_emitted: false,
         })
     }
     
@@ -1005,7 +1022,9 @@ impl VideoCapturePipeline {
         let needs_frames_clone = needs_frames.clone();
         let frame_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let frame_counter_clone = frame_counter.clone();
-        
+        // Compute default frame duration from source fps (fallback when buffer lacks duration metadata)
+        let default_duration_ns = (1_000_000_000.0 / source_fps).round() as u64;
+
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
@@ -1018,22 +1037,17 @@ impl VideoCapturePipeline {
                         Ok(sample) => {
                             if let Some(buffer) = sample.buffer() {
                                 let pts = buffer.pts().map(|t| t.nseconds()).unwrap_or(0);
-                                let duration = buffer.duration().map(|t| t.nseconds()).unwrap_or(33_333_333);
-                                
+                                let duration = buffer.duration().map(|t| t.nseconds()).unwrap_or(default_duration_ns);
+
                                 // Get pixel format from caps
                                 let pixel_format = sample.caps()
                                     .and_then(|caps| caps.structure(0))
                                     .and_then(|s| s.get::<String>("format").ok());
-                                
+
                                 if let Ok(map) = buffer.map_readable() {
                                     let data = map.as_slice().to_vec();
-                                    let frame_num = frame_counter_clone.fetch_add(1, Ordering::Relaxed);
-                                    
-                                    if frame_num == 0 {
-                                        println!("[Video] First RAW frame: {} bytes, pts={}, format={:?}", 
-                                            data.len(), pts, pixel_format);
-                                    }
-                                    
+                                    frame_counter_clone.fetch_add(1, Ordering::Relaxed);
+
                                     let frame = BufferedFrame {
                                         data,
                                         pts,
@@ -1052,8 +1066,6 @@ impl VideoCapturePipeline {
                 })
                 .build()
         );
-        
-        let _ = frame_counter;
         
         Ok(Self {
             device_id: format!("webcam-{}", device_index),
@@ -1085,6 +1097,10 @@ impl VideoCapturePipeline {
             target_width: source_width,     // Will be overridden by caller if target differs
             target_height: source_height,
             target_fps: source_fps,
+            frame_counter,
+            fps_check_start: Instant::now(),
+            frames_at_last_check: 0,
+            fps_warning_emitted: false,
         })
     }
     
@@ -1160,6 +1176,11 @@ impl VideoCapturePipeline {
             )));
         }
         
+        // Reset FPS measurement now that capture has actually started
+        self.fps_check_start = Instant::now();
+        self.frames_at_last_check = 0;
+        self.fps_warning_emitted = false;
+
         // Create the pre-roll encoder if encode_during_preroll is active.
         // This must happen after cap negotiation so we know the actual dimensions.
         // Skip if pre_roll_secs is 0 — no point encoding frames that will be
@@ -1534,6 +1555,49 @@ impl VideoCapturePipeline {
         }
     }
     
+    /// Check if the device is delivering frames at a significantly lower rate
+    /// than the negotiated framerate. Returns a warning once after 5 seconds of
+    /// steady frame delivery (excludes startup latency).
+    pub fn check_fps_mismatch(&mut self) -> Option<VideoFpsWarning> {
+        if self.fps_warning_emitted {
+            return None;
+        }
+
+        let total_frames = self.frame_counter.load(Ordering::Relaxed);
+        if total_frames == 0 {
+            return None;
+        }
+
+        // Start the measurement window from the first frame, not pipeline start
+        if self.frames_at_last_check == 0 {
+            self.fps_check_start = Instant::now();
+            self.frames_at_last_check = total_frames;
+            return None;
+        }
+
+        let elapsed = self.fps_check_start.elapsed();
+        if elapsed < Duration::from_secs(5) {
+            return None;
+        }
+
+        let frames_in_window = total_frames - self.frames_at_last_check;
+        let actual_fps = frames_in_window as f64 / elapsed.as_secs_f64();
+
+        // Warn if actual fps is less than 75% of expected
+        if actual_fps < self.fps * 0.75 {
+            self.fps_warning_emitted = true;
+            println!("[Video] FPS mismatch warning for {}: {:.1} actual vs {:.0} expected",
+                self.device_name, actual_fps, self.fps);
+            Some(VideoFpsWarning {
+                device_name: self.device_name.clone(),
+                actual_fps: (actual_fps * 10.0).round() / 10.0, // Round to 1 decimal
+                expected_fps: self.fps,
+            })
+        } else {
+            None
+        }
+    }
+
     /// Poll for new frames and write to file if recording
     /// This should be called periodically from a background thread
     pub fn poll(&mut self) -> Result<()> {
@@ -1844,6 +1908,17 @@ impl VideoCaptureManager {
         }
     }
     
+    /// Collect FPS mismatch warnings from all active pipelines
+    pub fn collect_fps_warnings(&mut self) -> Vec<VideoFpsWarning> {
+        let mut warnings = Vec::new();
+        for (_, pipeline) in self.pipelines.iter_mut() {
+            if let Some(warning) = pipeline.check_fps_mismatch() {
+                warnings.push(warning);
+            }
+        }
+        warnings
+    }
+
     /// Set pre-roll duration for all pipelines
     pub fn set_preroll_duration(&mut self, secs: u32) {
         self.pre_roll_secs = secs;

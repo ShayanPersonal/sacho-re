@@ -1,7 +1,8 @@
 // Device list and selection store
 
 import { writable, derived, get } from 'svelte/store';
-import type { AudioDevice, MidiDevice, VideoDevice, VideoDeviceConfig, Config } from '$lib/api';
+import { listen } from '@tauri-apps/api/event';
+import type { AudioDevice, MidiDevice, VideoDevice, VideoDeviceConfig, VideoFpsWarning, Config } from '$lib/api';
 import { getAudioDevices, getMidiDevices, getVideoDevices, getConfig, updateConfig } from '$lib/api';
 import { settings } from './settings';
 
@@ -22,6 +23,25 @@ export const selectedVideoDevices = writable<Set<string>>(new Set());
 
 // Per-device video configuration (device_id -> config)
 export const videoDeviceConfigs = writable<Record<string, VideoDeviceConfig>>({});
+
+// FPS mismatch warnings from video capture devices
+export const videoFpsWarnings = writable<VideoFpsWarning[]>([]);
+
+// Listen for FPS warning events from backend
+listen<VideoFpsWarning>('video-fps-warning', (event) => {
+  videoFpsWarnings.update(warnings => {
+    // Replace any existing warning for the same device
+    const filtered = warnings.filter(w => w.device_name !== event.payload.device_name);
+    return [...filtered, event.payload];
+  });
+});
+
+// Clear FPS warnings when monitoring restarts (recording-state-changed to initializing)
+listen<string>('recording-state-changed', (event) => {
+  if (event.payload === 'initializing') {
+    videoFpsWarnings.set([]);
+  }
+});
 
 // Config reference
 export const config = writable<Config | null>(null);
