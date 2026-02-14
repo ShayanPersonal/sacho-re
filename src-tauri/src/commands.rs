@@ -587,8 +587,11 @@ pub fn update_config(
     config: State<'_, RwLock<Config>>,
     recording_state: State<'_, RwLock<RecordingState>>,
     monitor: State<'_, Arc<Mutex<MidiMonitor>>>,
-    new_config: Config,
+    mut new_config: Config,
 ) -> Result<(), String> {
+    // Validate and clamp config values to safe ranges
+    new_config.validate();
+
     // Check if device-related settings changed before updating
     let (device_settings_changed, preset_or_mode_changed) = {
         let current = config.read();

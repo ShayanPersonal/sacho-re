@@ -1094,59 +1094,70 @@ impl VideoCapturePipeline {
         println!("[Video] Started capture pipeline for {}", self.device_name);
         
         // Query the negotiated caps to get actual resolution.
-        // Give the pipeline a moment to negotiate — live sources may need more time.
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        
+        // USB cameras often need >250ms to negotiate, so retry up to 4 times.
         let mut negotiated = false;
-        if let Some(pad) = self.appsink.static_pad("sink") {
-            if let Some(caps) = pad.current_caps() {
-                if let Some(structure) = caps.structure(0) {
-                    self.width = structure.get::<i32>("width").unwrap_or(1280) as u32;
-                    self.height = structure.get::<i32>("height").unwrap_or(720) as u32;
-                    self.fps = structure.get::<gst::Fraction>("framerate")
-                        .map(|f| {
-                            let numer = f.numer() as f64;
-                            let denom = (f.denom() as f64).max(1.0);
-                            numer / denom
-                        })
-                        .unwrap_or(30.0);
-                    
-                    println!("[Video]   Negotiated: {}x{} @ {:.2}fps", self.width, self.height, self.fps);
-                    negotiated = true;
+        for attempt in 1..=4 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+
+            if let Some(pad) = self.appsink.static_pad("sink") {
+                if let Some(caps) = pad.current_caps() {
+                    if let Some(structure) = caps.structure(0) {
+                        self.width = structure.get::<i32>("width").unwrap_or(1280) as u32;
+                        self.height = structure.get::<i32>("height").unwrap_or(720) as u32;
+                        self.fps = structure.get::<gst::Fraction>("framerate")
+                            .map(|f| {
+                                let numer = f.numer() as f64;
+                                let denom = (f.denom() as f64).max(1.0);
+                                numer / denom
+                            })
+                            .unwrap_or(30.0);
+
+                        println!("[Video]   Negotiated: {}x{} @ {:.2}fps (attempt {})", self.width, self.height, self.fps, attempt);
+                        negotiated = true;
+                        break;
+                    }
                 }
             }
+
+            if attempt < 4 {
+                println!("[Video]   Cap negotiation attempt {}/4 failed for {}, retrying...", attempt, self.device_name);
+            }
         }
-        
+
         if !negotiated {
-            println!("[Video] WARNING: Pipeline for {} did not negotiate caps after 250ms!", self.device_name);
-            println!("[Video]   Requested: {}x{} @ {:.2}fps, codec: {}", 
-                self.width, self.height, self.fps, self.codec.display_name());
-            println!("[Video]   This usually means the device does not support this combination.");
-            println!("[Video]   The recording may produce an empty file.");
-            
+            // Stop the pipeline since it can't produce valid output
+            self.pipeline.set_state(gst::State::Null).ok();
+
+            let mut error_details = String::new();
+
             // Check if the pipeline is in an error state
             let (state_result, current, pending) = self.pipeline.state(Some(gst::ClockTime::from_mseconds(100)));
-            println!("[Video]   Pipeline state: {:?}, current: {:?}, pending: {:?}", state_result, current, pending);
-            
-            // Check bus for error messages — these reveal the actual GStreamer failure reason
+            error_details.push_str(&format!("Pipeline state: {:?}, current: {:?}, pending: {:?}. ", state_result, current, pending));
+
+            // Check bus for error messages
             if let Some(bus) = self.pipeline.bus() {
                 while let Some(msg) = bus.pop_filtered(&[gst::MessageType::Error, gst::MessageType::Warning]) {
                     match msg.view() {
                         gst::MessageView::Error(err) => {
                             let src_name = err.src().map(|s| s.name().to_string()).unwrap_or_default();
-                            println!("[Video]   GStreamer ERROR from {}: {}", src_name, err.error());
+                            error_details.push_str(&format!("GStreamer ERROR from {}: {}. ", src_name, err.error()));
                             if let Some(debug) = err.debug() {
-                                println!("[Video]   Debug: {}", debug);
+                                error_details.push_str(&format!("Debug: {}. ", debug));
                             }
                         }
                         gst::MessageView::Warning(warn) => {
                             let src_name = warn.src().map(|s| s.name().to_string()).unwrap_or_default();
-                            println!("[Video]   GStreamer WARNING from {}: {}", src_name, warn.error());
+                            error_details.push_str(&format!("GStreamer WARNING from {}: {}. ", src_name, warn.error()));
                         }
                         _ => {}
                     }
                 }
             }
+
+            return Err(VideoError::Pipeline(format!(
+                "Pipeline for {} did not negotiate caps after 1000ms ({}x{} @ {:.2}fps, codec: {}). {}",
+                self.device_name, self.width, self.height, self.fps, self.codec.display_name(), error_details
+            )));
         }
         
         // Create the pre-roll encoder if encode_during_preroll is active.

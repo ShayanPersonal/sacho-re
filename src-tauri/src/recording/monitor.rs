@@ -200,7 +200,7 @@ impl AudioStreamWriter {
             .map_err(|e| anyhow::anyhow!("Failed to send EOS: {}", e))?;
         
         // Wait for the pipeline to finish processing
-        let bus = self.pipeline.bus().unwrap();
+        let bus = self.pipeline.bus().ok_or_else(|| anyhow::anyhow!("No pipeline bus for audio finalization"))?;
         for msg in bus.iter_timed(gst::ClockTime::from_seconds(30)) {
             match msg.view() {
                 gst::MessageView::Eos(..) => break,
@@ -252,6 +252,8 @@ pub struct MidiStreamWriter {
     ticks_per_us: f64,
     /// Last time the file was flushed to disk
     last_flush: Instant,
+    /// Count of write errors (logged on first occurrence, summarized in finish())
+    write_errors: u32,
 }
 
 impl MidiStreamWriter {
@@ -288,21 +290,34 @@ impl MidiStreamWriter {
             track_data_bytes: 0,
             ticks_per_us: Self::TICKS_PER_QUARTER as f64 / Self::US_PER_QUARTER,
             last_flush: Instant::now(),
+            write_errors: 0,
         })
     }
-    
+
     /// Push a single MIDI event to the file.
     pub fn push_event(&mut self, event: &TimestampedMidiEvent) {
         let tick = (event.timestamp_us as f64 * self.ticks_per_us) as u64;
         let delta = tick.saturating_sub(self.last_tick);
         self.last_tick = tick;
-        
+
         // Write variable-length delta time
         let delta_bytes = Self::encode_variable_length(delta as u32);
-        if self.file.write_all(&delta_bytes).is_err() { return; }
-        
+        if let Err(e) = self.file.write_all(&delta_bytes) {
+            self.write_errors += 1;
+            if self.write_errors == 1 {
+                println!("[Sacho] MIDI write error for {}: {}", self.device_name, e);
+            }
+            return;
+        }
+
         // Write event data
-        if self.file.write_all(&event.data).is_err() { return; }
+        if let Err(e) = self.file.write_all(&event.data) {
+            self.write_errors += 1;
+            if self.write_errors == 1 {
+                println!("[Sacho] MIDI write error for {}: {}", self.device_name, e);
+            }
+            return;
+        }
         
         self.track_data_bytes += delta_bytes.len() as u32 + event.data.len() as u32;
         self.event_count += 1;
@@ -326,7 +341,11 @@ impl MidiStreamWriter {
         self.file.flush()?;
         
         let size = self.file.metadata().map(|m| m.len()).unwrap_or(0);
-        
+
+        if self.write_errors > 0 {
+            println!("[Sacho] MIDI stream for {} had {} write errors", self.device_name, self.write_errors);
+        }
+
         println!("[Sacho] MIDI stream finished: {} ({} events, {} bytes)",
             self.filename, self.event_count, size);
         
@@ -632,9 +651,9 @@ pub fn repair_flac_file(file_path: &PathBuf) -> anyhow::Result<(u16, u32, f64, u
     pipeline.set_state(gst::State::Playing)
         .map_err(|e| anyhow::anyhow!("Failed to start FLAC parse: {}", e))?;
     
-    let bus = pipeline.bus().unwrap();
+    let bus = pipeline.bus().ok_or_else(|| anyhow::anyhow!("No pipeline bus for FLAC repair"))?;
     let mut duration_secs = 0.0;
-    
+
     for msg in bus.iter_timed(gst::ClockTime::from_seconds(60)) {
         match msg.view() {
             gst::MessageView::Eos(..) => {
@@ -771,9 +790,9 @@ pub fn repair_video_file(file_path: &PathBuf) -> anyhow::Result<(f64, u64)> {
     pipeline.set_state(gst::State::Playing)
         .map_err(|e| anyhow::anyhow!("Failed to start remux: {}", e))?;
     
-    let bus = pipeline.bus().unwrap();
+    let bus = pipeline.bus().ok_or_else(|| anyhow::anyhow!("No pipeline bus for video remux repair"))?;
     let mut duration_secs = 0.0;
-    
+
     for msg in bus.iter_timed(gst::ClockTime::from_seconds(120)) {
         match msg.view() {
             gst::MessageView::Eos(..) => {
@@ -925,7 +944,7 @@ pub fn combine_audio_video_mkv(
     pipeline.set_state(gst::State::Playing)
         .map_err(|e| anyhow::anyhow!("Failed to start combine pipeline: {:?}", e))?;
     
-    let bus = pipeline.bus().unwrap();
+    let bus = pipeline.bus().ok_or_else(|| anyhow::anyhow!("No pipeline bus for audio+video combine"))?;
     for msg in bus.iter_timed(gst::ClockTime::from_seconds(300)) {
         match msg.view() {
             gst::MessageView::Eos(..) => {
@@ -972,6 +991,8 @@ pub struct CaptureState {
     pub is_starting: bool,
     pub session_path: Option<PathBuf>,
     pub start_time: Option<Instant>,
+    /// When recording transitioned to active (for idle checker grace period)
+    pub recording_started_at: Option<Instant>,
     /// Streaming MIDI writers (one per recording device, keyed by port name)
     pub midi_writers: HashMap<String, MidiStreamWriter>,
     /// Streaming audio writers (one per device, Some when recording)
@@ -994,6 +1015,7 @@ impl CaptureState {
             is_starting: false,
             session_path: None,
             start_time: None,
+            recording_started_at: None,
             midi_writers: HashMap::new(),
             audio_writers: Vec::new(),
             midi_preroll: MidiPrerollBuffer::new(pre_roll_secs),
@@ -1037,6 +1059,7 @@ impl Default for CaptureState {
             is_starting: false,
             session_path: None,
             start_time: None,
+            recording_started_at: None,
             midi_writers: HashMap::new(),
             audio_writers: Vec::new(),
             midi_preroll: MidiPrerollBuffer::new(2),
@@ -1602,9 +1625,21 @@ impl MidiMonitor {
                     let config = app_handle.state::<RwLock<Config>>();
                     let idle_timeout = config.read().idle_timeout_secs;
                     
-                    let is_recording = capture_state.lock().is_recording;
-                    
+                    let (is_recording, recording_started_at) = {
+                        let state = capture_state.lock();
+                        (state.is_recording, state.recording_started_at)
+                    };
+
                     if is_recording {
+                        // Skip idle check if recording just started (grace period)
+                        // This prevents a stale last_event_time from immediately stopping
+                        // a recording that took a while to initialize (e.g., slow camera)
+                        if let Some(started_at) = recording_started_at {
+                            if started_at.elapsed() < Duration::from_secs(idle_timeout as u64) {
+                                continue;
+                            }
+                        }
+
                         if let Some(last_time) = *last_event_time.read() {
                             if last_time.elapsed() >= Duration::from_secs(idle_timeout as u64) {
                                 println!("[Sacho] Idle timeout ({} sec), stopping recording", idle_timeout);
@@ -1848,6 +1883,7 @@ fn start_recording(
         // Switch from "starting" to "recording" - now new events go directly to midi_events
         state.is_starting = false;
         state.is_recording = true;
+        state.recording_started_at = Some(Instant::now());
         
         println!("[Sacho] Recording started with {} pre-roll MIDI events, {} pre-roll audio samples (sync pre-roll: {:?})", 
             midi_preroll_count, audio_preroll_samples, sync_preroll_duration);
@@ -1936,6 +1972,7 @@ fn stop_recording(
         state.is_recording = false;
         state.is_starting = false;
         state.start_time = None;
+        state.recording_started_at = None;
         state.midi_timestamp_offset_us = 0;
         
         (path, midi_ws, audio_ws, duration)

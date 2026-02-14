@@ -10,11 +10,11 @@
 //! - Thread-safe operation with proper synchronization
 //! - Modular architecture for adding new encoder backends
 
+use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
+use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use crossbeam_channel::{Sender, Receiver, bounded, TrySendError};
-use parking_lot::Mutex;
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -27,16 +27,16 @@ use super::VideoCodec;
 pub enum EncoderError {
     #[error("GStreamer error: {0}")]
     Gst(String),
-    
+
     #[error("Encoder not available: {0}")]
     NotAvailable(String),
-    
+
     #[error("Pipeline error: {0}")]
     Pipeline(String),
-    
+
     #[error("Channel error: {0}")]
     Channel(String),
-    
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -119,7 +119,7 @@ pub fn fps_to_gst_fraction(fps: f64) -> gst::Fraction {
     if (fps - rounded as f64).abs() < 0.01 {
         return gst::Fraction::new(rounded, 1);
     }
-    
+
     // Then check common NTSC fractional rates (29.97, 59.94, etc.)
     let ntsc_pairs: &[(f64, i32, i32)] = &[
         (23.976, 24000, 1001),
@@ -128,13 +128,13 @@ pub fn fps_to_gst_fraction(fps: f64) -> gst::Fraction {
         (59.940, 60000, 1001),
         (119.880, 120000, 1001),
     ];
-    
+
     for &(approx, num, den) in ntsc_pairs {
         if (fps - approx).abs() < 0.05 {
             return gst::Fraction::new(num, den);
         }
     }
-    
+
     // Fallback: approximate with 1001 denominator
     let num = (fps * 1001.0).round() as i32;
     gst::Fraction::new(num, 1001)
@@ -177,7 +177,7 @@ impl HardwareEncoderType {
             HardwareEncoderType::Software => Some("av1enc"),
         }
     }
-    
+
     /// Get the GStreamer element name for VP8 encoding
     /// VP8 is royalty-free, so we can use both hardware and software encoders
     pub fn vp8_encoder_element(&self) -> Option<&'static str> {
@@ -200,7 +200,7 @@ impl HardwareEncoderType {
             HardwareEncoderType::Amf => None,
         }
     }
-    
+
     /// Get the GStreamer element name for VP9 encoding
     /// VP9 is royalty-free, so we can use both hardware and software encoders
     pub fn vp9_encoder_element(&self) -> Option<&'static str> {
@@ -223,7 +223,7 @@ impl HardwareEncoderType {
             HardwareEncoderType::Amf => None,
         }
     }
-    
+
     /// Get display name
     pub fn display_name(&self) -> &'static str {
         match self {
@@ -237,18 +237,18 @@ impl HardwareEncoderType {
 }
 
 /// Detect the best available AV1 encoder
-/// 
+///
 /// Checks for hardware encoders first, then falls back to software (libaom).
-/// 
+///
 /// Hardware encoders checked:
 /// - NVIDIA NVENC (nvav1enc) - RTX 40 series and newer
 /// - AMD AMF (amfav1enc) - RX 7000 series and newer
 /// - Intel QuickSync (qsvav1enc) - Arc GPUs and newer Intel iGPUs
 /// - VA-API (vaav1enc, vaapiav1enc) - Linux (Intel Arc, AMD, some NVIDIA)
-/// 
+///
 /// Software fallback:
 /// - libaom (av1enc) - slower but works everywhere
-/// 
+///
 /// Note: Vulkan Video encoding in GStreamer does not yet support AV1.
 pub fn detect_best_av1_encoder() -> HardwareEncoderType {
     // Check NVIDIA NVENC first (fastest, best quality)
@@ -282,14 +282,14 @@ pub fn has_av1_encoder() -> bool {
 }
 
 /// Detect the best available VP8 encoder
-/// 
+///
 /// VP8 is royalty-free, so we can use any available encoder.
 /// Checks for hardware encoders first, then falls back to software (libvpx).
-/// 
+///
 /// Hardware encoders checked:
 /// - Intel QuickSync (qsvvp8enc) - Windows/Linux
 /// - VA-API (vavp8enc, vaapivp8enc) - Linux (Intel, AMD)
-/// 
+///
 /// Note: NVIDIA NVENC and AMD AMF do not support VP8 encoding.
 /// Note: Vulkan Video encoding in GStreamer does not yet support VP8.
 pub fn detect_best_vp8_encoder() -> HardwareEncoderType {
@@ -320,14 +320,14 @@ pub fn has_vp8_encoder() -> bool {
 }
 
 /// Detect the best available VP9 encoder
-/// 
+///
 /// VP9 is royalty-free, so we can use any available encoder.
 /// Checks for hardware encoders first, then falls back to software (libvpx).
-/// 
+///
 /// Hardware encoders checked:
 /// - Intel QuickSync (qsvvp9enc) - Windows/Linux
 /// - VA-API (vavp9enc, vaapivp9enc) - Linux (Intel, AMD, some NVIDIA)
-/// 
+///
 /// Note: NVIDIA NVENC and AMD AMF do not support VP9 encoding.
 /// Note: Vulkan Video encoding in GStreamer does not yet support VP9.
 pub fn detect_best_vp9_encoder() -> HardwareEncoderType {
@@ -375,31 +375,34 @@ pub fn detect_best_encoder() -> HardwareEncoderType {
 /// Check if any AV1 hardware encoder is available (not software)
 pub fn has_hardware_av1_encoder() -> bool {
     let encoder_type = detect_best_av1_encoder();
-    !matches!(encoder_type, HardwareEncoderType::Software) && encoder_type.av1_encoder_element().is_some()
+    !matches!(encoder_type, HardwareEncoderType::Software)
+        && encoder_type.av1_encoder_element().is_some()
 }
 
 /// Check if any VP9 hardware encoder is available (not software)
 pub fn has_hardware_vp9_encoder() -> bool {
     let encoder_type = detect_best_vp9_encoder();
-    !matches!(encoder_type, HardwareEncoderType::Software) && encoder_type.vp9_encoder_element().is_some()
+    !matches!(encoder_type, HardwareEncoderType::Software)
+        && encoder_type.vp9_encoder_element().is_some()
 }
 
 /// Check if any VP8 hardware encoder is available (not software)
 pub fn has_hardware_vp8_encoder() -> bool {
     let encoder_type = detect_best_vp8_encoder();
-    !matches!(encoder_type, HardwareEncoderType::Software) && encoder_type.vp8_encoder_element().is_some()
+    !matches!(encoder_type, HardwareEncoderType::Software)
+        && encoder_type.vp8_encoder_element().is_some()
 }
 
 /// Get the recommended default video encoding mode
-/// 
+///
 /// Priority:
 /// 1. AV1 if hardware encoder is available
-/// 2. VP9 if hardware encoder is available  
+/// 2. VP9 if hardware encoder is available
 /// 3. VP8 if hardware encoder is available
 /// 4. VP8 software (fallback - always available)
 pub fn get_recommended_encoding_mode() -> crate::config::VideoEncodingMode {
     use crate::config::VideoEncodingMode;
-    
+
     if has_hardware_av1_encoder() {
         VideoEncodingMode::Av1
     } else if has_hardware_vp9_encoder() {
@@ -413,11 +416,11 @@ pub fn get_recommended_encoding_mode() -> crate::config::VideoEncodingMode {
 }
 
 /// Asynchronous video encoder that runs encoding in a background thread
-/// 
+///
 /// This encoder uses a producer-consumer pattern:
 /// - Producer: Video capture thread pushes raw frames via `send_frame()`
 /// - Consumer: Background encoding thread encodes and writes to file
-/// 
+///
 /// The encoder maintains backpressure through bounded channels to prevent
 /// memory exhaustion if encoding can't keep up with capture.
 pub struct AsyncVideoEncoder {
@@ -464,7 +467,7 @@ pub struct EncoderStats {
 
 impl AsyncVideoEncoder {
     /// Create a new async video encoder
-    /// 
+    ///
     /// # Arguments
     /// * `output_path` - Path to the output file
     /// * `width` - Video width
@@ -481,21 +484,25 @@ impl AsyncVideoEncoder {
         buffer_size: usize,
     ) -> Result<Self> {
         let hw_type = detect_best_encoder_for_codec(config.target_codec);
-        println!("[Encoder] Using {} for {} encoding", hw_type.display_name(), config.target_codec.display_name());
-        
+        println!(
+            "[Encoder] Using {} for {} encoding",
+            hw_type.display_name(),
+            config.target_codec.display_name()
+        );
+
         // Create bounded channel for frames (provides backpressure)
         let (frame_sender, frame_receiver) = bounded::<EncoderMessage>(buffer_size);
-        
+
         let state = Arc::new(Mutex::new(EncoderState {
             frames_encoded: 0,
             bytes_written: 0,
             is_finished: false,
             last_error: None,
         }));
-        
+
         let state_clone = state.clone();
         let config_clone = config.clone();
-        
+
         // Spawn encoder thread
         let encoder_thread = std::thread::Builder::new()
             .name("sacho-video-encoder".into())
@@ -511,8 +518,10 @@ impl AsyncVideoEncoder {
                     state_clone,
                 )
             })
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to spawn encoder thread: {}", e)))?;
-        
+            .map_err(|e| {
+                EncoderError::Pipeline(format!("Failed to spawn encoder thread: {}", e))
+            })?;
+
         Ok(Self {
             frame_sender,
             encoder_thread: Some(encoder_thread),
@@ -521,9 +530,9 @@ impl AsyncVideoEncoder {
             state,
         })
     }
-    
+
     /// Send a frame to be encoded (non-blocking)
-    /// 
+    ///
     /// Returns `Ok(true)` if frame was accepted, `Ok(false)` if buffer is full
     /// (frame was dropped), or `Err` if encoder has failed.
     pub fn try_send_frame(&self, frame: RawVideoFrame) -> Result<bool> {
@@ -534,7 +543,7 @@ impl AsyncVideoEncoder {
                 return Err(EncoderError::Pipeline(err.clone()));
             }
         }
-        
+
         match self.frame_sender.try_send(EncoderMessage::Frame(frame)) {
             Ok(()) => Ok(true),
             Err(TrySendError::Full(_)) => {
@@ -546,7 +555,7 @@ impl AsyncVideoEncoder {
             }
         }
     }
-    
+
     /// Send a frame to be encoded (blocking if buffer is full)
     pub fn send_frame(&self, frame: RawVideoFrame) -> Result<()> {
         // Check for encoder error first
@@ -556,36 +565,38 @@ impl AsyncVideoEncoder {
                 return Err(EncoderError::Pipeline(err.clone()));
             }
         }
-        
-        self.frame_sender.send(EncoderMessage::Frame(frame))
+
+        self.frame_sender
+            .send(EncoderMessage::Frame(frame))
             .map_err(|_| EncoderError::Channel("Encoder thread disconnected".into()))
     }
-    
+
     /// Finish encoding and wait for completion
     pub fn finish(mut self) -> Result<EncoderStats> {
         // Send finish message
         let _ = self.frame_sender.send(EncoderMessage::Finish);
-        
+
         // Wait for encoder thread to complete
         if let Some(handle) = self.encoder_thread.take() {
-            handle.join()
+            handle
+                .join()
                 .map_err(|_| EncoderError::Pipeline("Encoder thread panicked".into()))?
         } else {
             Err(EncoderError::Pipeline("Encoder already finished".into()))
         }
     }
-    
+
     /// Get current encoding statistics
     pub fn stats(&self) -> (u64, u64) {
         let state = self.state.lock();
         (state.frames_encoded, state.bytes_written)
     }
-    
+
     /// Check if the encoder has encountered an error
     pub fn has_error(&self) -> Option<String> {
         self.state.lock().last_error.clone()
     }
-    
+
     /// Main function for the encoder thread
     fn encoder_thread_main(
         receiver: Receiver<EncoderMessage>,
@@ -598,20 +609,22 @@ impl AsyncVideoEncoder {
         state: Arc<Mutex<EncoderState>>,
     ) -> Result<EncoderStats> {
         let start_time = Instant::now();
-        
+
         // Create GStreamer encoding pipeline
         let pipeline = Self::create_pipeline(&output_path, width, height, fps, &config, hw_type)?;
-        
+
         // Get appsrc element
-        let appsrc = pipeline.by_name("src")
+        let appsrc = pipeline
+            .by_name("src")
             .ok_or_else(|| EncoderError::Pipeline("Could not find appsrc".into()))?
             .downcast::<gst_app::AppSrc>()
             .map_err(|_| EncoderError::Pipeline("Could not downcast to AppSrc".into()))?;
-        
+
         // Start pipeline and wait for it to reach PLAYING state
-        pipeline.set_state(gst::State::Playing)
+        pipeline
+            .set_state(gst::State::Playing)
             .map_err(|e| EncoderError::Pipeline(format!("Failed to start pipeline: {:?}", e)))?;
-        
+
         // Wait for pipeline to be ready (up to 5 seconds)
         let (state_result, _, _) = pipeline.state(Some(gst::ClockTime::from_seconds(5)));
         match state_result {
@@ -622,28 +635,31 @@ impl AsyncVideoEncoder {
                 println!("[Encoder] Pipeline starting asynchronously");
             }
             Err(e) => {
-                return Err(EncoderError::Pipeline(format!("Failed to reach PLAYING state: {:?}", e)));
+                return Err(EncoderError::Pipeline(format!(
+                    "Failed to reach PLAYING state: {:?}",
+                    e
+                )));
             }
         }
-        
+
         let mut frames_encoded = 0u64;
         let mut frames_dropped_stale = 0u64;
         let mut first_pts: Option<u64> = None;
         // Track the end of the last encoded frame (PTS + duration) for content duration
         let mut last_pts_end: u64 = 0;
-        
+
         // Maximum age for a frame to be worth encoding. Frames older than this
         // were captured too long ago — encoding them would just create a backlog
         // that delays recording stop.
         let max_frame_age = Duration::from_millis(500);
-        
+
         // Track whether we've transitioned from pre-roll to live frames.
         // Pre-roll frames are intentionally old (captured seconds before the
         // recording trigger) and must NOT be dropped by the stale-frame check.
         // Once we see a "fresh" frame (age < max_frame_age), we know pre-roll
         // processing is complete and can start dropping genuinely stale frames.
         let mut live_mode = false;
-        
+
         // Process frames from channel
         loop {
             match receiver.recv() {
@@ -658,12 +674,14 @@ impl AsyncVideoEncoder {
                     if age > max_frame_age && live_mode {
                         frames_dropped_stale += 1;
                         if frames_dropped_stale == 1 || frames_dropped_stale % 30 == 0 {
-                            println!("[Encoder] Dropping stale frame (age: {:?}, {} total dropped)", 
-                                age, frames_dropped_stale);
+                            println!(
+                                "[Encoder] Dropping stale frame (age: {:?}, {} total dropped)",
+                                age, frames_dropped_stale
+                            );
                         }
                         continue;
                     }
-                    
+
                     // Normalize PTS relative to first frame
                     let pts = if let Some(base) = first_pts {
                         frame.pts.saturating_sub(base)
@@ -671,7 +689,7 @@ impl AsyncVideoEncoder {
                         first_pts = Some(frame.pts);
                         0
                     };
-                    
+
                     // Create GStreamer buffer
                     let mut buffer = gst::Buffer::from_slice(frame.data);
                     {
@@ -679,32 +697,36 @@ impl AsyncVideoEncoder {
                         buffer_ref.set_pts(gst::ClockTime::from_nseconds(pts));
                         buffer_ref.set_duration(gst::ClockTime::from_nseconds(frame.duration));
                     }
-                    
+
                     // Track content duration from PTS
                     let pts_end = pts + frame.duration;
                     if pts_end > last_pts_end {
                         last_pts_end = pts_end;
                     }
-                    
+
                     // Push to encoder
                     if let Err(e) = appsrc.push_buffer(buffer) {
                         let err_msg = format!("Failed to push buffer: {:?}", e);
                         state.lock().last_error = Some(err_msg.clone());
                         return Err(EncoderError::Pipeline(err_msg));
                     }
-                    
+
                     frames_encoded += 1;
                     state.lock().frames_encoded = frames_encoded;
-                    
+
                     // Log progress periodically
                     if frames_encoded % 100 == 0 {
-                        println!("[Encoder] Encoded {} frames ({} stale dropped)", 
-                            frames_encoded, frames_dropped_stale);
+                        println!(
+                            "[Encoder] Encoded {} frames ({} stale dropped)",
+                            frames_encoded, frames_dropped_stale
+                        );
                     }
                 }
                 Ok(EncoderMessage::Finish) => {
-                    println!("[Encoder] Finishing encoding ({} frames encoded, {} stale dropped)...", 
-                        frames_encoded, frames_dropped_stale);
+                    println!(
+                        "[Encoder] Finishing encoding ({} frames encoded, {} stale dropped)...",
+                        frames_encoded, frames_dropped_stale
+                    );
                     break;
                 }
                 Err(_) => {
@@ -713,13 +735,13 @@ impl AsyncVideoEncoder {
                 }
             }
         }
-        
+
         // Send EOS and wait for pipeline to finish
         println!("[Encoder] Sending EOS...");
         if let Err(e) = appsrc.end_of_stream() {
             println!("[Encoder] Warning: EOS send failed: {:?}", e);
         }
-        
+
         // Wait for EOS on bus with longer timeout to allow muxer to finalize
         let mut got_eos = false;
         if let Some(bus) = pipeline.bus() {
@@ -731,35 +753,47 @@ impl AsyncVideoEncoder {
                         break;
                     }
                     gst::MessageView::Error(err) => {
-                        let err_msg = format!("Pipeline error: {} ({:?})", err.error(), err.debug());
+                        let err_msg =
+                            format!("Pipeline error: {} ({:?})", err.error(), err.debug());
                         println!("[Encoder] Error during finalization: {}", err_msg);
                         // Don't return error - try to save what we have
                         break;
                     }
                     gst::MessageView::StateChanged(sc) => {
-                        if sc.src().map(|s| s == pipeline.upcast_ref::<gst::Object>()).unwrap_or(false) {
-                            println!("[Encoder] Pipeline state: {:?} -> {:?}", sc.old(), sc.current());
+                        if sc
+                            .src()
+                            .map(|s| s == pipeline.upcast_ref::<gst::Object>())
+                            .unwrap_or(false)
+                        {
+                            println!(
+                                "[Encoder] Pipeline state: {:?} -> {:?}",
+                                sc.old(),
+                                sc.current()
+                            );
                         }
                     }
                     _ => {}
                 }
             }
         }
-        
+
         if !got_eos {
             println!("[Encoder] Warning: Did not receive EOS, forcing stop");
         }
-        
+
         // Stop pipeline gracefully
         pipeline.set_state(gst::State::Null).ok();
-        
+
         // Give filesystem time to sync
         std::thread::sleep(std::time::Duration::from_millis(100));
-        
+
         // Remux the file to add proper duration header
         let bytes_written = match Self::remux_with_duration(&output_path) {
             Ok(size) => {
-                println!("[Encoder] Remuxed with duration header, size: {} bytes", size);
+                println!(
+                    "[Encoder] Remuxed with duration header, size: {} bytes",
+                    size
+                );
                 size
             }
             Err(e) => {
@@ -770,7 +804,7 @@ impl AsyncVideoEncoder {
                     .unwrap_or(0)
             }
         };
-        
+
         let encoding_duration = start_time.elapsed();
         let content_duration = Duration::from_nanos(last_pts_end);
         let average_fps = if encoding_duration.as_secs_f64() > 0.0 {
@@ -778,7 +812,7 @@ impl AsyncVideoEncoder {
         } else {
             0.0
         };
-        
+
         // Update final state
         {
             let mut s = state.lock();
@@ -786,10 +820,15 @@ impl AsyncVideoEncoder {
             s.bytes_written = bytes_written;
             s.is_finished = true;
         }
-        
-        println!("[Encoder] Finished: {} frames, {} bytes, {:.1} fps, content: {:.2}s", 
-            frames_encoded, bytes_written, average_fps, content_duration.as_secs_f64());
-        
+
+        println!(
+            "[Encoder] Finished: {} frames, {} bytes, {:.1} fps, content: {:.2}s",
+            frames_encoded,
+            bytes_written,
+            average_fps,
+            content_duration.as_secs_f64()
+        );
+
         Ok(EncoderStats {
             frames_encoded,
             bytes_written,
@@ -798,62 +837,70 @@ impl AsyncVideoEncoder {
             average_fps,
         })
     }
-    
+
     /// Remux a video file to add proper duration header
-    /// 
+    ///
     /// Files created in streaming mode may not have duration in the header.
     /// This function remuxes the file to add it.
     pub(crate) fn remux_with_duration(file_path: &PathBuf) -> Result<u64> {
-        let extension = file_path.extension()
+        let extension = file_path
+            .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("mkv");
-        
+
         println!("[Encoder] Remuxing {} to add duration header...", extension);
-        
+
         // Create temp file path
         let temp_path = file_path.with_extension(format!("{}.tmp", extension));
-        
+
         // Build remux pipeline: filesrc ! matroskademux ! matroskamux ! filesink
         let pipeline = gst::Pipeline::new();
-        
+
         let filesrc = gst::ElementFactory::make("filesrc")
             .property("location", file_path.to_string_lossy().to_string())
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesrc: {}", e)))?;
-        
+
         let demux = gst::ElementFactory::make("matroskademux")
             .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskademux: {}", e)))?;
-        
+            .map_err(|e| {
+                EncoderError::Pipeline(format!("Failed to create matroskademux: {}", e))
+            })?;
+
         let mux = gst::ElementFactory::make("matroskamux")
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
-        
+
         let filesink = gst::ElementFactory::make("filesink")
             .property("location", temp_path.to_string_lossy().to_string())
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
-        
-        pipeline.add_many([&filesrc, &demux, &mux, &filesink])
+
+        pipeline
+            .add_many([&filesrc, &demux, &mux, &filesink])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
-        
+
         // Link filesrc to demuxer
-        filesrc.link(&demux)
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to link filesrc to demux: {}", e)))?;
-        
+        filesrc.link(&demux).map_err(|e| {
+            EncoderError::Pipeline(format!("Failed to link filesrc to demux: {}", e))
+        })?;
+
         // Link muxer to filesink
-        mux.link(&filesink)
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to link mux to filesink: {}", e)))?;
-        
+        mux.link(&filesink).map_err(|e| {
+            EncoderError::Pipeline(format!("Failed to link mux to filesink: {}", e))
+        })?;
+
         // Handle dynamic pads from demuxer
         let mux_weak = mux.downgrade();
         demux.connect_pad_added(move |_demux, src_pad| {
-            let Some(mux) = mux_weak.upgrade() else { return };
-            
+            let Some(mux) = mux_weak.upgrade() else {
+                return;
+            };
+
             // Get the pad name to determine the stream type
             let pad_name = src_pad.name();
             println!("[Encoder] Demux pad added: {}", pad_name);
-            
+
             // Request appropriate pad from muxer
             let sink_pad = if pad_name.starts_with("video") {
                 mux.request_pad_simple("video_%u")
@@ -862,20 +909,26 @@ impl AsyncVideoEncoder {
             } else {
                 None
             };
-            
+
             if let Some(sink_pad) = sink_pad {
                 if let Err(e) = src_pad.link(&sink_pad) {
-                    println!("[Encoder] Warning: Failed to link pad {}: {:?}", pad_name, e);
+                    println!(
+                        "[Encoder] Warning: Failed to link pad {}: {:?}",
+                        pad_name, e
+                    );
                 }
             }
         });
-        
+
         // Run the pipeline
-        pipeline.set_state(gst::State::Playing)
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to start remux pipeline: {:?}", e)))?;
-        
+        pipeline.set_state(gst::State::Playing).map_err(|e| {
+            EncoderError::Pipeline(format!("Failed to start remux pipeline: {:?}", e))
+        })?;
+
         // Wait for EOS or error
-        let bus = pipeline.bus().ok_or_else(|| EncoderError::Pipeline("No bus".into()))?;
+        let bus = pipeline
+            .bus()
+            .ok_or_else(|| EncoderError::Pipeline("No bus".into()))?;
         for msg in bus.iter_timed(gst::ClockTime::from_seconds(60)) {
             match msg.view() {
                 gst::MessageView::Eos(..) => {
@@ -885,26 +938,24 @@ impl AsyncVideoEncoder {
                 gst::MessageView::Error(err) => {
                     pipeline.set_state(gst::State::Null).ok();
                     return Err(EncoderError::Pipeline(format!(
-                        "Remux error: {} ({:?})", err.error(), err.debug()
+                        "Remux error: {} ({:?})",
+                        err.error(),
+                        err.debug()
                     )));
                 }
                 _ => {}
             }
         }
-        
+
         pipeline.set_state(gst::State::Null).ok();
-        
+
         // Get the new file size
-        let new_size = std::fs::metadata(&temp_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-        
+        let new_size = std::fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0);
+
         if new_size > 0 {
             // Replace original with remuxed version
-            std::fs::remove_file(file_path)
-                .map_err(|e| EncoderError::Io(e))?;
-            std::fs::rename(&temp_path, file_path)
-                .map_err(|e| EncoderError::Io(e))?;
+            std::fs::remove_file(file_path).map_err(|e| EncoderError::Io(e))?;
+            std::fs::rename(&temp_path, file_path).map_err(|e| EncoderError::Io(e))?;
             Ok(new_size)
         } else {
             // Keep original if remux produced empty file
@@ -912,7 +963,7 @@ impl AsyncVideoEncoder {
             Err(EncoderError::Pipeline("Remux produced empty file".into()))
         }
     }
-    
+
     /// Create the GStreamer encoding pipeline
     fn create_pipeline(
         output_path: &PathBuf,
@@ -923,15 +974,22 @@ impl AsyncVideoEncoder {
         hw_type: HardwareEncoderType,
     ) -> Result<gst::Pipeline> {
         match config.target_codec {
-            VideoCodec::Av1 => Self::create_av1_pipeline(output_path, width, height, fps, config, hw_type),
-            VideoCodec::Vp9 => Self::create_vp9_pipeline(output_path, width, height, fps, config, hw_type),
-            VideoCodec::Vp8 => Self::create_vp8_pipeline(output_path, width, height, fps, config, hw_type),
+            VideoCodec::Av1 => {
+                Self::create_av1_pipeline(output_path, width, height, fps, config, hw_type)
+            }
+            VideoCodec::Vp9 => {
+                Self::create_vp9_pipeline(output_path, width, height, fps, config, hw_type)
+            }
+            VideoCodec::Vp8 => {
+                Self::create_vp8_pipeline(output_path, width, height, fps, config, hw_type)
+            }
             _ => Err(EncoderError::NotAvailable(format!(
-                "Encoding not supported for codec: {:?}", config.target_codec
+                "Encoding not supported for codec: {:?}",
+                config.target_codec
             ))),
         }
     }
-    
+
     /// Create common pipeline elements with optional target resolution/fps scaling.
     ///
     /// Builds and links the common chain:
@@ -951,7 +1009,7 @@ impl AsyncVideoEncoder {
         target_fps: Option<f64>,
     ) -> Result<(gst::Pipeline, gst_app::AppSrc, gst::Element)> {
         let pipeline = gst::Pipeline::new();
-        
+
         // Create appsrc with raw video caps - must specify format for proper negotiation
         // NV12 is the standard format we use for raw capture
         let caps = gst::Caps::builder("video/x-raw")
@@ -960,7 +1018,7 @@ impl AsyncVideoEncoder {
             .field("height", height as i32)
             .field("framerate", fps_to_gst_fraction(fps))
             .build();
-        
+
         let appsrc = gst_app::AppSrc::builder()
             .name("src")
             .caps(&caps)
@@ -968,7 +1026,7 @@ impl AsyncVideoEncoder {
             .is_live(true)
             .stream_type(gst_app::AppStreamType::Stream)
             .build();
-        
+
         // Queue to decouple appsrc from encoder.
         // Must be large enough to hold the pre-roll burst (up to 5 seconds at
         // up to 120fps = 600 frames). During live recording the queue stays
@@ -977,32 +1035,35 @@ impl AsyncVideoEncoder {
         // leaky=downstream: if the encoder truly can't keep up, drop oldest
         // frames rather than blocking the capture pipeline.
         let queue = gst::ElementFactory::make("queue")
-            .property("max-size-buffers", 1200u32)         // 2× max pre-roll at 120fps
+            .property("max-size-buffers", 1200u32) // 2× max pre-roll at 120fps
             .property("max-size-time", 10_000_000_000u64) // 10 seconds of PTS span
-            .property("max-size-bytes", 0u32)              // No byte limit
-            .property_from_str("leaky", "downstream")      // drop oldest when full
+            .property("max-size-bytes", 0u32) // No byte limit
+            .property_from_str("leaky", "downstream") // drop oldest when full
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create queue: {}", e)))?;
-        
+
         // Video converter to handle any needed format conversion for encoder
         let videoconvert = gst::ElementFactory::make("videoconvert")
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create videoconvert: {}", e)))?;
-        
+
         // Build the element chain, optionally adding videoscale and/or videorate
-        let mut elements: Vec<gst::Element> = vec![appsrc.clone().upcast(), queue, videoconvert.clone()];
+        let mut elements: Vec<gst::Element> =
+            vec![appsrc.clone().upcast(), queue, videoconvert.clone()];
         let mut chain_tail = videoconvert;
-        
+
         // Check if we need scaling or rate conversion
         let tw = target_width.unwrap_or(width);
         let th = target_height.unwrap_or(height);
         let tf = target_fps.unwrap_or(fps);
-        
+
         if tw != width || th != height {
             let videoscale = gst::ElementFactory::make("videoscale")
                 .build()
-                .map_err(|e| EncoderError::Pipeline(format!("Failed to create videoscale: {}", e)))?;
-            
+                .map_err(|e| {
+                    EncoderError::Pipeline(format!("Failed to create videoscale: {}", e))
+                })?;
+
             let scale_caps = gst::Caps::builder("video/x-raw")
                 .field("width", tw as i32)
                 .field("height", th as i32)
@@ -1010,45 +1071,59 @@ impl AsyncVideoEncoder {
             let scale_capsfilter = gst::ElementFactory::make("capsfilter")
                 .property("caps", scale_caps)
                 .build()
-                .map_err(|e| EncoderError::Pipeline(format!("Failed to create scale capsfilter: {}", e)))?;
-            
+                .map_err(|e| {
+                    EncoderError::Pipeline(format!("Failed to create scale capsfilter: {}", e))
+                })?;
+
             elements.push(videoscale);
             elements.push(scale_capsfilter.clone());
             chain_tail = scale_capsfilter;
-            
-            println!("[Encoder] Scaling from {}x{} to {}x{}", width, height, tw, th);
+
+            println!(
+                "[Encoder] Scaling from {}x{} to {}x{}",
+                width, height, tw, th
+            );
         }
-        
+
         if (tf - fps).abs() > 0.01 {
             let videorate = gst::ElementFactory::make("videorate")
                 .build()
-                .map_err(|e| EncoderError::Pipeline(format!("Failed to create videorate: {}", e)))?;
-            
+                .map_err(|e| {
+                    EncoderError::Pipeline(format!("Failed to create videorate: {}", e))
+                })?;
+
             let rate_caps = gst::Caps::builder("video/x-raw")
                 .field("framerate", fps_to_gst_fraction(tf))
                 .build();
             let rate_capsfilter = gst::ElementFactory::make("capsfilter")
                 .property("caps", rate_caps)
                 .build()
-                .map_err(|e| EncoderError::Pipeline(format!("Failed to create rate capsfilter: {}", e)))?;
-            
+                .map_err(|e| {
+                    EncoderError::Pipeline(format!("Failed to create rate capsfilter: {}", e))
+                })?;
+
             elements.push(videorate);
             elements.push(rate_capsfilter.clone());
             chain_tail = rate_capsfilter;
-            
-            println!("[Encoder] Rate conversion from {:.2}fps to {:.2}fps", fps, tf);
+
+            println!(
+                "[Encoder] Rate conversion from {:.2}fps to {:.2}fps",
+                fps, tf
+            );
         }
-        
+
         // Add all elements to pipeline and link the chain
         let element_refs: Vec<&gst::Element> = elements.iter().collect();
-        pipeline.add_many(&element_refs)
+        pipeline
+            .add_many(&element_refs)
             .map_err(|e| EncoderError::Pipeline(format!("Failed to add common elements: {}", e)))?;
-        gst::Element::link_many(&element_refs)
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to link common elements: {}", e)))?;
-        
+        gst::Element::link_many(&element_refs).map_err(|e| {
+            EncoderError::Pipeline(format!("Failed to link common elements: {}", e))
+        })?;
+
         Ok((pipeline, appsrc, chain_tail))
     }
-    
+
     /// Create AV1 encoding pipeline (MKV container)
     fn create_av1_pipeline(
         output_path: &PathBuf,
@@ -1059,23 +1134,28 @@ impl AsyncVideoEncoder {
         hw_type: HardwareEncoderType,
     ) -> Result<gst::Pipeline> {
         let (pipeline, _appsrc, chain_tail) = Self::create_common_pipeline_start_with_target(
-            width, height, fps, config.target_width, config.target_height, config.target_fps,
+            width,
+            height,
+            fps,
+            config.target_width,
+            config.target_height,
+            config.target_fps,
         )?;
-        
+
         // Create AV1 encoder
         let encoder = Self::create_av1_encoder(hw_type, config)?;
-        
+
         // AV1 parser
         let parser = gst::ElementFactory::make("av1parse")
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create av1parse: {}", e)))?;
-        
+
         // MKV muxer for AV1
         let muxer = gst::ElementFactory::make("matroskamux")
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
         muxer.set_property("writing-app", "Sacho");
-        
+
         // File sink with sync disabled for better performance
         let filesink = gst::ElementFactory::make("filesink")
             .property("location", output_path.to_string_lossy().to_string())
@@ -1083,30 +1163,38 @@ impl AsyncVideoEncoder {
             .property("sync", false)
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
-        
+
         // Add encoder-specific elements and link from the common chain tail
-        pipeline.add_many([&encoder, &parser, &muxer, &filesink])
+        pipeline
+            .add_many([&encoder, &parser, &muxer, &filesink])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
         gst::Element::link_many([&chain_tail, &encoder, &parser, &muxer, &filesink])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
-        
+
         Ok(pipeline)
     }
-    
+
     /// Create the AV1 encoder element based on hardware type
     ///
     /// Encoder parameters are configured by the preset system
     /// ([`super::presets::apply_preset`]) based on `config.preset_level`.
-    pub(crate) fn create_av1_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
-        let encoder_name = hw_type.av1_encoder_element()
-            .ok_or_else(|| EncoderError::NotAvailable(format!(
-                "{} does not support AV1 encoding", hw_type.display_name()
-            )))?;
-        
+    pub(crate) fn create_av1_encoder(
+        hw_type: HardwareEncoderType,
+        config: &EncoderConfig,
+    ) -> Result<gst::Element> {
+        let encoder_name = hw_type.av1_encoder_element().ok_or_else(|| {
+            EncoderError::NotAvailable(format!(
+                "{} does not support AV1 encoding",
+                hw_type.display_name()
+            ))
+        })?;
+
         let encoder = gst::ElementFactory::make(encoder_name)
             .build()
-            .map_err(|e| EncoderError::NotAvailable(format!("Failed to create {}: {}", encoder_name, e)))?;
-        
+            .map_err(|e| {
+                EncoderError::NotAvailable(format!("Failed to create {}: {}", encoder_name, e))
+            })?;
+
         // Apply preset-based parameters
         super::presets::apply_preset(
             &encoder,
@@ -1115,10 +1203,10 @@ impl AsyncVideoEncoder {
             config.preset_level,
             config.keyframe_interval,
         );
-        
+
         Ok(encoder)
     }
-    
+
     /// Create VP8 encoding pipeline (MKV container)
     fn create_vp8_pipeline(
         output_path: &PathBuf,
@@ -1129,18 +1217,23 @@ impl AsyncVideoEncoder {
         hw_type: HardwareEncoderType,
     ) -> Result<gst::Pipeline> {
         let (pipeline, _appsrc, chain_tail) = Self::create_common_pipeline_start_with_target(
-            width, height, fps, config.target_width, config.target_height, config.target_fps,
+            width,
+            height,
+            fps,
+            config.target_width,
+            config.target_height,
+            config.target_fps,
         )?;
-        
+
         // Create VP8 encoder
         let encoder = Self::create_vp8_encoder(hw_type, config)?;
-        
+
         // MKV muxer for VP8
         let muxer = gst::ElementFactory::make("matroskamux")
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
         muxer.set_property("writing-app", "Sacho");
-        
+
         // File sink with sync disabled for better performance
         let filesink = gst::ElementFactory::make("filesink")
             .property("location", output_path.to_string_lossy().to_string())
@@ -1148,34 +1241,44 @@ impl AsyncVideoEncoder {
             .property("sync", false)
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
-        
+
         // Add encoder-specific elements and link from the common chain tail
-        pipeline.add_many([&encoder, &muxer, &filesink])
+        pipeline
+            .add_many([&encoder, &muxer, &filesink])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
         gst::Element::link_many([&chain_tail, &encoder, &muxer, &filesink])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
-        
+
         Ok(pipeline)
     }
-    
+
     /// Create the VP8 encoder element based on hardware type
-    /// 
+    ///
     /// VP8 is royalty-free, so we can use both hardware and software encoders.
     /// Hardware encoders (VA-API, QuickSync) are preferred, with libvpx as fallback.
     /// Encoder parameters are configured by the preset system.
-    pub(crate) fn create_vp8_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
-        let encoder_name = hw_type.vp8_encoder_element()
-            .ok_or_else(|| EncoderError::NotAvailable(format!(
-                "{} does not support VP8 encoding", hw_type.display_name()
-            )))?;
-        
+    pub(crate) fn create_vp8_encoder(
+        hw_type: HardwareEncoderType,
+        config: &EncoderConfig,
+    ) -> Result<gst::Element> {
+        let encoder_name = hw_type.vp8_encoder_element().ok_or_else(|| {
+            EncoderError::NotAvailable(format!(
+                "{} does not support VP8 encoding",
+                hw_type.display_name()
+            ))
+        })?;
+
         let encoder = gst::ElementFactory::make(encoder_name)
             .build()
-            .map_err(|e| EncoderError::NotAvailable(format!("Failed to create {}: {}", encoder_name, e)))?;
-        
+            .map_err(|e| {
+                EncoderError::NotAvailable(format!("Failed to create {}: {}", encoder_name, e))
+            })?;
+
         // Validate that this hw_type actually supports VP8
         match hw_type {
-            HardwareEncoderType::VaApi | HardwareEncoderType::Qsv | HardwareEncoderType::Software => {}
+            HardwareEncoderType::VaApi
+            | HardwareEncoderType::Qsv
+            | HardwareEncoderType::Software => {}
             _ => {
                 return Err(EncoderError::NotAvailable(format!(
                     "VP8 encoding is not available with {}.",
@@ -1183,7 +1286,7 @@ impl AsyncVideoEncoder {
                 )));
             }
         }
-        
+
         // Apply preset-based parameters
         super::presets::apply_preset(
             &encoder,
@@ -1192,10 +1295,10 @@ impl AsyncVideoEncoder {
             config.preset_level,
             config.keyframe_interval,
         );
-        
+
         Ok(encoder)
     }
-    
+
     /// Create VP9 encoding pipeline (MKV container)
     fn create_vp9_pipeline(
         output_path: &PathBuf,
@@ -1206,18 +1309,23 @@ impl AsyncVideoEncoder {
         hw_type: HardwareEncoderType,
     ) -> Result<gst::Pipeline> {
         let (pipeline, _appsrc, chain_tail) = Self::create_common_pipeline_start_with_target(
-            width, height, fps, config.target_width, config.target_height, config.target_fps,
+            width,
+            height,
+            fps,
+            config.target_width,
+            config.target_height,
+            config.target_fps,
         )?;
-        
+
         // Create VP9 encoder
         let encoder = Self::create_vp9_encoder(hw_type, config)?;
-        
+
         // MKV muxer for VP9
         let muxer = gst::ElementFactory::make("matroskamux")
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
         muxer.set_property("writing-app", "Sacho");
-        
+
         // File sink with sync disabled for better performance
         let filesink = gst::ElementFactory::make("filesink")
             .property("location", output_path.to_string_lossy().to_string())
@@ -1225,34 +1333,44 @@ impl AsyncVideoEncoder {
             .property("sync", false)
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
-        
+
         // Add encoder-specific elements and link from the common chain tail
-        pipeline.add_many([&encoder, &muxer, &filesink])
+        pipeline
+            .add_many([&encoder, &muxer, &filesink])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
         gst::Element::link_many([&chain_tail, &encoder, &muxer, &filesink])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
-        
+
         Ok(pipeline)
     }
-    
+
     /// Create the VP9 encoder element based on hardware type
-    /// 
+    ///
     /// VP9 is royalty-free, so we can use both hardware and software encoders.
     /// Hardware encoders (QuickSync, VA-API) are preferred, with libvpx as fallback.
     /// Encoder parameters are configured by the preset system.
-    pub(crate) fn create_vp9_encoder(hw_type: HardwareEncoderType, config: &EncoderConfig) -> Result<gst::Element> {
-        let encoder_name = hw_type.vp9_encoder_element()
-            .ok_or_else(|| EncoderError::NotAvailable(format!(
-                "{} does not support VP9 encoding", hw_type.display_name()
-            )))?;
-        
+    pub(crate) fn create_vp9_encoder(
+        hw_type: HardwareEncoderType,
+        config: &EncoderConfig,
+    ) -> Result<gst::Element> {
+        let encoder_name = hw_type.vp9_encoder_element().ok_or_else(|| {
+            EncoderError::NotAvailable(format!(
+                "{} does not support VP9 encoding",
+                hw_type.display_name()
+            ))
+        })?;
+
         let encoder = gst::ElementFactory::make(encoder_name)
             .build()
-            .map_err(|e| EncoderError::NotAvailable(format!("Failed to create {}: {}", encoder_name, e)))?;
-        
+            .map_err(|e| {
+                EncoderError::NotAvailable(format!("Failed to create {}: {}", encoder_name, e))
+            })?;
+
         // Validate that this hw_type actually supports VP9
         match hw_type {
-            HardwareEncoderType::Qsv | HardwareEncoderType::VaApi | HardwareEncoderType::Software => {}
+            HardwareEncoderType::Qsv
+            | HardwareEncoderType::VaApi
+            | HardwareEncoderType::Software => {}
             _ => {
                 return Err(EncoderError::NotAvailable(format!(
                     "VP9 encoding is not available with {}.",
@@ -1260,7 +1378,7 @@ impl AsyncVideoEncoder {
                 )));
             }
         }
-        
+
         // Apply preset-based parameters
         super::presets::apply_preset(
             &encoder,
@@ -1269,7 +1387,7 @@ impl AsyncVideoEncoder {
             config.preset_level,
             config.keyframe_interval,
         );
-        
+
         Ok(encoder)
     }
 }
@@ -1277,10 +1395,30 @@ impl AsyncVideoEncoder {
 impl Drop for AsyncVideoEncoder {
     fn drop(&mut self) {
         // Ensure we clean up the encoder thread
-        if self.encoder_thread.is_some() {
+        if let Some(handle) = self.encoder_thread.take() {
             // Send finish message to gracefully stop
             let _ = self.frame_sender.send(EncoderMessage::Finish);
-            // Don't wait in drop - the thread will clean up on its own
+
+            // Join with a 5-second timeout to avoid hanging on drop.
+            // Use a helper channel to implement the timeout since JoinHandle
+            // doesn't support timed joins directly.
+            let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+            std::thread::spawn(move || {
+                let result = handle.join();
+                let _ = done_tx.send(result);
+            });
+
+            match done_rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(Ok(_)) => {
+                    println!("[Encoder] Encoder thread joined cleanly on drop");
+                }
+                Ok(Err(_)) => {
+                    println!("[Encoder] Warning: encoder thread panicked during drop");
+                }
+                Err(_) => {
+                    println!("[Encoder] Warning: encoder thread did not finish within 5s on drop, detaching");
+                }
+            }
         }
     }
 }

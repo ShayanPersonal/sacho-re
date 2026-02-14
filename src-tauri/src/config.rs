@@ -12,99 +12,99 @@ use crate::encoding::VideoCodec;
 pub struct Config {
     /// Path where recordings are stored
     pub storage_path: PathBuf,
-    
+
     /// Idle timeout in seconds before recording stops
     pub idle_timeout_secs: u32,
-    
+
     /// Pre-roll buffer duration in seconds (0-5)
     /// When recording starts, include this many seconds of prior data
     #[serde(default = "default_pre_roll_secs")]
     pub pre_roll_secs: u32,
-    
+
     /// Audio format for recordings
     pub audio_format: AudioFormat,
-    
+
     /// WAV bit depth
     #[serde(default)]
     pub wav_bit_depth: AudioBitDepth,
-    
+
     /// WAV sample rate
     #[serde(default)]
     pub wav_sample_rate: AudioSampleRate,
-    
+
     /// FLAC bit depth (Int16, Int24, or 32-bit integer via GStreamer)
     #[serde(default)]
     pub flac_bit_depth: AudioBitDepth,
-    
+
     /// FLAC sample rate
     #[serde(default)]
     pub flac_sample_rate: AudioSampleRate,
-    
+
     /// Video encoding mode for raw video sources
     /// Pre-encoded sources (like MJPEG from webcams) are passed through without re-encoding
     #[serde(default)]
     pub video_encoding_mode: VideoEncodingMode,
-    
+
     /// Whether to use dark color scheme (default is light)
     #[serde(default)]
     pub dark_mode: bool,
-    
+
     /// Whether to start with system
     pub auto_start: bool,
-    
+
     /// Whether to hide the window when launched via autostart or crash recovery
     #[serde(default = "default_true")]
     pub start_minimized: bool,
-    
+
     /// Whether to minimize to tray on close
     pub minimize_to_tray: bool,
-    
+
     /// Whether to show notification when recording starts
     #[serde(default = "default_true")]
     pub notify_recording_start: bool,
-    
+
     /// Whether to show notification when recording stops
     #[serde(default = "default_true")]
     pub notify_recording_stop: bool,
-    
+
     /// Selected audio device IDs
     pub selected_audio_devices: Vec<String>,
-    
+
     /// Selected MIDI device IDs for recording
     pub selected_midi_devices: Vec<String>,
-    
+
     /// MIDI device IDs that trigger recording
     pub trigger_midi_devices: Vec<String>,
-    
+
     /// Selected video device IDs
     pub selected_video_devices: Vec<String>,
-    
+
     /// Per-device video configuration (device_id -> config)
     /// Stores source codec, source resolution/fps, and target resolution/fps per device
     #[serde(default)]
     pub video_device_configs: HashMap<String, VideoDeviceConfig>,
-    
+
     /// Encoder quality preset level per encoding mode (1=lightest, 5=highest quality)
     /// Keys are the encoding mode names: "av1", "vp9", "vp8"
     /// See [`crate::encoding::presets`] for per-encoder parameter details.
     #[serde(default)]
     pub encoder_preset_levels: HashMap<String, u8>,
-    
+
     /// Whether to encode video during pre-roll (trades CPU/GPU compute for memory).
     /// When enabled, the pre-roll limit increases from 5 to 30 seconds.
     /// Only affects raw video sources; passthrough (MJPEG etc.) is already encoded.
     #[serde(default)]
     pub encode_during_preroll: bool,
-    
+
     /// Whether to combine audio and video into a single MKV file.
     /// When enabled (and exactly 1 video + 1 audio device are selected),
     /// the separate audio file is muxed into the video MKV after recording stops.
     #[serde(default)]
     pub combine_audio_video: bool,
-    
+
     /// Device presets
     pub device_presets: Vec<DevicePreset>,
-    
+
     /// Current preset name (if any)
     pub current_preset: Option<String>,
 }
@@ -235,9 +235,21 @@ impl VideoDeviceConfig {
     /// Returns a config with concrete target dimensions/fps.
     pub fn resolved(&self) -> Self {
         Self {
-            target_width: if self.target_width == 0 { self.source_width } else { self.target_width },
-            target_height: if self.target_height == 0 { self.source_height } else { self.target_height },
-            target_fps: if self.target_fps == 0.0 { self.source_fps } else { self.target_fps },
+            target_width: if self.target_width == 0 {
+                self.source_width
+            } else {
+                self.target_width
+            },
+            target_height: if self.target_height == 0 {
+                self.source_height
+            } else {
+                self.target_height
+            },
+            target_fps: if self.target_fps == 0.0 {
+                self.source_fps
+            } else {
+                self.target_fps
+            },
             ..self.clone()
         }
     }
@@ -285,41 +297,80 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Validate and clamp config values to safe ranges.
+    /// Returns a list of fields that were clamped (empty if all valid).
+    pub fn validate(&mut self) -> Vec<String> {
+        let mut clamped = Vec::new();
+
+        if self.idle_timeout_secs < 1 || self.idle_timeout_secs > 30 {
+            let old = self.idle_timeout_secs;
+            self.idle_timeout_secs = self.idle_timeout_secs.clamp(1, 30);
+            clamped.push(format!(
+                "idle_timeout_secs: {} -> {}",
+                old, self.idle_timeout_secs
+            ));
+        }
+
+        if self.pre_roll_secs > 30 {
+            let old = self.pre_roll_secs;
+            self.pre_roll_secs = self.pre_roll_secs.clamp(0, 30);
+            clamped.push(format!("pre_roll_secs: {} -> {}", old, self.pre_roll_secs));
+        }
+
+        for (key, value) in self.encoder_preset_levels.iter_mut() {
+            if *value < 1 || *value > 5 {
+                let old = *value;
+                *value = (*value).clamp(1, 5);
+                clamped.push(format!(
+                    "encoder_preset_levels[{}]: {} -> {}",
+                    key, old, *value
+                ));
+            }
+        }
+
+        if !clamped.is_empty() {
+            println!("[Sacho] Config validation clamped: {:?}", clamped);
+        }
+
+        clamped
+    }
+
     /// Load config from disk or return default
     pub fn load_or_default(app_handle: &AppHandle) -> Self {
         let config_path = get_config_path(app_handle);
-        
+
         if config_path.exists() {
             match std::fs::read_to_string(&config_path) {
-                Ok(contents) => {
-                    match toml::from_str(&contents) {
-                        Ok(config) => return config,
-                        Err(e) => {
-                            log::warn!("Failed to parse config: {}", e);
-                        }
+                Ok(contents) => match toml::from_str::<Config>(&contents) {
+                    Ok(mut config) => {
+                        config.validate();
+                        return config;
                     }
-                }
+                    Err(e) => {
+                        log::warn!("Failed to parse config: {}", e);
+                    }
+                },
                 Err(e) => {
                     log::warn!("Failed to read config file: {}", e);
                 }
             }
         }
-        
+
         Self::default()
     }
-    
+
     /// Save config to disk
     pub fn save(&self, app_handle: &AppHandle) -> anyhow::Result<()> {
         let config_path = get_config_path(app_handle);
-        
+
         // Ensure parent directory exists
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        
+
         let contents = toml::to_string_pretty(self)?;
         std::fs::write(&config_path, contents)?;
-        
+
         Ok(())
     }
 }

@@ -54,18 +54,28 @@ export const videoDeviceCount = derived(
 
 // Actions
 export async function refreshDevices() {
-  try {
-    const [audio, midi, video] = await Promise.all([
-      getAudioDevices(),
-      getMidiDevices(),
-      getVideoDevices()
-    ]);
-    
-    audioDevices.set(audio);
-    midiDevices.set(midi);
-    videoDevices.set(video);
-  } catch (error) {
-    console.error('Failed to refresh devices:', error);
+  const [audioResult, midiResult, videoResult] = await Promise.allSettled([
+    getAudioDevices(),
+    getMidiDevices(),
+    getVideoDevices()
+  ]);
+
+  if (audioResult.status === 'fulfilled') {
+    audioDevices.set(audioResult.value);
+  } else {
+    console.error('Failed to refresh audio devices:', audioResult.reason);
+  }
+
+  if (midiResult.status === 'fulfilled') {
+    midiDevices.set(midiResult.value);
+  } else {
+    console.error('Failed to refresh MIDI devices:', midiResult.reason);
+  }
+
+  if (videoResult.status === 'fulfilled') {
+    videoDevices.set(videoResult.value);
+  } else {
+    console.error('Failed to refresh video devices:', videoResult.reason);
   }
 }
 

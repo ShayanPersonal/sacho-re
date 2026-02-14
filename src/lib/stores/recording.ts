@@ -100,14 +100,20 @@ export async function doStartRecording() {
 }
 
 export async function doStopRecording() {
+  let stopError: unknown = null;
   try {
     await stopRecording();
   } catch (error) {
     console.error('Failed to stop recording:', error);
+    stopError = error;
     // Still refresh state even on error to sync UI with backend
   }
   // Always refresh state after stop attempt
   await refreshRecordingState();
+  // Re-throw so calling UI code can display the error
+  if (stopError) {
+    throw stopError;
+  }
   // Note: Session list is updated via the 'recording-stopped' event listener
 }
 
