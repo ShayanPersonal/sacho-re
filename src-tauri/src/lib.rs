@@ -168,6 +168,7 @@ pub fn run() {
             commands::update_session_notes,
             commands::get_config,
             commands::update_config,
+            commands::update_audio_trigger_thresholds,
             commands::get_similarity_data,
             commands::recalculate_similarity,
             commands::rescan_sessions,

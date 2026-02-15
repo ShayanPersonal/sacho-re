@@ -3,7 +3,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { listen } from '@tauri-apps/api/event';
 import type { AudioDevice, MidiDevice, VideoDevice, VideoDeviceConfig, VideoFpsWarning, AudioTriggerLevel, Config } from '$lib/api';
-import { getAudioDevices, getMidiDevices, getVideoDevices, getConfig, updateConfig } from '$lib/api';
+import { getAudioDevices, getMidiDevices, getVideoDevices, getConfig, updateConfig, updateAudioTriggerThresholds } from '$lib/api';
 import { settings } from './settings';
 
 // Save status for device changes: 'idle' | 'saving' | 'saved' | 'error'
@@ -308,7 +308,23 @@ export function setAudioTriggerThreshold(deviceId: string, threshold: number) {
     ...thresholds,
     [deviceId]: threshold
   }));
-  autoSaveDevices();
+  // Use lightweight threshold update — no pipeline restart needed
+  saveThresholds();
+}
+
+let thresholdSaveTimeout: ReturnType<typeof setTimeout> | null = null;
+
+/** Save thresholds via the dedicated command (no pipeline restart). Debounced. */
+async function saveThresholds() {
+  if (thresholdSaveTimeout) clearTimeout(thresholdSaveTimeout);
+  thresholdSaveTimeout = setTimeout(async () => {
+    try {
+      const thresholds = get(audioTriggerThresholds);
+      await updateAudioTriggerThresholds(thresholds);
+    } catch (error) {
+      console.error('Failed to save audio trigger thresholds:', error);
+    }
+  }, 300);
 }
 
 export function toggleVideoDevice(deviceId: string) {

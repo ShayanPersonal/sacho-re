@@ -155,11 +155,30 @@
         setAudioTriggerThreshold(deviceId, value);
     }
 
-    /** Convert linear amplitude (0–0.5) to dB. Returns "-inf" for 0. */
+    /** Convert linear amplitude to dB number. Clamps to -60 minimum. */
+    function linearToDbNum(value: number): number {
+        if (value <= 0) return -60;
+        return Math.max(-60, 20 * Math.log10(value));
+    }
+
+    /** Convert linear amplitude to dB display string. */
     function linearToDb(value: number): string {
-        if (value <= 0) return "-\u221EdB";
-        const db = 20 * Math.log10(value);
+        const db = linearToDbNum(value);
+        if (db <= -60) return "-\u221EdB";
         return `${db.toFixed(0)}dB`;
+    }
+
+    /** Convert dB to linear amplitude. */
+    function dbToLinear(db: number): number {
+        if (db <= -60) return 0;
+        return Math.pow(10, db / 20);
+    }
+
+    /** Map a linear amplitude to a 0–100% position on the dB-scaled meter (-60 to -3 dB range). */
+    function linearToMeterPercent(value: number): number {
+        if (value <= 0) return 0;
+        const db = linearToDbNum(value);
+        return Math.max(0, Math.min(100, (db - (-60)) / ((-3) - (-60)) * 100));
     }
 
     function toggleSection(section: string) {
@@ -389,6 +408,41 @@
                                         {/if}
                                     </div>
                                 </div>
+                                {#if isTrigger}
+                                    <div class="audio-trigger-meter">
+                                        <div class="meter-container">
+                                            <div class="meter-track">
+                                                <div
+                                                    class="meter-fill"
+                                                    class:above-threshold={levels && levels.current_rms > threshold}
+                                                    style="width: {linearToMeterPercent(levels?.current_rms ?? 0)}%"
+                                                ></div>
+                                                {#if levels && levels.peak_level > 0}
+                                                    <div
+                                                        class="meter-peak"
+                                                        style="left: {linearToMeterPercent(levels.peak_level)}%"
+                                                    ></div>
+                                                {/if}
+                                                <div
+                                                    class="meter-threshold"
+                                                    style="left: {linearToMeterPercent(threshold)}%"
+                                                ></div>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                class="threshold-slider"
+                                                min="-60"
+                                                max="-3"
+                                                step="1"
+                                                value={linearToDbNum(threshold)}
+                                                disabled={$deviceSaveStatus === 'saving'}
+                                                oninput={(e) => onThresholdInput(device.id, dbToLinear(parseFloat(e.currentTarget.value)))}
+                                                onchange={() => onThresholdCommit(device.id)}
+                                            />
+                                        </div>
+                                        <span class="threshold-label">{linearToDb(threshold)}</span>
+                                    </div>
+                                {/if}
                                 <label class="checkbox-cell">
                                     <input
                                         type="checkbox"
@@ -407,42 +461,6 @@
                                             toggleAudioDevice(device.id)}
                                     />
                                 </label>
-                                {#if isTrigger}
-                                    <div class="audio-trigger-meter">
-                                        <span class="trigger-label">Threshold</span>
-                                        <div class="meter-container">
-                                            <div class="meter-track">
-                                                <div
-                                                    class="meter-fill"
-                                                    class:above-threshold={levels && levels.current_rms > threshold}
-                                                    style="width: {Math.min((levels?.current_rms ?? 0) * 100 / 0.5, 100)}%"
-                                                ></div>
-                                                {#if levels && levels.peak_level > 0}
-                                                    <div
-                                                        class="meter-peak"
-                                                        style="left: {Math.min(levels.peak_level * 100 / 0.5, 100)}%"
-                                                    ></div>
-                                                {/if}
-                                                <div
-                                                    class="meter-threshold"
-                                                    style="left: {Math.min(threshold * 100 / 0.5, 100)}%"
-                                                ></div>
-                                            </div>
-                                            <input
-                                                type="range"
-                                                class="threshold-slider"
-                                                min="0"
-                                                max="0.5"
-                                                step="0.005"
-                                                value={threshold}
-                                                disabled={$deviceSaveStatus === 'saving'}
-                                                oninput={(e) => onThresholdInput(device.id, parseFloat(e.currentTarget.value))}
-                                                onchange={() => onThresholdCommit(device.id)}
-                                            />
-                                        </div>
-                                        <span class="threshold-label">{linearToDb(threshold)}</span>
-                                    </div>
-                                {/if}
                             </div>
                         {/each}
                         {#if $audioDevices.length === 0}
@@ -1037,16 +1055,14 @@
     }
 
     .audio-device-row.has-meter {
-        grid-template-rows: auto auto;
+        grid-template-columns: 1fr auto 70px 70px;
     }
 
     .audio-trigger-meter {
-        grid-column: 2 / 4;
         display: flex;
         align-items: center;
         gap: 0.375rem;
-        padding: 0.125rem 0 0.25rem;
-        justify-self: stretch;
+        padding: 0 0.5rem;
     }
 
     .trigger-label {
@@ -1059,6 +1075,7 @@
     .meter-container {
         position: relative;
         flex: 1;
+        min-width: 120px;
         height: 20px;
         display: flex;
         align-items: center;

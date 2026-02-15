@@ -518,6 +518,10 @@ export async function updateConfig(newConfig: Config): Promise<void> {
   }
 }
 
+export async function updateAudioTriggerThresholds(thresholds: Record<string, number>): Promise<void> {
+  await invoke('update_audio_trigger_thresholds', { thresholds });
+}
+
 // ============================================================================
 // Autostart Commands
 // ============================================================================

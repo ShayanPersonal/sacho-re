@@ -592,78 +592,132 @@ pub fn update_config(
     // Validate and clamp config values to safe ranges
     new_config.validate();
 
-    // Check if device-related settings changed before updating
-    let (device_settings_changed, preset_or_mode_changed) = {
+    // Detect per-pipeline changes before updating config
+    let (midi_changed, audio_changed, video_changed, preroll_changed, preset_or_mode_changed) = {
         let current = config.read();
-        let dev_changed = current.selected_midi_devices != new_config.selected_midi_devices
-            || current.trigger_midi_devices != new_config.trigger_midi_devices
-            || current.trigger_audio_devices != new_config.trigger_audio_devices
-            || current.audio_trigger_thresholds != new_config.audio_trigger_thresholds
-            || current.selected_video_devices != new_config.selected_video_devices
+
+        let midi = current.selected_midi_devices != new_config.selected_midi_devices
+            || current.trigger_midi_devices != new_config.trigger_midi_devices;
+
+        let audio = current.selected_audio_devices != new_config.selected_audio_devices
+            || current.trigger_audio_devices != new_config.trigger_audio_devices;
+
+        let video = current.selected_video_devices != new_config.selected_video_devices
             || current.video_device_configs != new_config.video_device_configs
-            || current.selected_audio_devices != new_config.selected_audio_devices
-            || current.pre_roll_secs != new_config.pre_roll_secs
-            || current.encode_during_preroll != new_config.encode_during_preroll
-            // Encoding mode changes the entire encoder pipeline (different GStreamer
-            // elements, codec, container), so it requires a full pipeline restart.
             || current.video_encoding_mode != new_config.video_encoding_mode;
-        let preset_changed = current.encoder_preset_levels != new_config.encoder_preset_levels;
-        (dev_changed, preset_changed)
+
+        let preroll = current.pre_roll_secs != new_config.pre_roll_secs
+            || current.encode_during_preroll != new_config.encode_during_preroll;
+
+        let preset = current.encoder_preset_levels != new_config.encoder_preset_levels;
+
+        (midi, audio, video, preroll, preset)
     };
-    
-    // If devices changed, check if we're currently recording
-    if device_settings_changed {
+
+    let any_pipeline_changed = midi_changed || audio_changed || video_changed || preroll_changed;
+
+    // If any pipeline settings changed, check if we're currently recording
+    if any_pipeline_changed {
         let state = recording_state.read();
         if state.status == RecordingStatus::Recording {
             return Err("Cannot change device settings while recording".to_string());
         }
-        
+
         // Set status to Initializing to prevent recording attempts during reset
         drop(state);
         {
             let mut state = recording_state.write();
             state.status = RecordingStatus::Initializing;
         }
-        
+
         // Emit event so frontend knows we're reinitializing
         let _ = app.emit("recording-state-changed", "initializing");
     }
-    
+
     // Update in memory
     {
         let mut config_write = config.write();
         *config_write = new_config.clone();
     }
-    
+
     // Save to disk
     new_config.save(&app).map_err(|e| e.to_string())?;
-    
+
     // Sync preset level to video manager if it changed (no restart needed)
-    if preset_or_mode_changed && !device_settings_changed {
+    if preset_or_mode_changed && !any_pipeline_changed {
         sync_preset_level_to_video_manager(&monitor, &new_config);
     }
-    
-    // Restart monitor if device-related settings changed
-    // This is synchronous to ensure we're in a valid state before returning
-    if device_settings_changed {
+
+    // Restart only the pipelines that changed
+    if any_pipeline_changed {
         let mut monitor = monitor.lock();
-        
-        // Restart the monitor (this stops existing captures and starts new ones)
-        let result = monitor.start();
-        
+
+        let result = if preroll_changed {
+            // Pre-roll affects all pipelines — full restart
+            monitor.start()
+        } else {
+            // Selective restarts for each changed pipeline
+            let mut combined_result: anyhow::Result<()> = Ok(());
+            if midi_changed {
+                if let Err(e) = monitor.restart_midi() {
+                    combined_result = Err(e);
+                }
+            }
+            if audio_changed {
+                if let Err(e) = monitor.restart_audio() {
+                    combined_result = Err(e);
+                }
+            }
+            if video_changed {
+                if let Err(e) = monitor.restart_video() {
+                    combined_result = Err(e);
+                }
+            }
+            combined_result
+        };
+
         // Set status back to Idle regardless of success/failure
         {
             let mut state = recording_state.write();
             state.status = RecordingStatus::Idle;
         }
-        
+
         // Emit event so frontend knows we're ready
         let _ = app.emit("recording-state-changed", "idle");
-        
+
         // Return error if restart failed
         result.map_err(|e| format!("Failed to reinitialize devices: {}", e))?;
     }
-    
+
+    Ok(())
+}
+
+/// Update audio trigger thresholds without restarting the pipeline.
+/// This is safe to call while recording — it just updates the threshold
+/// values in-place on the running monitor's capture state.
+#[tauri::command]
+pub fn update_audio_trigger_thresholds(
+    app: tauri::AppHandle,
+    config: State<'_, RwLock<Config>>,
+    monitor: State<'_, Arc<Mutex<MidiMonitor>>>,
+    thresholds: std::collections::HashMap<String, f64>,
+) -> Result<(), String> {
+    // Update config in memory and save to disk
+    {
+        let mut config_write = config.write();
+        config_write.audio_trigger_thresholds = thresholds.clone();
+        config_write.save(&app).map_err(|e| e.to_string())?;
+    }
+
+    // Update thresholds in-place on the running monitor
+    let monitor = monitor.lock();
+    let mut state = monitor.capture_state.lock();
+    for trigger_state in state.audio_trigger_states.iter_mut() {
+        if let Some(&new_threshold) = thresholds.get(&trigger_state.device_name) {
+            trigger_state.threshold = new_threshold;
+        }
+    }
+
     Ok(())
 }
 

@@ -114,10 +114,17 @@ impl VideoPrerollBuffer {
         self.trim();
     }
     
-    /// Trim old frames to stay within duration and memory limits
+    /// Trim old frames to stay within duration and memory limits.
+    /// When max_duration is zero (pre-roll disabled), skip trimming entirely —
+    /// the buffer acts purely as a staging area between the appsink callback
+    /// and the poll thread, which drains it at ~100Hz.
     fn trim(&mut self) {
+        if self.max_duration.is_zero() {
+            return;
+        }
+
         let cutoff = Instant::now() - self.max_duration;
-        
+
         // Trim by time
         while let Some(front) = self.frames.front() {
             if front.wall_time < cutoff || self.current_bytes > self.max_bytes {
@@ -1253,8 +1260,14 @@ impl VideoCapturePipeline {
             println!("[Video] Starting recording to {:?} (codec: {})", output_path, self.codec.display_name());
         }
         
-        // Drain pre-roll buffer
-        let preroll_frames = self.preroll_buffer.lock().drain();
+        // Drain pre-roll buffer. When pre-roll is disabled, discard any stale
+        // frames that may have leaked in (race between appsink and needs_frames flag).
+        let preroll_frames = if self.pre_roll_secs == 0 {
+            let _ = self.preroll_buffer.lock().drain(); // discard stale frames
+            Vec::new()
+        } else {
+            self.preroll_buffer.lock().drain()
+        };
         println!("[Video] Pre-roll buffer has {} frames", preroll_frames.len());
         
         // Calculate pre-roll duration as time from FIRST frame capture to NOW
@@ -1490,6 +1503,13 @@ impl VideoCapturePipeline {
         
         self.is_recording = false;
         self.needs_frames.store(self.pre_roll_secs > 0, Ordering::Relaxed);
+        // When pre-roll is disabled, clear any frames that arrived between the
+        // drain at the top of stop_recording and needs_frames being set to false.
+        // Without this, stale frames linger (trim is a no-op for max_duration=0)
+        // and get picked up by the next start_recording, inflating its preroll_duration.
+        if self.pre_roll_secs == 0 {
+            let _ = self.preroll_buffer.lock().drain();
+        }
         self.recording_path = None;
         self.recording_start = None;
         
@@ -1605,7 +1625,7 @@ impl VideoCapturePipeline {
         // buffer and feed frames to the PrerollVideoEncoder -- whether recording
         // or not. The encoder's appsink callback handles routing to the ring
         // buffer (pre-roll) or the active VideoWriter (recording).
-        if self.encode_during_preroll {
+        if self.encode_during_preroll && self.preroll_encoder.is_some() {
             if let Some(ref encoder) = self.preroll_encoder {
                 let frames = self.preroll_buffer.lock().drain();
                 for frame in &frames {

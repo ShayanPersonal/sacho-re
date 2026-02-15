@@ -1,6 +1,7 @@
 // MIDI monitoring service that triggers automatic recording
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
 use std::io::{Write, Seek, SeekFrom};
@@ -1164,7 +1165,7 @@ pub struct MidiMonitor {
     app_handle: AppHandle,
     last_event_time: Arc<RwLock<Option<Instant>>>,
     is_monitoring: Arc<RwLock<bool>>,
-    capture_state: Arc<Mutex<CaptureState>>,
+    pub(crate) capture_state: Arc<Mutex<CaptureState>>,
     video_manager: Arc<Mutex<VideoCaptureManager>>,
     /// Handle for the video poller background thread
     video_poller_handle: Option<std::thread::JoinHandle<()>>,
@@ -1172,6 +1173,10 @@ pub struct MidiMonitor {
     idle_checker_handle: Option<std::thread::JoinHandle<()>>,
     /// Handle for the audio level poller background thread
     audio_level_poller_handle: Option<std::thread::JoinHandle<()>>,
+    /// Per-thread stop flags for selective pipeline restart
+    video_poller_stop: Arc<AtomicBool>,
+    idle_checker_stop: Arc<AtomicBool>,
+    audio_poller_stop: Arc<AtomicBool>,
 }
 
 impl MidiMonitor {
@@ -1196,6 +1201,9 @@ impl MidiMonitor {
             video_poller_handle: None,
             idle_checker_handle: None,
             audio_level_poller_handle: None,
+            video_poller_stop: Arc::new(AtomicBool::new(false)),
+            idle_checker_stop: Arc::new(AtomicBool::new(false)),
+            audio_poller_stop: Arc::new(AtomicBool::new(false)),
         }
     }
     
@@ -1208,14 +1216,13 @@ impl MidiMonitor {
     pub fn start(&mut self) -> anyhow::Result<()> {
         // Stop any existing monitoring
         self.stop();
-        
+
         let config = self.app_handle.state::<RwLock<Config>>();
-        let config = config.read();
-        
+        let config = config.read().clone();
+
         // Determine pre-roll limit based on encode_during_preroll setting
-        let encode_during_preroll = config.encode_during_preroll;
-        let pre_roll_limit = if encode_during_preroll { MAX_PRE_ROLL_SECS_ENCODED } else { MAX_PRE_ROLL_SECS };
-        
+        let pre_roll_limit = if config.encode_during_preroll { MAX_PRE_ROLL_SECS_ENCODED } else { MAX_PRE_ROLL_SECS };
+
         // Update pre-roll duration from config
         {
             let pre_roll = config.pre_roll_secs.min(pre_roll_limit);
@@ -1223,14 +1230,51 @@ impl MidiMonitor {
             state.pre_roll_secs = pre_roll;
             state.midi_preroll.set_duration_with_limit(pre_roll, pre_roll_limit);
         }
-        
+
+        self.start_midi(&config)?;
+        let (_audio_count, has_audio_triggers) = self.start_audio(&config)?;
+        let video_count = self.start_video_pipeline(&config)?;
+
+        let audio_count = AUDIO_STREAMS.with(|streams| streams.borrow().len());
+        let midi_count = self.trigger_connections.len() + self.capture_connections.len();
+        let has_any_device = midi_count > 0 || audio_count > 0 || video_count > 0;
+
+        if has_any_device {
+            *self.is_monitoring.write() = true;
+
+            // Start idle checker if we have any triggers (MIDI or audio) for auto-stop on idle
+            if !self.trigger_connections.is_empty() || has_audio_triggers {
+                self.start_idle_checker();
+            }
+
+            // Start video polling thread
+            if video_count > 0 {
+                self.start_video_poller();
+            }
+
+            // Start audio level poller for trigger devices
+            if has_audio_triggers {
+                self.start_audio_level_poller();
+            }
+
+            println!("[Sacho] Monitoring active ({} MIDI, {} audio, {} video)",
+                midi_count, audio_count, video_count);
+        } else {
+            println!("[Sacho] No devices configured");
+        }
+
+        Ok(())
+    }
+
+    /// Start MIDI connections (trigger + record devices)
+    fn start_midi(&mut self, config: &Config) -> anyhow::Result<()> {
         println!("[Sacho] Trigger MIDI devices: {:?}", config.trigger_midi_devices);
         println!("[Sacho] Record MIDI devices: {:?}", config.selected_midi_devices);
         println!("[Sacho] Pre-roll: {} seconds", config.pre_roll_secs);
-        
+
         let midi_in = MidiInput::new("sacho-enum")?;
         let ports = midi_in.ports();
-        
+
         // Build port info map
         let mut port_info: Vec<(usize, String)> = Vec::new();
         for (idx, port) in ports.iter().enumerate() {
@@ -1238,19 +1282,19 @@ impl MidiMonitor {
                 port_info.push((idx, name));
             }
         }
-        
+
         println!("[Sacho] Available MIDI ports: {:?}", port_info);
-        
+
         // Connect to trigger devices
         for (port_index, port_name) in &port_info {
             let device_id = format!("midi-{}", port_index);
-            
+
             if config.trigger_midi_devices.contains(&device_id) {
                 println!("[Sacho] Connecting trigger: {} ({})", port_name, device_id);
-                
+
                 let midi_in = MidiInput::new("sacho-trigger")?;
                 let ports = midi_in.ports();
-                
+
                 if let Some(port) = ports.get(*port_index) {
                     let app_handle = self.app_handle.clone();
                     let last_event_time = self.last_event_time.clone();
@@ -1259,7 +1303,7 @@ impl MidiMonitor {
                     let port_name_clone = port_name.clone();
                     // Only store MIDI events if this trigger device is also selected for recording
                     let also_record = config.selected_midi_devices.contains(&device_id);
-                    
+
                     match midi_in.connect(
                         port,
                         "sacho-trigger",
@@ -1267,7 +1311,7 @@ impl MidiMonitor {
                             // Only store events if this device is also marked for recording
                             if also_record {
                                 let mut state = capture_state.lock();
-                                
+
                                 // Use pre-roll if not recording OR if recording is starting (video init)
                                 if state.should_use_preroll() {
                                     // Store in pre-roll buffer with driver timestamp for accurate timing
@@ -1290,12 +1334,12 @@ impl MidiMonitor {
                                     );
                                 }
                             }
-                            
+
                             // Check for note-on to trigger recording
                             if message.len() >= 3 {
                                 let status = message[0] & 0xF0;
                                 let velocity = message[2];
-                                
+
                                 if status == 0x90 && velocity > 0 {
                                     handle_trigger(&app_handle, &last_event_time, &capture_state, &video_manager);
                                 }
@@ -1314,33 +1358,33 @@ impl MidiMonitor {
                 }
             }
         }
-        
+
         // Connect to record devices (that aren't already triggers)
         for (port_index, port_name) in &port_info {
             let device_id = format!("midi-{}", port_index);
-            
+
             // Skip if already connected as trigger
             if config.trigger_midi_devices.contains(&device_id) {
                 continue;
             }
-            
+
             if config.selected_midi_devices.contains(&device_id) {
                 println!("[Sacho] Connecting record device: {} ({})", port_name, device_id);
-                
+
                 let midi_in = MidiInput::new("sacho-record")?;
                 let ports = midi_in.ports();
-                
+
                 if let Some(port) = ports.get(*port_index) {
                     let capture_state = self.capture_state.clone();
                     let last_event_time = self.last_event_time.clone();
                     let port_name_clone = port_name.clone();
-                    
+
                     match midi_in.connect(
                         port,
                         "sacho-record",
                         move |timestamp_us, message, _| {
                             let mut state = capture_state.lock();
-                            
+
                             // Update last event time for idle detection (even during pre-roll)
                             if message.len() >= 3 {
                                 let status = message[0] & 0xF0;
@@ -1348,7 +1392,7 @@ impl MidiMonitor {
                                     *last_event_time.write() = Some(Instant::now());
                                 }
                             }
-                            
+
                             // Use pre-roll if not recording OR if recording is starting (video init)
                             if state.should_use_preroll() {
                                 // Store in pre-roll buffer with driver timestamp for accurate timing
@@ -1387,11 +1431,16 @@ impl MidiMonitor {
                 }
             }
         }
-        
-        // Set up audio capture for selected and trigger devices
+
+        Ok(())
+    }
+
+    /// Start audio capture streams. Returns (audio_count, has_audio_triggers).
+    fn start_audio(&mut self, config: &Config) -> anyhow::Result<(usize, bool)> {
         println!("[Sacho] Audio record devices: {:?}", config.selected_audio_devices);
         println!("[Sacho] Audio trigger devices: {:?}", config.trigger_audio_devices);
 
+        let pre_roll_limit = if config.encode_during_preroll { MAX_PRE_ROLL_SECS_ENCODED } else { MAX_PRE_ROLL_SECS };
         let host = cpal::default_host();
         let pre_roll_secs = config.pre_roll_secs.min(pre_roll_limit);
 
@@ -1518,126 +1567,96 @@ impl MidiMonitor {
                 }
             }
         }
-        
-        let audio_count = AUDIO_STREAMS.with(|streams| streams.borrow().len());
-        
-        // Start video capture for selected video devices
-        let video_count = {
-            let selected_video = config.selected_video_devices.clone();
-            let pre_roll = config.pre_roll_secs.min(pre_roll_limit);
-            drop(config); // Release config lock before video operations
-            
-            // Look up per-device config and name for each selected video device
-            let device_manager = self.app_handle.state::<RwLock<DeviceManager>>();
-            let devices = device_manager.read();
-            
-            // Get per-device video configs from config
-            let config = self.app_handle.state::<RwLock<Config>>();
-            let config_read = config.read();
-            let device_configs = &config_read.video_device_configs;
-            
-            let video_with_info: Vec<(String, String, crate::config::VideoDeviceConfig)> = selected_video
-                .iter()
-                .filter_map(|device_id| {
-                    // Find the device
-                    let device = devices.video_devices.iter().find(|d| &d.id == device_id)?;
-                    
-                    // Use user-saved config if available, otherwise compute smart defaults
-                    let dev_config = if let Some(cfg) = device_configs.get(device_id) {
-                        // Verify the saved codec is still supported
-                        if device.supported_codecs.contains(&cfg.source_codec) {
-                            println!("[Sacho] Video device {}: using saved config ({:?} {}x{} @ {:.2}fps)", 
-                                device_id, cfg.source_codec, cfg.source_width, cfg.source_height, cfg.source_fps);
-                            cfg.clone()
-                        } else {
-                            // Saved codec no longer available, fall back to defaults
-                            let default = device.default_config()?;
-                            println!("[Sacho] Video device {}: saved codec {:?} unavailable, falling back to {:?} {}x{} @ {:.2}fps", 
-                                device_id, cfg.source_codec, default.source_codec, default.source_width, default.source_height, default.source_fps);
-                            default
-                        }
-                    } else {
-                        // No saved config - compute smart defaults
-                        let default = device.default_config()?;
-                        println!("[Sacho] Video device {}: no config saved, defaulting to {:?} {}x{} @ {:.2}fps", 
-                            device_id, default.source_codec, default.source_width, default.source_height, default.source_fps);
-                        default
-                    };
-                    
-                    Some((device_id.clone(), device.name.clone(), dev_config))
-                })
-                .collect();
-            
-            // Get encoding mode and preset level for raw video
-            let encoding_mode = config_read.video_encoding_mode.clone();
-            let encoding_mode_key = match &encoding_mode {
-                crate::config::VideoEncodingMode::Av1 => "av1",
-                crate::config::VideoEncodingMode::Vp9 => "vp9",
-                crate::config::VideoEncodingMode::Vp8 => "vp8",
-                crate::config::VideoEncodingMode::Raw => "vp8",
-            };
-            let preset_level = config_read.encoder_preset_levels
-                .get(encoding_mode_key)
-                .copied()
-                .unwrap_or(crate::encoding::DEFAULT_PRESET);
-            
-            drop(config_read);
-            drop(devices); // Release device manager lock
-            
-            let mut video_mgr = self.video_manager.lock();
-            video_mgr.set_preroll_duration(pre_roll);
-            video_mgr.set_encoding_mode(encoding_mode);
-            video_mgr.set_preset_level(preset_level);
-            video_mgr.set_encode_during_preroll(encode_during_preroll);
-            
-            if !video_with_info.is_empty() {
-                if let Err(e) = video_mgr.start(&video_with_info) {
-                    println!("[Sacho] Failed to start video capture: {}", e);
-                }
-            }
-            video_mgr.pipeline_count()
-        };
-        
-        let midi_count = self.trigger_connections.len() + self.capture_connections.len();
-        let has_any_device = midi_count > 0 || audio_count > 0 || video_count > 0;
-        
-        if has_any_device {
-            *self.is_monitoring.write() = true;
-            
-            // Start idle checker if we have any triggers (MIDI or audio) for auto-stop on idle
-            if !self.trigger_connections.is_empty() || has_audio_triggers {
-                self.start_idle_checker();
-            }
-            
-            // Start video polling thread
-            if video_count > 0 {
-                self.start_video_poller();
-            }
 
-            // Start audio level poller for trigger devices
-            if has_audio_triggers {
-                self.start_audio_level_poller();
+        let audio_count = AUDIO_STREAMS.with(|streams| streams.borrow().len());
+        Ok((audio_count, has_audio_triggers))
+    }
+
+    /// Start video capture pipelines. Returns the number of active video pipelines.
+    fn start_video_pipeline(&mut self, config: &Config) -> anyhow::Result<usize> {
+        let pre_roll_limit = if config.encode_during_preroll { MAX_PRE_ROLL_SECS_ENCODED } else { MAX_PRE_ROLL_SECS };
+        let encode_during_preroll = config.encode_during_preroll;
+        let selected_video = config.selected_video_devices.clone();
+        let pre_roll = config.pre_roll_secs.min(pre_roll_limit);
+
+        // Look up per-device config and name for each selected video device
+        let device_manager = self.app_handle.state::<RwLock<DeviceManager>>();
+        let devices = device_manager.read();
+
+        let device_configs = &config.video_device_configs;
+
+        let video_with_info: Vec<(String, String, crate::config::VideoDeviceConfig)> = selected_video
+            .iter()
+            .filter_map(|device_id| {
+                // Find the device
+                let device = devices.video_devices.iter().find(|d| &d.id == device_id)?;
+
+                // Use user-saved config if available, otherwise compute smart defaults
+                let dev_config = if let Some(cfg) = device_configs.get(device_id) {
+                    // Verify the saved codec is still supported
+                    if device.supported_codecs.contains(&cfg.source_codec) {
+                        println!("[Sacho] Video device {}: using saved config ({:?} {}x{} @ {:.2}fps)",
+                            device_id, cfg.source_codec, cfg.source_width, cfg.source_height, cfg.source_fps);
+                        cfg.clone()
+                    } else {
+                        // Saved codec no longer available, fall back to defaults
+                        let default = device.default_config()?;
+                        println!("[Sacho] Video device {}: saved codec {:?} unavailable, falling back to {:?} {}x{} @ {:.2}fps",
+                            device_id, cfg.source_codec, default.source_codec, default.source_width, default.source_height, default.source_fps);
+                        default
+                    }
+                } else {
+                    // No saved config - compute smart defaults
+                    let default = device.default_config()?;
+                    println!("[Sacho] Video device {}: no config saved, defaulting to {:?} {}x{} @ {:.2}fps",
+                        device_id, default.source_codec, default.source_width, default.source_height, default.source_fps);
+                    default
+                };
+
+                Some((device_id.clone(), device.name.clone(), dev_config))
+            })
+            .collect();
+
+        // Get encoding mode and preset level for raw video
+        let encoding_mode = config.video_encoding_mode.clone();
+        let encoding_mode_key = match &encoding_mode {
+            crate::config::VideoEncodingMode::Av1 => "av1",
+            crate::config::VideoEncodingMode::Vp9 => "vp9",
+            crate::config::VideoEncodingMode::Vp8 => "vp8",
+            crate::config::VideoEncodingMode::Raw => "vp8",
+        };
+        let preset_level = config.encoder_preset_levels
+            .get(encoding_mode_key)
+            .copied()
+            .unwrap_or(crate::encoding::DEFAULT_PRESET);
+
+        drop(devices); // Release device manager lock
+
+        let mut video_mgr = self.video_manager.lock();
+        video_mgr.set_preroll_duration(pre_roll);
+        video_mgr.set_encoding_mode(encoding_mode);
+        video_mgr.set_preset_level(preset_level);
+        video_mgr.set_encode_during_preroll(encode_during_preroll);
+
+        if !video_with_info.is_empty() {
+            if let Err(e) = video_mgr.start(&video_with_info) {
+                println!("[Sacho] Failed to start video capture: {}", e);
             }
-            
-            println!("[Sacho] Monitoring active ({} MIDI, {} audio, {} video)", 
-                midi_count, audio_count, video_count);
-        } else {
-            println!("[Sacho] No devices configured");
         }
-        
-        Ok(())
+        Ok(video_mgr.pipeline_count())
     }
     
     /// Start background thread to poll video frames
     fn start_video_poller(&mut self) {
-        let is_monitoring = self.is_monitoring.clone();
+        self.video_poller_stop.store(false, Ordering::SeqCst);
+        let stop_flag = self.video_poller_stop.clone();
         let video_manager = self.video_manager.clone();
         let app_handle = self.app_handle.clone();
 
         let handle = std::thread::Builder::new()
             .name("sacho-video-poller".into())
             .spawn(move || {
-                while *is_monitoring.read() {
+                while !stop_flag.load(Ordering::SeqCst) {
                     {
                         let mut mgr = video_manager.lock();
                         mgr.poll();
@@ -1655,17 +1674,18 @@ impl MidiMonitor {
 
         self.video_poller_handle = Some(handle);
     }
-    
+
     /// Start background thread to emit audio trigger levels to the frontend
     fn start_audio_level_poller(&mut self) {
-        let is_monitoring = self.is_monitoring.clone();
+        self.audio_poller_stop.store(false, Ordering::SeqCst);
+        let stop_flag = self.audio_poller_stop.clone();
         let capture_state = self.capture_state.clone();
         let app_handle = self.app_handle.clone();
 
         let handle = std::thread::Builder::new()
             .name("sacho-audio-levels".into())
             .spawn(move || {
-                while *is_monitoring.read() {
+                while !stop_flag.load(Ordering::SeqCst) {
                     {
                         let state = capture_state.lock();
                         if !state.audio_trigger_states.is_empty() {
@@ -1687,40 +1707,147 @@ impl MidiMonitor {
         self.audio_level_poller_handle = Some(handle);
     }
 
-    /// Stop monitoring
+    /// Stop monitoring (all pipelines)
     pub fn stop(&mut self) {
-        // Signal background threads to stop
+        self.stop_idle_checker();
+        self.stop_midi();
+        self.stop_audio();
+        self.stop_video();
         *self.is_monitoring.write() = false;
-        
-        // Wait for background threads to finish (with timeout to avoid hanging)
-        if let Some(handle) = self.video_poller_handle.take() {
-            // Give the thread a moment to notice the flag change
-            let _ = handle.join();
-        }
-        if let Some(handle) = self.idle_checker_handle.take() {
-            let _ = handle.join();
-        }
+    }
+
+    /// Stop only the MIDI connections and clear MIDI capture state
+    fn stop_midi(&mut self) {
+        self.trigger_connections.clear();
+        self.capture_connections.clear();
+
+        let mut state = self.capture_state.lock();
+        state.midi_writers.clear();
+        state.midi_preroll.clear();
+    }
+
+    /// Stop only the audio streams and clear audio capture state
+    fn stop_audio(&mut self) {
+        // Stop the audio level poller thread
+        self.audio_poller_stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.audio_level_poller_handle.take() {
             let _ = handle.join();
         }
 
-        self.trigger_connections.clear();
-        self.capture_connections.clear();
-        
-        // Clear audio streams
+        // Clear audio streams (stops cpal callbacks)
         AUDIO_STREAMS.with(|streams| {
             streams.borrow_mut().clear();
         });
-        
-        // Stop video capture
-        self.video_manager.lock().stop();
-        
-        // Clear writers, pre-roll buffers, and trigger states
+
+        // Clear audio capture state
         let mut state = self.capture_state.lock();
-        state.midi_writers.clear();
         state.audio_writers.clear();
         state.audio_prerolls.clear();
         state.audio_trigger_states.clear();
+    }
+
+    /// Stop only the video pipeline
+    fn stop_video(&mut self) {
+        // Stop the video poller thread
+        self.video_poller_stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.video_poller_handle.take() {
+            let _ = handle.join();
+        }
+
+        self.video_manager.lock().stop();
+    }
+
+    /// Stop only the idle checker thread
+    fn stop_idle_checker(&mut self) {
+        self.idle_checker_stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.idle_checker_handle.take() {
+            let _ = handle.join();
+        }
+    }
+
+    /// Restart only MIDI connections without touching audio or video
+    pub fn restart_midi(&mut self) -> anyhow::Result<()> {
+        self.stop_idle_checker();
+        self.stop_midi();
+
+        let config = self.app_handle.state::<RwLock<Config>>();
+        let config = config.read().clone();
+
+        self.start_midi(&config)?;
+
+        // Restart idle checker if we have any triggers (MIDI or audio)
+        let has_audio_triggers = !self.capture_state.lock().audio_trigger_states.is_empty();
+        if !self.trigger_connections.is_empty() || has_audio_triggers {
+            self.start_idle_checker();
+        }
+
+        // Ensure is_monitoring is set if we have any active device
+        let audio_count = AUDIO_STREAMS.with(|streams| streams.borrow().len());
+        let midi_count = self.trigger_connections.len() + self.capture_connections.len();
+        let video_count = self.video_manager.lock().pipeline_count();
+        if midi_count > 0 || audio_count > 0 || video_count > 0 {
+            *self.is_monitoring.write() = true;
+        }
+
+        println!("[Sacho] MIDI pipeline restarted ({} connections)", midi_count);
+        Ok(())
+    }
+
+    /// Restart only audio streams without touching MIDI or video
+    pub fn restart_audio(&mut self) -> anyhow::Result<()> {
+        self.stop_idle_checker();
+        self.stop_audio();
+
+        let config = self.app_handle.state::<RwLock<Config>>();
+        let config = config.read().clone();
+
+        let (_audio_count, has_audio_triggers) = self.start_audio(&config)?;
+
+        // Restart idle checker if we have any triggers (MIDI or audio)
+        if !self.trigger_connections.is_empty() || has_audio_triggers {
+            self.start_idle_checker();
+        }
+
+        // Restart audio level poller if we have audio triggers
+        if has_audio_triggers {
+            self.start_audio_level_poller();
+        }
+
+        // Ensure is_monitoring is set if we have any active device
+        let audio_count = AUDIO_STREAMS.with(|streams| streams.borrow().len());
+        let midi_count = self.trigger_connections.len() + self.capture_connections.len();
+        let video_count = self.video_manager.lock().pipeline_count();
+        if midi_count > 0 || audio_count > 0 || video_count > 0 {
+            *self.is_monitoring.write() = true;
+        }
+
+        println!("[Sacho] Audio pipeline restarted ({} streams)", audio_count);
+        Ok(())
+    }
+
+    /// Restart only video pipeline without touching MIDI or audio
+    pub fn restart_video(&mut self) -> anyhow::Result<()> {
+        self.stop_video();
+
+        let config = self.app_handle.state::<RwLock<Config>>();
+        let config = config.read().clone();
+
+        let video_count = self.start_video_pipeline(&config)?;
+
+        // Restart video poller if pipelines are active
+        if video_count > 0 {
+            self.start_video_poller();
+        }
+
+        // Ensure is_monitoring is set if we have any active device
+        let audio_count = AUDIO_STREAMS.with(|streams| streams.borrow().len());
+        let midi_count = self.trigger_connections.len() + self.capture_connections.len();
+        if midi_count > 0 || audio_count > 0 || video_count > 0 {
+            *self.is_monitoring.write() = true;
+        }
+
+        println!("[Sacho] Video pipeline restarted ({} pipelines)", video_count);
+        Ok(())
     }
     
     /// Manually start recording (same as MIDI trigger but without waiting for MIDI)
@@ -1783,19 +1910,20 @@ impl MidiMonitor {
     
     /// Start idle timeout checker thread
     fn start_idle_checker(&mut self) {
+        self.idle_checker_stop.store(false, Ordering::SeqCst);
         let app_handle = self.app_handle.clone();
         let last_event_time = self.last_event_time.clone();
-        let is_monitoring = self.is_monitoring.clone();
+        let stop_flag = self.idle_checker_stop.clone();
         let capture_state = self.capture_state.clone();
         let video_manager = self.video_manager.clone();
-        
+
         let handle = std::thread::Builder::new()
             .name("sacho-idle-checker".into())
             .spawn(move || {
                 loop {
                     std::thread::sleep(Duration::from_secs(1));
-                    
-                    if !*is_monitoring.read() {
+
+                    if stop_flag.load(Ordering::SeqCst) {
                         break;
                     }
                     
