@@ -640,8 +640,10 @@ pub fn update_config(
         *config_write = new_config.clone();
     }
 
-    // Save to disk
-    new_config.save(&app).map_err(|e| e.to_string())?;
+    // Save to disk (best-effort — don't block pipeline restart on save failure)
+    if let Err(e) = new_config.save(&app) {
+        println!("[Sacho] Warning: Failed to save config to disk: {}. Pipeline restart will still proceed.", e);
+    }
 
     // Sync preset level to video manager if it changed (no restart needed)
     if preset_or_mode_changed && !any_pipeline_changed {
