@@ -13,10 +13,11 @@ pub mod presets;
 
 pub use encoder::{
     AsyncVideoEncoder, EncoderConfig, EncoderError, EncoderStats,
-    HardwareEncoderType, RawVideoFrame, 
+    HardwareEncoderType, RawVideoFrame,
     detect_best_encoder, detect_best_encoder_for_codec, detect_best_av1_encoder, detect_best_vp8_encoder, detect_best_vp9_encoder,
     has_hardware_av1_encoder, has_hardware_vp9_encoder, has_hardware_vp8_encoder,
     has_av1_encoder, has_vp8_encoder, has_vp9_encoder,
+    has_ffv1_encoder,
     get_recommended_encoding_mode,
 };
 pub use presets::{DEFAULT_PRESET, MIN_PRESET, MAX_PRESET};
@@ -37,6 +38,8 @@ pub enum VideoCodec {
     Vp9,
     /// Raw uncompressed video - requires encoding by the application
     Raw,
+    /// FFV1 - lossless intra-frame compression (avenc_ffv1)
+    Ffv1,
 }
 
 impl VideoCodec {
@@ -67,7 +70,10 @@ impl VideoCodec {
             
             // Raw uncompressed video
             "video/x-raw" => Some(VideoCodec::Raw),
-            
+
+            // FFV1
+            "video/x-ffv" => Some(VideoCodec::Ffv1),
+
             _ => None,
         }
     }
@@ -80,6 +86,7 @@ impl VideoCodec {
             VideoCodec::Vp8 => "video/x-vp8",
             VideoCodec::Vp9 => "video/x-vp9",
             VideoCodec::Raw => "video/x-raw",
+            VideoCodec::Ffv1 => "video/x-ffv",
         }
     }
     
@@ -92,6 +99,7 @@ impl VideoCodec {
             VideoCodec::Vp8 => ContainerFormat::Mkv,
             VideoCodec::Vp9 => ContainerFormat::Mkv,
             VideoCodec::Raw => ContainerFormat::Mkv,
+            VideoCodec::Ffv1 => ContainerFormat::Mkv,
         }
     }
     
@@ -108,6 +116,7 @@ impl VideoCodec {
             VideoCodec::Vp8 => "identity", // VP8 doesn't need parsing before muxing
             VideoCodec::Vp9 => "identity", // VP9 doesn't need parsing before muxing
             VideoCodec::Raw => "identity", // No parsing needed, use identity element
+            VideoCodec::Ffv1 => "identity", // No parser needed
         }
     }
     
@@ -119,6 +128,7 @@ impl VideoCodec {
             VideoCodec::Vp8 => "VP8",
             VideoCodec::Vp9 => "VP9",
             VideoCodec::Raw => "RAW",
+            VideoCodec::Ffv1 => "FFV1",
         }
     }
     
@@ -130,6 +140,7 @@ impl VideoCodec {
             VideoCodec::Vp8 => true,
             VideoCodec::Vp9 => true,
             VideoCodec::Raw => true, // Will be encoded, which is supported
+            VideoCodec::Ffv1 => false, // Needs external player (VLC)
         }
     }
     

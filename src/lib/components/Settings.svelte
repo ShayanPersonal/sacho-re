@@ -212,7 +212,8 @@
                 const isCurrentValid =
                     (currentMode === "av1" && availability.av1_available) ||
                     (currentMode === "vp9" && availability.vp9_available) ||
-                    (currentMode === "vp8" && availability.vp8_available);
+                    (currentMode === "vp8" && availability.vp8_available) ||
+                    (currentMode === "ffv1" && availability.ffv1_available);
 
                 if (!isCurrentValid) {
                     localSettings.video_encoding_mode =
@@ -475,13 +476,18 @@
                                         : "")})</option
                             >
                         {/if}
-                        {#if !encoderAvailability?.av1_available && !encoderAvailability?.vp9_available && !encoderAvailability?.vp8_available}
+                        {#if encoderAvailability?.ffv1_available}
+                            <option value="ffv1"
+                                >FFV1 (lossless, huge files)</option
+                            >
+                        {/if}
+                        {#if !encoderAvailability?.av1_available && !encoderAvailability?.vp9_available && !encoderAvailability?.vp8_available && !encoderAvailability?.ffv1_available}
                             <option value="" disabled
                                 >No encoders available</option
                             >
                         {/if}
                     </select>
-                    {#if encoderAvailability && !encoderAvailability.av1_available && !encoderAvailability.vp9_available && !encoderAvailability.vp8_available}
+                    {#if encoderAvailability && !encoderAvailability.av1_available && !encoderAvailability.vp9_available && !encoderAvailability.vp8_available && !encoderAvailability.ffv1_available}
                         <p class="encoder-warning">
                             No encoders detected. Raw video recording is not
                             available.
@@ -520,7 +526,7 @@
                             {/if}
                         </p>
                     {/if}
-                    {#if localSettings.video_encoding_mode !== "raw" && encoderAvailability && (encoderAvailability.av1_available || encoderAvailability.vp9_available || encoderAvailability.vp8_available)}
+                    {#if localSettings.video_encoding_mode !== "raw" && encoderAvailability && (encoderAvailability.av1_available || encoderAvailability.vp9_available || encoderAvailability.vp8_available || encoderAvailability.ffv1_available)}
                         <button
                             class="advanced-toggle"
                             onclick={() =>

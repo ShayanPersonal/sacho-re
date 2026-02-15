@@ -1081,6 +1081,10 @@ pub struct EncoderAvailability {
     pub vp9_encoder_name: Option<String>,
     /// Name of the VP8 encoder if available
     pub vp8_encoder_name: Option<String>,
+    /// Whether FFV1 encoding is available (software only)
+    pub ffv1_available: bool,
+    /// Name of the FFV1 encoder if available
+    pub ffv1_encoder_name: Option<String>,
     /// Recommended default encoding mode
     pub recommended_default: String,
 }
@@ -1096,12 +1100,13 @@ fn sync_preset_level_to_video_manager(
         crate::config::VideoEncodingMode::Vp9 => "vp9",
         crate::config::VideoEncodingMode::Vp8 => "vp8",
         crate::config::VideoEncodingMode::Raw => "vp8",
+        crate::config::VideoEncodingMode::Ffv1 => "ffv1",
     };
     let level = config.encoder_preset_levels
         .get(encoding_mode_key)
         .copied()
         .unwrap_or(crate::encoding::DEFAULT_PRESET);
-    
+
     let monitor = monitor.lock();
     let video_mgr = monitor.video_manager();
     video_mgr.lock().set_preset_level(level);
@@ -1113,14 +1118,15 @@ pub fn get_encoder_availability() -> EncoderAvailability {
         detect_best_av1_encoder, detect_best_vp8_encoder, detect_best_vp9_encoder,
         has_hardware_av1_encoder, has_hardware_vp9_encoder, has_hardware_vp8_encoder,
         has_av1_encoder, has_vp8_encoder, has_vp9_encoder,
+        has_ffv1_encoder,
         get_recommended_encoding_mode,
     };
-    
+
     let av1_type = detect_best_av1_encoder();
     let vp9_type = detect_best_vp9_encoder();
     let vp8_type = detect_best_vp8_encoder();
     let recommended = get_recommended_encoding_mode();
-    
+
     EncoderAvailability {
         av1_available: has_av1_encoder(),
         av1_hardware: has_hardware_av1_encoder(),
@@ -1143,11 +1149,18 @@ pub fn get_encoder_availability() -> EncoderAvailability {
         } else {
             None
         },
+        ffv1_available: has_ffv1_encoder(),
+        ffv1_encoder_name: if has_ffv1_encoder() {
+            Some("Software".to_string())
+        } else {
+            None
+        },
         recommended_default: match recommended {
             crate::config::VideoEncodingMode::Av1 => "av1".to_string(),
             crate::config::VideoEncodingMode::Vp9 => "vp9".to_string(),
             crate::config::VideoEncodingMode::Vp8 => "vp8".to_string(),
             crate::config::VideoEncodingMode::Raw => "raw".to_string(),
+            crate::config::VideoEncodingMode::Ffv1 => "ffv1".to_string(),
         },
     }
 }
@@ -1280,6 +1293,7 @@ pub async fn auto_select_encoder_preset(
             crate::config::VideoEncodingMode::Vp9 => "vp9",
             crate::config::VideoEncodingMode::Vp8 => "vp8",
             crate::config::VideoEncodingMode::Raw => "vp8",
+            crate::config::VideoEncodingMode::Ffv1 => "ffv1",
         };
         let preset = cfg.encoder_preset_levels.get(enc_key).copied()
             .unwrap_or(crate::encoding::DEFAULT_PRESET);
@@ -1341,6 +1355,7 @@ async fn run_auto_select_test(
         crate::config::VideoEncodingMode::Av1 => crate::encoding::VideoCodec::Av1,
         crate::config::VideoEncodingMode::Vp9 => crate::encoding::VideoCodec::Vp9,
         crate::config::VideoEncodingMode::Vp8 => crate::encoding::VideoCodec::Vp8,
+        crate::config::VideoEncodingMode::Ffv1 => crate::encoding::VideoCodec::Ffv1,
         crate::config::VideoEncodingMode::Raw => {
             return Err("Cannot test raw mode".to_string());
         }

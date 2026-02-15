@@ -357,12 +357,18 @@ pub fn has_vp9_encoder() -> bool {
     encoder_type.vp9_encoder_element().is_some()
 }
 
+/// Check if FFV1 encoder is available (software only, via libav/ffmpeg)
+pub fn has_ffv1_encoder() -> bool {
+    gst::ElementFactory::find("avenc_ffv1").is_some()
+}
+
 /// Detect the best encoder for a given target codec
 pub fn detect_best_encoder_for_codec(codec: VideoCodec) -> HardwareEncoderType {
     match codec {
         VideoCodec::Av1 => detect_best_av1_encoder(),
         VideoCodec::Vp8 => detect_best_vp8_encoder(),
         VideoCodec::Vp9 => detect_best_vp9_encoder(),
+        VideoCodec::Ffv1 => HardwareEncoderType::Software,
         _ => HardwareEncoderType::Software,
     }
 }
@@ -983,6 +989,9 @@ impl AsyncVideoEncoder {
             VideoCodec::Vp8 => {
                 Self::create_vp8_pipeline(output_path, width, height, fps, config, hw_type)
             }
+            VideoCodec::Ffv1 => {
+                Self::create_ffv1_pipeline(output_path, width, height, fps, config, hw_type)
+            }
             _ => Err(EncoderError::NotAvailable(format!(
                 "Encoding not supported for codec: {:?}",
                 config.target_codec
@@ -1383,6 +1392,72 @@ impl AsyncVideoEncoder {
         super::presets::apply_preset(
             &encoder,
             VideoCodec::Vp9,
+            hw_type,
+            config.preset_level,
+            config.keyframe_interval,
+        );
+
+        Ok(encoder)
+    }
+
+    /// Create FFV1 encoding pipeline (MKV container)
+    fn create_ffv1_pipeline(
+        output_path: &PathBuf,
+        width: u32,
+        height: u32,
+        fps: f64,
+        config: &EncoderConfig,
+        hw_type: HardwareEncoderType,
+    ) -> Result<gst::Pipeline> {
+        let (pipeline, _appsrc, chain_tail) = Self::create_common_pipeline_start_with_target(
+            width,
+            height,
+            fps,
+            config.target_width,
+            config.target_height,
+            config.target_fps,
+        )?;
+
+        // Create FFV1 encoder
+        let encoder = Self::create_ffv1_encoder(hw_type, config)?;
+
+        // MKV muxer
+        let muxer = gst::ElementFactory::make("matroskamux")
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
+        muxer.set_property("writing-app", "Sacho");
+
+        // File sink
+        let filesink = gst::ElementFactory::make("filesink")
+            .property("location", output_path.to_string_lossy().to_string())
+            .property("async", false)
+            .property("sync", false)
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
+
+        pipeline
+            .add_many([&encoder, &muxer, &filesink])
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
+        gst::Element::link_many([&chain_tail, &encoder, &muxer, &filesink])
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
+
+        Ok(pipeline)
+    }
+
+    /// Create the FFV1 encoder element (avenc_ffv1, software only)
+    pub(crate) fn create_ffv1_encoder(
+        hw_type: HardwareEncoderType,
+        config: &EncoderConfig,
+    ) -> Result<gst::Element> {
+        let encoder = gst::ElementFactory::make("avenc_ffv1")
+            .build()
+            .map_err(|e| {
+                EncoderError::NotAvailable(format!("Failed to create avenc_ffv1: {}", e))
+            })?;
+
+        super::presets::apply_preset(
+            &encoder,
+            VideoCodec::Ffv1,
             hw_type,
             config.preset_level,
             config.keyframe_interval,

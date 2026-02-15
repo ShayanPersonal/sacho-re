@@ -597,6 +597,8 @@ impl PrerollVideoEncoder {
             crate::encoding::VideoCodec::Av1 => AsyncVideoEncoder::create_av1_encoder(hw_type, &config),
             crate::encoding::VideoCodec::Vp8 => AsyncVideoEncoder::create_vp8_encoder(hw_type, &config),
             crate::encoding::VideoCodec::Vp9 => AsyncVideoEncoder::create_vp9_encoder(hw_type, &config),
+
+            crate::encoding::VideoCodec::Ffv1 => AsyncVideoEncoder::create_ffv1_encoder(hw_type, &config),
             _ => return Err(VideoError::Pipeline(format!(
                 "Unsupported codec for preroll encoding: {:?}", target_codec
             ))),
@@ -1201,6 +1203,8 @@ impl VideoCapturePipeline {
                 VideoEncodingMode::Av1 => crate::encoding::VideoCodec::Av1,
                 VideoEncodingMode::Vp9 => crate::encoding::VideoCodec::Vp9,
                 VideoEncodingMode::Vp8 => crate::encoding::VideoCodec::Vp8,
+
+                VideoEncodingMode::Ffv1 => crate::encoding::VideoCodec::Ffv1,
                 VideoEncodingMode::Raw => crate::encoding::VideoCodec::Vp8, // Fallback
             };
             
@@ -1252,6 +1256,8 @@ impl VideoCapturePipeline {
                 VideoEncodingMode::Av1 => crate::encoding::VideoCodec::Av1,
                 VideoEncodingMode::Vp9 => crate::encoding::VideoCodec::Vp9,
                 VideoEncodingMode::Vp8 => crate::encoding::VideoCodec::Vp8,
+
+                VideoEncodingMode::Ffv1 => crate::encoding::VideoCodec::Ffv1,
                 VideoEncodingMode::Raw => crate::encoding::VideoCodec::Av1, // Fallback
             };
             output_path = output_path.with_extension(target_codec.container().extension());
@@ -1342,6 +1348,8 @@ impl VideoCapturePipeline {
                 VideoEncodingMode::Av1 => crate::encoding::VideoCodec::Av1,
                 VideoEncodingMode::Vp9 => crate::encoding::VideoCodec::Vp9,
                 VideoEncodingMode::Vp8 => crate::encoding::VideoCodec::Vp8,
+
+                VideoEncodingMode::Ffv1 => crate::encoding::VideoCodec::Ffv1,
                 VideoEncodingMode::Raw => crate::encoding::VideoCodec::Av1, // Fallback
             };
             

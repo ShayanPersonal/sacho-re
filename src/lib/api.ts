@@ -260,7 +260,7 @@ export interface VideoFileInfo {
   has_audio?: boolean;
 }
 
-export type VideoEncodingMode = 'av1' | 'vp9' | 'vp8' | 'raw';
+export type VideoEncodingMode = 'av1' | 'vp9' | 'vp8' | 'raw' | 'ffv1';
 export type AudioBitDepth = 'int16' | 'int24' | 'float32';
 export type AudioSampleRate = 'passthrough' | 'rate44100' | 'rate48000' | 'rate88200' | 'rate96000' | 'rate192000';
 
@@ -394,6 +394,10 @@ export interface EncoderAvailability {
   vp9_encoder_name: string | null;
   /** Name of the VP8 encoder if available */
   vp8_encoder_name: string | null;
+  /** Whether FFV1 encoding is available (software only) */
+  ffv1_available: boolean;
+  /** Name of the FFV1 encoder if available */
+  ffv1_encoder_name: string | null;
   /** Recommended default encoding mode */
   recommended_default: VideoEncodingMode;
 }

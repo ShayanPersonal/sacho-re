@@ -531,7 +531,7 @@
           <div class="video-unsupported-overlay">
             <span class="error-icon">⚠</span>
             <span class="error-text">Unsupported video format</span>
-            <span class="error-hint">Use an external player for this video</span>
+            <span class="error-hint">We recommend using VLC Media Player for playback</span>
           </div>
         {:else if useCustomPlayer && currentVideoFile}
           <!-- Custom JPEG frame player for MJPEG -->

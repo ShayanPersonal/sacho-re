@@ -1624,6 +1624,7 @@ impl MidiMonitor {
             crate::config::VideoEncodingMode::Vp9 => "vp9",
             crate::config::VideoEncodingMode::Vp8 => "vp8",
             crate::config::VideoEncodingMode::Raw => "vp8",
+            crate::config::VideoEncodingMode::Ffv1 => "ffv1",
         };
         let preset_level = config.encoder_preset_levels
             .get(encoding_mode_key)

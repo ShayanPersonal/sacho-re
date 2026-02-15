@@ -62,6 +62,7 @@
       case 'av1': return 'AV1';
       case 'vp9': return 'VP9';
       case 'vp8': return 'VP8';
+      case 'ffv1': return 'FFV1';
       default: return 'VP8';
     }
   });

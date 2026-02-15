@@ -3,7 +3,10 @@
     "allow": [
       "Bash(grep:*)",
       "Bash(cargo check:*)",
-      "Bash(npm run check:*)"
+      "Bash(npm run check:*)",
+      "Bash(powershell -ExecutionPolicy Bypass -File check_deps.ps1)",
+      "Bash(cargo run:*)",
+      "Bash(gst-inspect-1.0:*)"
     ]
   }
 }

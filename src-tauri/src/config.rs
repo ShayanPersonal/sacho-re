@@ -192,6 +192,8 @@ pub enum VideoEncodingMode {
     Vp8,
     /// Keep video raw/uncompressed (largest files, no quality loss)
     Raw,
+    /// Use FFV1 encoding (lossless intra-frame, software only)
+    Ffv1,
 }
 
 impl Default for VideoEncodingMode {

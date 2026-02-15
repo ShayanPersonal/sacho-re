@@ -109,6 +109,11 @@ pub fn apply_preset(
             apply_software_vp8(encoder, level, keyframe_interval);
         }
 
+        // ── FFV1 encoder ────────────────────────────────────────────────
+        (VideoCodec::Ffv1, HardwareEncoderType::Software) => {
+            apply_software_ffv1(encoder, level);
+        }
+
         // ── Unsupported combinations ────────────────────────────────────
         // NVENC and AMF don't support VP8/VP9 encoding.
         _ => {
@@ -379,4 +384,37 @@ fn apply_software_vp8(encoder: &gst::Element, level: u8, keyframe_interval: u32)
     if keyframe_interval > 0 {
         encoder.set_property("keyframe-max-dist", keyframe_interval as i32);
     }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// FFV1 Encoder (avenc_ffv1)
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Software FFV1 via libav/ffmpeg (avenc_ffv1)
+///
+/// FFV1 is a lossless intra-frame codec. The slider controls compression
+/// compute vs file size (all presets are lossless).
+///
+/// Properties used:
+/// - `context`: 0 = small context model (fast), 1 = large context model (better compression)
+/// - `coder`: 0 = Golomb-Rice (fast), 1 = Range coder (better compression)
+/// - `slices`: more slices = more parallelism but slightly worse compression
+/// - `slicecrc`: per-slice CRC for error detection
+fn apply_software_ffv1(encoder: &gst::Element, level: u8) {
+    let num_cpus = std::thread::available_parallelism()
+        .map(|p| p.get() as i32)
+        .unwrap_or(4);
+
+    let (context, coder_name, slices) = match level {
+        1 => (0i32, "rice", (num_cpus * 4).min(24)),    // Fast: rice coder, many slices
+        2 => (0, "rice", (num_cpus * 2).min(16)),         // Rice coder, more slices
+        3 => (1, "ac", num_cpus.min(12)),                  // Large context, range coder
+        4 => (1, "ac", (num_cpus / 2).max(4)),             // Fewer slices, better context
+        _ => (1, "ac", 4),                                  // Best compression, fewer slices
+    };
+
+    encoder.set_property("context", context);
+    encoder.set_property_from_str("coder", coder_name);
+    encoder.set_property("slices", slices);
+    encoder.set_property_from_str("slicecrc", "on");
 }

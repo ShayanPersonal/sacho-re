@@ -60,7 +60,8 @@
         return (
             encoderAvailability.av1_available ||
             encoderAvailability.vp9_available ||
-            encoderAvailability.vp8_available
+            encoderAvailability.vp8_available ||
+            encoderAvailability.ffv1_available
         );
     }
 
@@ -85,6 +86,8 @@
                 return "VP9";
             case "vp8":
                 return "VP8";
+            case "ffv1":
+                return "FFV1";
             default:
                 return "VP8";
         }
