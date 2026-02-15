@@ -76,6 +76,14 @@ pub struct Config {
     /// MIDI device IDs that trigger recording
     pub trigger_midi_devices: Vec<String>,
 
+    /// Audio device IDs that trigger recording
+    #[serde(default)]
+    pub trigger_audio_devices: Vec<String>,
+
+    /// Per-device audio trigger thresholds (device_name -> threshold 0.0-1.0)
+    #[serde(default)]
+    pub audio_trigger_thresholds: HashMap<String, f64>,
+
     /// Selected video device IDs
     pub selected_video_devices: Vec<String>,
 
@@ -261,6 +269,8 @@ pub struct DevicePreset {
     pub audio_devices: Vec<String>,
     pub midi_devices: Vec<String>,
     pub trigger_midi_devices: Vec<String>,
+    #[serde(default)]
+    pub trigger_audio_devices: Vec<String>,
     pub video_devices: Vec<String>,
 }
 
@@ -285,6 +295,8 @@ impl Default for Config {
             selected_audio_devices: Vec::new(),
             selected_midi_devices: Vec::new(),
             trigger_midi_devices: Vec::new(),
+            trigger_audio_devices: Vec::new(),
+            audio_trigger_thresholds: HashMap::new(),
             selected_video_devices: Vec::new(),
             video_device_configs: HashMap::new(),
             encoder_preset_levels: HashMap::new(),
@@ -315,6 +327,17 @@ impl Config {
             let old = self.pre_roll_secs;
             self.pre_roll_secs = self.pre_roll_secs.clamp(0, 30);
             clamped.push(format!("pre_roll_secs: {} -> {}", old, self.pre_roll_secs));
+        }
+
+        for (key, value) in self.audio_trigger_thresholds.iter_mut() {
+            if *value < 0.0 || *value > 1.0 {
+                let old = *value;
+                *value = value.clamp(0.0, 1.0);
+                clamped.push(format!(
+                    "audio_trigger_thresholds[{}]: {} -> {}",
+                    key, old, *value
+                ));
+            }
         }
 
         for (key, value) in self.encoder_preset_levels.iter_mut() {

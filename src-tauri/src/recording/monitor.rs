@@ -984,6 +984,78 @@ pub fn combine_audio_video_mkv(
     }
 }
 
+/// Per-device audio trigger amplitude tracking state
+pub struct AudioTriggerState {
+    pub device_name: String,
+    pub threshold: f64,
+    /// Running sum of squared samples for current 50ms window
+    window_sum_sq: f64,
+    /// Number of samples accumulated in current window
+    window_sample_count: usize,
+    /// Total samples per 50ms window (sample_rate * channels / 20)
+    samples_per_window: usize,
+    /// Recent RMS values for 3-second peak hold (timestamp, rms)
+    recent_rms: std::collections::VecDeque<(Instant, f32)>,
+    /// Latest 50ms window RMS, read by level poller
+    pub current_rms: f32,
+    /// Max of recent_rms (3s peak hold), read by level poller
+    pub current_peak_level: f32,
+}
+
+impl AudioTriggerState {
+    pub fn new(device_name: String, threshold: f64, sample_rate: u32, channels: u16) -> Self {
+        Self {
+            device_name,
+            threshold,
+            window_sum_sq: 0.0,
+            window_sample_count: 0,
+            samples_per_window: (sample_rate as usize * channels as usize) / 20, // 50ms
+            recent_rms: std::collections::VecDeque::new(),
+            current_rms: 0.0,
+            current_peak_level: 0.0,
+        }
+    }
+
+    /// Process incoming audio samples. Returns true if RMS exceeds threshold
+    /// at a 50ms window boundary.
+    pub fn process_samples(&mut self, data: &[f32]) -> bool {
+        let mut triggered = false;
+        for &sample in data {
+            self.window_sum_sq += (sample as f64) * (sample as f64);
+            self.window_sample_count += 1;
+
+            if self.window_sample_count >= self.samples_per_window {
+                let rms = (self.window_sum_sq / self.window_sample_count as f64).sqrt() as f32;
+                let now = Instant::now();
+
+                self.recent_rms.push_back((now, rms));
+                // Trim entries older than 3 seconds
+                while let Some(&(t, _)) = self.recent_rms.front() {
+                    if now.duration_since(t) > Duration::from_secs(3) {
+                        self.recent_rms.pop_front();
+                    } else {
+                        break;
+                    }
+                }
+
+                self.current_rms = rms;
+                self.current_peak_level = self.recent_rms.iter()
+                    .map(|(_, v)| *v)
+                    .fold(0.0f32, f32::max);
+
+                // Reset accumulator
+                self.window_sum_sq = 0.0;
+                self.window_sample_count = 0;
+
+                if rms > self.threshold as f32 {
+                    triggered = true;
+                }
+            }
+        }
+        triggered
+    }
+}
+
 /// Shared state for recording capture
 pub struct CaptureState {
     pub is_recording: bool,
@@ -1001,6 +1073,8 @@ pub struct CaptureState {
     pub midi_preroll: MidiPrerollBuffer,
     /// Pre-roll buffers for audio (one per device, used when not recording)
     pub audio_prerolls: Vec<AudioPrerollBuffer>,
+    /// Audio trigger amplitude states (one per trigger device)
+    pub audio_trigger_states: Vec<AudioTriggerState>,
     /// Pre-roll duration in seconds
     pub pre_roll_secs: u32,
     /// MIDI timestamp offset in microseconds (equals sync_preroll_duration)
@@ -1020,6 +1094,7 @@ impl CaptureState {
             audio_writers: Vec::new(),
             midi_preroll: MidiPrerollBuffer::new(pre_roll_secs),
             audio_prerolls: Vec::new(),
+            audio_trigger_states: Vec::new(),
             pre_roll_secs,
             midi_timestamp_offset_us: 0,
         }
@@ -1064,6 +1139,7 @@ impl Default for CaptureState {
             audio_writers: Vec::new(),
             midi_preroll: MidiPrerollBuffer::new(2),
             audio_prerolls: Vec::new(),
+            audio_trigger_states: Vec::new(),
             pre_roll_secs: 2,
             midi_timestamp_offset_us: 0,
         }
@@ -1094,6 +1170,8 @@ pub struct MidiMonitor {
     video_poller_handle: Option<std::thread::JoinHandle<()>>,
     /// Handle for the idle checker background thread
     idle_checker_handle: Option<std::thread::JoinHandle<()>>,
+    /// Handle for the audio level poller background thread
+    audio_level_poller_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl MidiMonitor {
@@ -1117,6 +1195,7 @@ impl MidiMonitor {
             video_manager: Arc::new(Mutex::new(VideoCaptureManager::new(pre_roll_secs))),
             video_poller_handle: None,
             idle_checker_handle: None,
+            audio_level_poller_handle: None,
         }
     }
     
@@ -1218,7 +1297,7 @@ impl MidiMonitor {
                                 let velocity = message[2];
                                 
                                 if status == 0x90 && velocity > 0 {
-                                    handle_midi_trigger(&app_handle, &last_event_time, &capture_state, &video_manager);
+                                    handle_trigger(&app_handle, &last_event_time, &capture_state, &video_manager);
                                 }
                             }
                         },
@@ -1309,79 +1388,130 @@ impl MidiMonitor {
             }
         }
         
-        // Set up audio capture for selected devices
-        println!("[Sacho] Audio devices: {:?}", config.selected_audio_devices);
-        
+        // Set up audio capture for selected and trigger devices
+        println!("[Sacho] Audio record devices: {:?}", config.selected_audio_devices);
+        println!("[Sacho] Audio trigger devices: {:?}", config.trigger_audio_devices);
+
         let host = cpal::default_host();
         let pre_roll_secs = config.pre_roll_secs.min(pre_roll_limit);
-        
+
+        // Build union of audio devices that need a cpal stream
+        let mut audio_device_roles: HashMap<String, (bool, bool)> = HashMap::new(); // (is_record, is_trigger)
+        for name in &config.selected_audio_devices {
+            audio_device_roles.entry(name.clone()).or_insert((false, false)).0 = true;
+        }
+        for name in &config.trigger_audio_devices {
+            audio_device_roles.entry(name.clone()).or_insert((false, false)).1 = true;
+        }
+        let audio_trigger_thresholds = config.audio_trigger_thresholds.clone();
+        let has_audio_triggers = !config.trigger_audio_devices.is_empty();
+
         if let Ok(audio_devices) = host.input_devices() {
             for device in audio_devices {
                 if let Ok(device_name) = device.name() {
-                    // Check if this device is selected (audio devices use name as ID)
-                    if config.selected_audio_devices.contains(&device_name) {
-                        println!("[Sacho] Setting up audio capture: {}", device_name);
-                        
-                        if let Ok(supported_config) = device.default_input_config() {
-                            let sample_rate = supported_config.sample_rate().0;
-                            let channels = supported_config.channels();
-                            
-                            // Create pre-roll buffer and writer slot for this device
-                            let buffer_index = {
-                                let mut state = self.capture_state.lock();
-                                
-                                // Pre-roll buffer (captures audio before trigger)
-                                state.audio_prerolls.push(AudioPrerollBuffer::with_limit(
-                                    device_name.clone(),
-                                    sample_rate,
-                                    channels,
-                                    pre_roll_secs,
-                                    pre_roll_limit,
-                                ));
-                                
-                                // Writer slot (None until recording starts)
-                                state.audio_writers.push(None);
-                                
-                                state.audio_prerolls.len() - 1
-                            };
-                            
-                            let capture_state = self.capture_state.clone();
-                            
-                            match device.build_input_stream(
-                                &supported_config.into(),
-                                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    // Check if this device needs a stream (record, trigger, or both)
+                    let Some(&(is_record, is_trigger)) = audio_device_roles.get(&device_name) else {
+                        continue;
+                    };
+
+                    let role_str = match (is_record, is_trigger) {
+                        (true, true) => "record+trigger",
+                        (true, false) => "record",
+                        (false, true) => "trigger-only",
+                        (false, false) => continue,
+                    };
+                    println!("[Sacho] Setting up audio {}: {}", role_str, device_name);
+
+                    if let Ok(supported_config) = device.default_input_config() {
+                        let sample_rate = supported_config.sample_rate().0;
+                        let channels = supported_config.channels();
+
+                        // Create pre-roll buffer and writer slot only for record devices
+                        let buffer_index = if is_record {
+                            let mut state = self.capture_state.lock();
+
+                            state.audio_prerolls.push(AudioPrerollBuffer::with_limit(
+                                device_name.clone(),
+                                sample_rate,
+                                channels,
+                                pre_roll_secs,
+                                pre_roll_limit,
+                            ));
+                            state.audio_writers.push(None);
+
+                            Some(state.audio_prerolls.len() - 1)
+                        } else {
+                            None
+                        };
+
+                        // Create trigger state for trigger devices
+                        let trigger_index = if is_trigger {
+                            let threshold = audio_trigger_thresholds
+                                .get(&device_name)
+                                .copied()
+                                .unwrap_or(0.1); // Default threshold
+                            let mut state = self.capture_state.lock();
+                            state.audio_trigger_states.push(AudioTriggerState::new(
+                                device_name.clone(),
+                                threshold,
+                                sample_rate,
+                                channels,
+                            ));
+                            Some(state.audio_trigger_states.len() - 1)
+                        } else {
+                            None
+                        };
+
+                        let capture_state = self.capture_state.clone();
+                        let app_handle = self.app_handle.clone();
+                        let last_event_time = self.last_event_time.clone();
+                        let video_manager = self.video_manager.clone();
+
+                        match device.build_input_stream(
+                            &supported_config.into(),
+                            move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                                let should_trigger = {
                                     let mut state = capture_state.lock();
-                                    
-                                    // Use pre-roll buffer when not recording (or still starting)
-                                    if state.should_use_preroll() {
-                                        // Store in pre-roll buffer (rolling window of last N seconds)
-                                        if let Some(preroll) = state.audio_prerolls.get_mut(buffer_index) {
-                                            preroll.push_samples(data);
-                                        }
-                                    } else {
-                                        // Recording is active, stream to disk via GStreamer
-                                        if let Some(Some(writer)) = state.audio_writers.get_mut(buffer_index) {
+
+                                    // Route audio to preroll/writer if this is a record device
+                                    if let Some(idx) = buffer_index {
+                                        if state.should_use_preroll() {
+                                            if let Some(preroll) = state.audio_prerolls.get_mut(idx) {
+                                                preroll.push_samples(data);
+                                            }
+                                        } else if let Some(Some(writer)) = state.audio_writers.get_mut(idx) {
                                             writer.push_samples(data);
                                         }
                                     }
-                                },
-                                |err| {
-                                    println!("[Sacho] Audio error: {}", err);
-                                },
-                                None,
-                            ) {
-                                Ok(stream) => {
-                                    if stream.play().is_ok() {
-                                        AUDIO_STREAMS.with(|streams| {
-                                            streams.borrow_mut().push(stream);
-                                        });
-                                        println!("[Sacho] Audio capture ready: {} ({}Hz, {}ch, {}s pre-roll)", 
-                                            device_name, sample_rate, channels, pre_roll_secs);
+
+                                    // Compute amplitude if this is a trigger device
+                                    if let Some(idx) = trigger_index {
+                                        state.audio_trigger_states[idx].process_samples(data)
+                                    } else {
+                                        false
                                     }
+                                }; // lock released
+
+                                if should_trigger {
+                                    handle_trigger(&app_handle, &last_event_time, &capture_state, &video_manager);
                                 }
-                                Err(e) => {
-                                    println!("[Sacho] Failed to create audio stream for {}: {}", device_name, e);
+                            },
+                            |err| {
+                                println!("[Sacho] Audio error: {}", err);
+                            },
+                            None,
+                        ) {
+                            Ok(stream) => {
+                                if stream.play().is_ok() {
+                                    AUDIO_STREAMS.with(|streams| {
+                                        streams.borrow_mut().push(stream);
+                                    });
+                                    println!("[Sacho] Audio {} ready: {} ({}Hz, {}ch, {}s pre-roll)",
+                                        role_str, device_name, sample_rate, channels, pre_roll_secs);
                                 }
+                            }
+                            Err(e) => {
+                                println!("[Sacho] Failed to create audio stream for {}: {}", device_name, e);
                             }
                         }
                     }
@@ -1474,14 +1604,19 @@ impl MidiMonitor {
         if has_any_device {
             *self.is_monitoring.write() = true;
             
-            // Only start idle checker if we have MIDI triggers (auto-stop on idle)
-            if !self.trigger_connections.is_empty() {
+            // Start idle checker if we have any triggers (MIDI or audio) for auto-stop on idle
+            if !self.trigger_connections.is_empty() || has_audio_triggers {
                 self.start_idle_checker();
             }
             
             // Start video polling thread
             if video_count > 0 {
                 self.start_video_poller();
+            }
+
+            // Start audio level poller for trigger devices
+            if has_audio_triggers {
+                self.start_audio_level_poller();
             }
             
             println!("[Sacho] Monitoring active ({} MIDI, {} audio, {} video)", 
@@ -1521,6 +1656,37 @@ impl MidiMonitor {
         self.video_poller_handle = Some(handle);
     }
     
+    /// Start background thread to emit audio trigger levels to the frontend
+    fn start_audio_level_poller(&mut self) {
+        let is_monitoring = self.is_monitoring.clone();
+        let capture_state = self.capture_state.clone();
+        let app_handle = self.app_handle.clone();
+
+        let handle = std::thread::Builder::new()
+            .name("sacho-audio-levels".into())
+            .spawn(move || {
+                while *is_monitoring.read() {
+                    {
+                        let state = capture_state.lock();
+                        if !state.audio_trigger_states.is_empty() {
+                            let levels: Vec<serde_json::Value> = state.audio_trigger_states.iter()
+                                .map(|ts| serde_json::json!({
+                                    "device_id": ts.device_name,
+                                    "current_rms": ts.current_rms,
+                                    "peak_level": ts.current_peak_level,
+                                }))
+                                .collect();
+                            let _ = app_handle.emit("audio-trigger-levels", levels);
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            })
+            .expect("Failed to spawn audio level poller thread");
+
+        self.audio_level_poller_handle = Some(handle);
+    }
+
     /// Stop monitoring
     pub fn stop(&mut self) {
         // Signal background threads to stop
@@ -1534,7 +1700,10 @@ impl MidiMonitor {
         if let Some(handle) = self.idle_checker_handle.take() {
             let _ = handle.join();
         }
-        
+        if let Some(handle) = self.audio_level_poller_handle.take() {
+            let _ = handle.join();
+        }
+
         self.trigger_connections.clear();
         self.capture_connections.clear();
         
@@ -1546,11 +1715,12 @@ impl MidiMonitor {
         // Stop video capture
         self.video_manager.lock().stop();
         
-        // Clear writers and pre-roll buffers
+        // Clear writers, pre-roll buffers, and trigger states
         let mut state = self.capture_state.lock();
         state.midi_writers.clear();
         state.audio_writers.clear();
         state.audio_prerolls.clear();
+        state.audio_trigger_states.clear();
     }
     
     /// Manually start recording (same as MIDI trigger but without waiting for MIDI)
@@ -1669,8 +1839,8 @@ impl Drop for MidiMonitor {
     }
 }
 
-/// Handle MIDI trigger event
-fn handle_midi_trigger(
+/// Handle trigger event (MIDI note-on or audio threshold exceeded)
+fn handle_trigger(
     app_handle: &AppHandle, 
     last_event_time: &Arc<RwLock<Option<Instant>>>,
     capture_state: &Arc<Mutex<CaptureState>>,
@@ -1702,7 +1872,7 @@ fn handle_midi_trigger(
     };
     
     if should_start {
-        println!("[Sacho] MIDI trigger -> starting recording (async)");
+        println!("[Sacho] Trigger -> starting recording (async)");
         
         // Spawn recording start on a separate thread so MIDI callback isn't blocked
         // This allows pre-roll to continue capturing during video initialization

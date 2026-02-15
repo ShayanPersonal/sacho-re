@@ -2,7 +2,7 @@
 
 import { writable, derived, get } from 'svelte/store';
 import { listen } from '@tauri-apps/api/event';
-import type { AudioDevice, MidiDevice, VideoDevice, VideoDeviceConfig, VideoFpsWarning, Config } from '$lib/api';
+import type { AudioDevice, MidiDevice, VideoDevice, VideoDeviceConfig, VideoFpsWarning, AudioTriggerLevel, Config } from '$lib/api';
 import { getAudioDevices, getMidiDevices, getVideoDevices, getConfig, updateConfig } from '$lib/api';
 import { settings } from './settings';
 
@@ -21,6 +21,11 @@ export const selectedMidiDevices = writable<Set<string>>(new Set());
 export const triggerMidiDevices = writable<Set<string>>(new Set());
 export const selectedVideoDevices = writable<Set<string>>(new Set());
 
+// Audio trigger state
+export const triggerAudioDevices = writable<Set<string>>(new Set());
+export const audioTriggerThresholds = writable<Record<string, number>>({});
+export const audioTriggerLevels = writable<Record<string, { current_rms: number; peak_level: number }>>({});
+
 // Per-device video configuration (device_id -> config)
 export const videoDeviceConfigs = writable<Record<string, VideoDeviceConfig>>({});
 
@@ -36,10 +41,22 @@ listen<VideoFpsWarning>('video-fps-warning', (event) => {
   });
 });
 
-// Clear FPS warnings when monitoring restarts (recording-state-changed to initializing)
+// Listen for audio trigger level events from backend
+listen<AudioTriggerLevel[]>('audio-trigger-levels', (event) => {
+  audioTriggerLevels.update(levels => {
+    const updated = { ...levels };
+    for (const entry of event.payload) {
+      updated[entry.device_id] = { current_rms: entry.current_rms, peak_level: entry.peak_level };
+    }
+    return updated;
+  });
+});
+
+// Clear FPS warnings and audio levels when monitoring restarts (recording-state-changed to initializing)
 listen<string>('recording-state-changed', (event) => {
   if (event.payload === 'initializing') {
     videoFpsWarnings.set([]);
+    audioTriggerLevels.set({});
   }
 });
 
@@ -48,10 +65,11 @@ export const config = writable<Config | null>(null);
 
 // Derived counts
 export const audioDeviceCount = derived(
-  [audioDevices, selectedAudioDevices],
-  ([$devices, $selected]) => ({
+  [audioDevices, selectedAudioDevices, triggerAudioDevices],
+  ([$devices, $selected, $triggers]) => ({
     total: $devices.length,
-    selected: $devices.filter(d => $selected.has(d.id)).length
+    selected: $devices.filter(d => $selected.has(d.id)).length,
+    triggers: $devices.filter(d => $triggers.has(d.id)).length
   })
 );
 
@@ -108,6 +126,8 @@ export async function loadConfig() {
     selectedAudioDevices.set(new Set(cfg.selected_audio_devices));
     selectedMidiDevices.set(new Set(cfg.selected_midi_devices));
     triggerMidiDevices.set(new Set(cfg.trigger_midi_devices));
+    triggerAudioDevices.set(new Set(cfg.trigger_audio_devices ?? []));
+    audioTriggerThresholds.set(cfg.audio_trigger_thresholds ?? {});
     selectedVideoDevices.set(new Set(cfg.selected_video_devices));
     videoDeviceConfigs.set(cfg.video_device_configs ?? {});
   } catch (error) {
@@ -132,6 +152,7 @@ export async function cleanupStaleDeviceIds() {
   const cleanedAudio = currentConfig.selected_audio_devices.filter(id => audioIds.has(id));
   const cleanedMidi = currentConfig.selected_midi_devices.filter(id => midiIds.has(id));
   const cleanedTriggers = currentConfig.trigger_midi_devices.filter(id => midiIds.has(id));
+  const cleanedAudioTriggers = (currentConfig.trigger_audio_devices ?? []).filter(id => audioIds.has(id));
   const cleanedVideo = currentConfig.selected_video_devices.filter(id => videoIds.has(id));
   const cleanedConfigs: Record<string, VideoDeviceConfig> = {};
   for (const [id, cfg] of Object.entries(currentConfig.video_device_configs)) {
@@ -145,6 +166,7 @@ export async function cleanupStaleDeviceIds() {
     cleanedAudio.length !== currentConfig.selected_audio_devices.length ||
     cleanedMidi.length !== currentConfig.selected_midi_devices.length ||
     cleanedTriggers.length !== currentConfig.trigger_midi_devices.length ||
+    cleanedAudioTriggers.length !== (currentConfig.trigger_audio_devices ?? []).length ||
     cleanedVideo.length !== currentConfig.selected_video_devices.length ||
     Object.keys(cleanedConfigs).length !== Object.keys(currentConfig.video_device_configs).length;
   
@@ -153,6 +175,7 @@ export async function cleanupStaleDeviceIds() {
     selectedAudioDevices.set(new Set(cleanedAudio));
     selectedMidiDevices.set(new Set(cleanedMidi));
     triggerMidiDevices.set(new Set(cleanedTriggers));
+    triggerAudioDevices.set(new Set(cleanedAudioTriggers));
     selectedVideoDevices.set(new Set(cleanedVideo));
     videoDeviceConfigs.set(cleanedConfigs);
     await saveDeviceSelection();
@@ -182,14 +205,18 @@ export async function saveDeviceSelection() {
   const audioSelected = get(selectedAudioDevices);
   const midiSelected = get(selectedMidiDevices);
   const midiTriggers = get(triggerMidiDevices);
+  const audioTriggers = get(triggerAudioDevices);
+  const audioThresholds = get(audioTriggerThresholds);
   const videoSelected = get(selectedVideoDevices);
   const deviceConfigs = get(videoDeviceConfigs);
-  
+
   const newConfig: Config = {
     ...(currentConfig as Config),
     selected_audio_devices: Array.from(audioSelected),
     selected_midi_devices: Array.from(midiSelected),
     trigger_midi_devices: Array.from(midiTriggers),
+    trigger_audio_devices: Array.from(audioTriggers),
+    audio_trigger_thresholds: audioThresholds,
     selected_video_devices: Array.from(videoSelected),
     video_device_configs: deviceConfigs
   };
@@ -260,6 +287,27 @@ export function toggleMidiTrigger(deviceId: string) {
     }
     return newSet;
   });
+  autoSaveDevices();
+}
+
+export function toggleAudioTrigger(deviceId: string) {
+  triggerAudioDevices.update(set => {
+    const newSet = new Set(set);
+    if (newSet.has(deviceId)) {
+      newSet.delete(deviceId);
+    } else {
+      newSet.add(deviceId);
+    }
+    return newSet;
+  });
+  autoSaveDevices();
+}
+
+export function setAudioTriggerThreshold(deviceId: string, threshold: number) {
+  audioTriggerThresholds.update(thresholds => ({
+    ...thresholds,
+    [deviceId]: threshold
+  }));
   autoSaveDevices();
 }
 

@@ -6,6 +6,9 @@
         selectedAudioDevices,
         selectedMidiDevices,
         triggerMidiDevices,
+        triggerAudioDevices,
+        audioTriggerThresholds,
+        audioTriggerLevels,
         selectedVideoDevices,
         videoDeviceConfigs,
         videoFpsWarnings,
@@ -17,6 +20,8 @@
         toggleAudioDevice,
         toggleMidiDevice,
         toggleMidiTrigger,
+        toggleAudioTrigger,
+        setAudioTriggerThreshold,
         toggleVideoDevice,
         setVideoDeviceConfig,
     } from "$lib/stores/devices";
@@ -131,7 +136,31 @@
     let expandedSections = $state<Set<string>>(new Set(["audio", "midi"]));
     let filterQuery = $state("");
     let showMidiHelp = $state(false);
+    let showAudioTriggerHelp = $state(false);
     let showFormatHelp = $state(false);
+
+    // Local threshold being dragged (device_id -> value), saved on release
+    let draggingThreshold = $state<Record<string, number>>({});
+
+    function onThresholdInput(deviceId: string, value: number) {
+        if ($deviceSaveStatus === 'saving') return;
+        draggingThreshold = { ...draggingThreshold, [deviceId]: value };
+    }
+
+    function onThresholdCommit(deviceId: string) {
+        const value = draggingThreshold[deviceId];
+        if (value === undefined || $deviceSaveStatus === 'saving') return;
+        const { [deviceId]: _, ...rest } = draggingThreshold;
+        draggingThreshold = rest;
+        setAudioTriggerThreshold(deviceId, value);
+    }
+
+    /** Convert linear amplitude (0–0.5) to dB. Returns "-inf" for 0. */
+    function linearToDb(value: number): string {
+        if (value <= 0) return "-\u221EdB";
+        const db = 20 * Math.log10(value);
+        return `${db.toFixed(0)}dB`;
+    }
 
     function toggleSection(section: string) {
         expandedSections = new Set(expandedSections);
@@ -302,7 +331,8 @@
                 <span class="section-icon">🎤</span>
                 <span class="section-title">Audio Sources</span>
                 <span class="section-count">
-                    ({$audioDeviceCount.selected} selected of {$audioDeviceCount.total})
+                    ({$audioDeviceCount.triggers} trigger, {$audioDeviceCount.selected}
+                    record of {$audioDeviceCount.total})
                 </span>
             </button>
 
@@ -310,12 +340,36 @@
                 <div class="section-content">
                     <div class="midi-header">
                         <span class="midi-col-device">Device</span>
-                        <span class="midi-col-trigger"></span>
+                        <div class="midi-col-trigger">
+                            <span>Trigger</span>
+                            <button
+                                class="help-btn"
+                                onclick={(e) => {
+                                    e.stopPropagation();
+                                    showAudioTriggerHelp = !showAudioTriggerHelp;
+                                }}
+                                onblur={() => (showAudioTriggerHelp = false)}
+                            >
+                                ?
+                            </button>
+                            {#if showAudioTriggerHelp}
+                                <div class="help-tooltip">
+                                    When audio level on a device marked as <strong
+                                        >Trigger</strong
+                                    > exceeds the threshold, all devices marked as
+                                    <strong>Record</strong> will automatically start
+                                    recording.
+                                </div>
+                            {/if}
+                        </div>
                         <span class="midi-col-record">Record</span>
                     </div>
                     <div class="device-list">
                         {#each filterDevices($audioDevices) as device}
-                            <div class="device-row midi-row">
+                            {@const isTrigger = $triggerAudioDevices.has(device.id)}
+                            {@const levels = $audioTriggerLevels[device.id]}
+                            {@const threshold = draggingThreshold[device.id] ?? $audioTriggerThresholds[device.id] ?? 0.1}
+                            <div class="device-row audio-device-row" class:has-meter={isTrigger}>
                                 <div class="device-info">
                                     <span class="device-name"
                                         >{device.name}</span
@@ -335,7 +389,14 @@
                                         {/if}
                                     </div>
                                 </div>
-                                <span class="placeholder-cell"></span>
+                                <label class="checkbox-cell">
+                                    <input
+                                        type="checkbox"
+                                        checked={isTrigger}
+                                        onchange={() =>
+                                            toggleAudioTrigger(device.id)}
+                                    />
+                                </label>
                                 <label class="checkbox-cell">
                                     <input
                                         type="checkbox"
@@ -346,6 +407,42 @@
                                             toggleAudioDevice(device.id)}
                                     />
                                 </label>
+                                {#if isTrigger}
+                                    <div class="audio-trigger-meter">
+                                        <span class="trigger-label">Threshold</span>
+                                        <div class="meter-container">
+                                            <div class="meter-track">
+                                                <div
+                                                    class="meter-fill"
+                                                    class:above-threshold={levels && levels.current_rms > threshold}
+                                                    style="width: {Math.min((levels?.current_rms ?? 0) * 100 / 0.5, 100)}%"
+                                                ></div>
+                                                {#if levels && levels.peak_level > 0}
+                                                    <div
+                                                        class="meter-peak"
+                                                        style="left: {Math.min(levels.peak_level * 100 / 0.5, 100)}%"
+                                                    ></div>
+                                                {/if}
+                                                <div
+                                                    class="meter-threshold"
+                                                    style="left: {Math.min(threshold * 100 / 0.5, 100)}%"
+                                                ></div>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                class="threshold-slider"
+                                                min="0"
+                                                max="0.5"
+                                                step="0.005"
+                                                value={threshold}
+                                                disabled={$deviceSaveStatus === 'saving'}
+                                                oninput={(e) => onThresholdInput(device.id, parseFloat(e.currentTarget.value))}
+                                                onchange={() => onThresholdCommit(device.id)}
+                                            />
+                                        </div>
+                                        <span class="threshold-label">{linearToDb(threshold)}</span>
+                                    </div>
+                                {/if}
                             </div>
                         {/each}
                         {#if $audioDevices.length === 0}
@@ -926,12 +1023,149 @@
 
     .device-info {
         display: flex;
-        align-items: center;
-        gap: 0.75rem;
+        flex-direction: column;
+        gap: 0.125rem;
     }
 
     .placeholder-cell {
         /* Empty cell to maintain grid alignment */
+    }
+
+    .audio-device-row {
+        display: grid;
+        grid-template-columns: 1fr 70px 70px;
+    }
+
+    .audio-device-row.has-meter {
+        grid-template-rows: auto auto;
+    }
+
+    .audio-trigger-meter {
+        grid-column: 2 / 4;
+        display: flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.125rem 0 0.25rem;
+        justify-self: stretch;
+    }
+
+    .trigger-label {
+        font-size: 0.5625rem;
+        color: #5a5a5a;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+    }
+
+    .meter-container {
+        position: relative;
+        flex: 1;
+        height: 20px;
+        display: flex;
+        align-items: center;
+    }
+
+    .meter-track {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 6px;
+        background: rgba(255, 255, 255, 0.06);
+        border-radius: 3px;
+        overflow: visible;
+    }
+
+    .meter-fill {
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        background: rgba(80, 180, 80, 0.6);
+        border-radius: 3px;
+        transition: width 0.05s linear;
+    }
+
+    .meter-fill.above-threshold {
+        background: rgba(217, 160, 40, 0.8);
+    }
+
+    .meter-peak {
+        position: absolute;
+        top: -1px;
+        width: 2px;
+        height: 8px;
+        background: rgba(255, 255, 255, 0.4);
+        border-radius: 1px;
+        transform: translateX(-1px);
+    }
+
+    .meter-threshold {
+        position: absolute;
+        top: -3px;
+        width: 2px;
+        height: 12px;
+        background: rgba(180, 60, 60, 0.6);
+        border-radius: 1px;
+        transform: translateX(-1px);
+        z-index: 1;
+        pointer-events: none;
+    }
+
+    .threshold-slider {
+        position: absolute;
+        left: 0;
+        right: 0;
+        width: 100%;
+        height: 20px;
+        cursor: pointer;
+        z-index: 2;
+        margin: 0;
+        -webkit-appearance: none;
+        appearance: none;
+        background: transparent;
+    }
+
+    .threshold-slider::-webkit-slider-runnable-track {
+        height: 6px;
+        background: transparent;
+        border-radius: 3px;
+    }
+
+    .threshold-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 10px;
+        height: 16px;
+        background: rgba(180, 60, 60, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 2px;
+        cursor: grab;
+        margin-top: -5px;
+    }
+
+    .threshold-slider::-webkit-slider-thumb:hover {
+        background: rgba(200, 70, 70, 1);
+    }
+
+    .threshold-slider::-webkit-slider-thumb:active {
+        cursor: grabbing;
+        background: rgba(220, 80, 80, 1);
+    }
+
+    .threshold-slider:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+    }
+
+    .threshold-slider:disabled::-webkit-slider-thumb {
+        cursor: not-allowed;
+    }
+
+    .threshold-label {
+        font-family: "DM Mono", "SF Mono", Menlo, monospace;
+        font-size: 0.5625rem;
+        color: #5a5a5a;
+        min-width: 2.5rem;
+        text-align: right;
     }
 
     .checkbox-cell {
@@ -1081,6 +1315,22 @@
 
     :global(body.light-mode) .empty-message {
         color: #8a8a8a;
+    }
+
+    :global(body.light-mode) .trigger-label {
+        color: #7a7a7a;
+    }
+
+    :global(body.light-mode) .meter-track {
+        background: rgba(0, 0, 0, 0.08);
+    }
+
+    :global(body.light-mode) .meter-peak {
+        background: rgba(0, 0, 0, 0.3);
+    }
+
+    :global(body.light-mode) .threshold-label {
+        color: #7a7a7a;
     }
 
     :global(body.light-mode) .device-list::-webkit-scrollbar-track {

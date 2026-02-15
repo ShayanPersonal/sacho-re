@@ -410,12 +410,11 @@
                             </button>
                             {#if showPrerollEncodeHelp}
                                 <div class="help-tooltip">
-                                    Runs the video encoder during the pre-roll,
-                                    reducing RAM usage but increasing CPU usage.
-                                    Best used with hardware acceleration.
-                                    Increases the limit on the pre-roll length
-                                    from 5 seconds to 30 seconds.<br /><br />If
-                                    not sure, leave this off.
+                                    Increases the pre-roll length limit from 5
+                                    to 30 seconds at the cost of background CPU
+                                    usage. Best combined with hardware
+                                    acceleration.<br /><br />If not sure, leave
+                                    this off.
                                 </div>
                             {/if}
                         </span>

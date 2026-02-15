@@ -282,6 +282,8 @@ export interface Config {
   selected_audio_devices: string[];
   selected_midi_devices: string[];
   trigger_midi_devices: string[];
+  trigger_audio_devices: string[];
+  audio_trigger_thresholds: Record<string, number>;
   selected_video_devices: string[];
   /** Per-device video configuration (device_id -> config) */
   video_device_configs: Record<string, VideoDeviceConfig>;
@@ -300,7 +302,14 @@ export interface DevicePreset {
   audio_devices: string[];
   midi_devices: string[];
   trigger_midi_devices: string[];
+  trigger_audio_devices: string[];
   video_devices: string[];
+}
+
+export interface AudioTriggerLevel {
+  device_id: string;
+  current_rms: number;
+  peak_level: number;
 }
 
 export interface SessionFilter {

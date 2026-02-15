@@ -597,6 +597,8 @@ pub fn update_config(
         let current = config.read();
         let dev_changed = current.selected_midi_devices != new_config.selected_midi_devices
             || current.trigger_midi_devices != new_config.trigger_midi_devices
+            || current.trigger_audio_devices != new_config.trigger_audio_devices
+            || current.audio_trigger_thresholds != new_config.audio_trigger_thresholds
             || current.selected_video_devices != new_config.selected_video_devices
             || current.video_device_configs != new_config.video_device_configs
             || current.selected_audio_devices != new_config.selected_audio_devices
