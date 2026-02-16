@@ -161,6 +161,10 @@ impl VideoDevice {
             source_width: width,
             source_height: height,
             source_fps: fps,
+            passthrough: codec.is_preencoded(), // Default: passthrough for pre-encoded, encode for raw
+            encoding_codec: None,   // Auto-detect
+            encoder_type: None,     // Auto-detect
+            preset_level: crate::encoding::DEFAULT_PRESET,
             target_width: 0,   // "Match Source"
             target_height: 0,  // "Match Source"
             target_fps: 0.0,   // "Match Source"

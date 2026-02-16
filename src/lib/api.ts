@@ -22,7 +22,10 @@ export interface MidiDevice {
 }
 
 /** Supported video codecs */
-export type VideoCodec = 'mjpeg' | 'av1' | 'vp8' | 'vp9' | 'raw';
+export type VideoCodec = 'mjpeg' | 'av1' | 'vp8' | 'vp9' | 'raw' | 'ffv1';
+
+/** Hardware encoder backend types */
+export type HardwareEncoderType = 'nvenc' | 'amf' | 'qsv' | 'vaapi' | 'software';
 
 /** Per-codec resolution capability with available framerates */
 export interface CodecCapability {
@@ -50,6 +53,14 @@ export interface VideoDeviceConfig {
   source_width: number;
   source_height: number;
   source_fps: number;
+  /** true = record as-is, false = decode and re-encode */
+  passthrough: boolean;
+  /** Target encoding codec (null = auto-detect best) */
+  encoding_codec: VideoCodec | null;
+  /** Hardware encoder backend (null = auto-detect best) */
+  encoder_type: HardwareEncoderType | null;
+  /** Quality preset 1-5 */
+  preset_level: number;
   target_width: number;
   target_height: number;
   target_fps: number;
@@ -67,7 +78,8 @@ export function getCodecDisplayName(codec: VideoCodec): string {
     case 'vp8': return 'VP8';
     case 'vp9': return 'VP9';
     case 'av1': return 'AV1';
-    case 'raw': return 'Raw';
+    case 'raw': return 'Uncompressed';
+    case 'ffv1': return 'FFV1';
   }
 }
 
@@ -176,6 +188,10 @@ export function computeDefaultConfig(device: VideoDevice): VideoDeviceConfig | n
     source_width: width,
     source_height: height,
     source_fps: fps,
+    passthrough: codec !== 'raw' && codec !== 'mjpeg',
+    encoding_codec: null,
+    encoder_type: null,
+    preset_level: 3,
     target_width: 0,   // Match Source
     target_height: 0,  // Match Source
     target_fps: 0,     // Match Source
@@ -260,7 +276,6 @@ export interface VideoFileInfo {
   has_audio?: boolean;
 }
 
-export type VideoEncodingMode = 'av1' | 'vp9' | 'vp8' | 'raw' | 'ffv1';
 export type AudioBitDepth = 'int16' | 'int24' | 'float32';
 export type AudioSampleRate = 'passthrough' | 'rate44100' | 'rate48000' | 'rate88200' | 'rate96000' | 'rate192000';
 
@@ -273,7 +288,6 @@ export interface Config {
   wav_sample_rate: AudioSampleRate;
   flac_bit_depth: AudioBitDepth;
   flac_sample_rate: AudioSampleRate;
-  video_encoding_mode: VideoEncodingMode;
   dark_mode: boolean;
   auto_start: boolean;
   start_minimized: boolean;
@@ -287,8 +301,6 @@ export interface Config {
   selected_video_devices: string[];
   /** Per-device video configuration (device_id -> config) */
   video_device_configs: Record<string, VideoDeviceConfig>;
-  /** Encoder quality preset level per encoding mode (e.g. { av1: 3, vp9: 4, vp8: 3 }) */
-  encoder_preset_levels: Record<string, number>;
   /** Whether to encode video during pre-roll (trades compute for memory, allows up to 30s pre-roll) */
   encode_during_preroll: boolean;
   /** Whether to combine audio and video into a single MKV file */
@@ -375,31 +387,25 @@ export async function validateVideoDeviceConfig(
 // Encoder Availability
 // ============================================================================
 
+export interface EncoderBackendInfo {
+  id: string;
+  display_name: string;
+  is_hardware: boolean;
+}
+
+export interface CodecEncoderInfo {
+  available: boolean;
+  has_hardware: boolean;
+  encoders: EncoderBackendInfo[];
+  recommended: string | null;
+}
+
 export interface EncoderAvailability {
-  /** Whether AV1 encoding is available (hardware or software) */
-  av1_available: boolean;
-  /** Whether AV1 hardware encoding is available */
-  av1_hardware: boolean;
-  /** Whether VP9 encoding is available (hardware or software) */
-  vp9_available: boolean;
-  /** Whether VP9 hardware encoding is available */
-  vp9_hardware: boolean;
-  /** Whether VP8 encoding is available (hardware or software) */
-  vp8_available: boolean;
-  /** Whether VP8 hardware encoding is available */
-  vp8_hardware: boolean;
-  /** Name of the AV1 encoder if available */
-  av1_encoder_name: string | null;
-  /** Name of the VP9 encoder if available */
-  vp9_encoder_name: string | null;
-  /** Name of the VP8 encoder if available */
-  vp8_encoder_name: string | null;
-  /** Whether FFV1 encoding is available (software only) */
-  ffv1_available: boolean;
-  /** Name of the FFV1 encoder if available */
-  ffv1_encoder_name: string | null;
-  /** Recommended default encoding mode */
-  recommended_default: VideoEncodingMode;
+  av1: CodecEncoderInfo;
+  vp9: CodecEncoderInfo;
+  vp8: CodecEncoderInfo;
+  ffv1: CodecEncoderInfo;
+  recommended_codec: string;
 }
 
 export async function getEncoderAvailability(): Promise<EncoderAvailability> {
@@ -419,12 +425,12 @@ export interface AutoSelectProgress {
   message: string;
 }
 
-/** Run encoder auto-selection to find the best preset for the current system.
+/** Run encoder auto-selection for a specific device.
  *  Returns the best preset level (1-5).
  *  Emits 'auto-select-progress' events during the test.
  */
-export async function autoSelectEncoderPreset(): Promise<number> {
-  return invoke('auto_select_encoder_preset');
+export async function autoSelectEncoderPreset(deviceId: string): Promise<number> {
+  return invoke('auto_select_encoder_preset', { deviceId });
 }
 
 // ============================================================================

@@ -192,7 +192,7 @@ export async function saveDeviceSelection() {
   deviceSaveStatus.set('saving');
   
   // Use the settings store as the source of truth for current config
-  // This ensures we don't overwrite settings changed elsewhere (like video_encoding_mode)
+  // This ensures we don't overwrite settings changed elsewhere
   let currentConfig: Config | null = get(settings);
   
   if (!currentConfig) {

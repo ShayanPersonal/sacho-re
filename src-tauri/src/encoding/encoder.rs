@@ -141,7 +141,8 @@ pub fn fps_to_gst_fraction(fps: f64) -> gst::Fraction {
 }
 
 /// Type of hardware encoder backend
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum HardwareEncoderType {
     /// NVIDIA NVENC
     Nvenc,
@@ -373,6 +374,57 @@ pub fn detect_best_encoder_for_codec(codec: VideoCodec) -> HardwareEncoderType {
     }
 }
 
+/// Returns all available encoder backends for a given codec, ordered by preference.
+/// Each entry is (HardwareEncoderType, gst_element_name).
+pub fn available_encoders_for_codec(codec: super::VideoCodec) -> Vec<(HardwareEncoderType, &'static str)> {
+    let candidates = match codec {
+        super::VideoCodec::Av1 => vec![
+            HardwareEncoderType::Nvenc,
+            HardwareEncoderType::Amf,
+            HardwareEncoderType::Qsv,
+            HardwareEncoderType::VaApi,
+            HardwareEncoderType::Software,
+        ],
+        super::VideoCodec::Vp9 => vec![
+            HardwareEncoderType::Qsv,
+            HardwareEncoderType::VaApi,
+            HardwareEncoderType::Software,
+        ],
+        super::VideoCodec::Vp8 => vec![
+            HardwareEncoderType::Qsv,
+            HardwareEncoderType::VaApi,
+            HardwareEncoderType::Software,
+        ],
+        super::VideoCodec::Ffv1 => vec![
+            HardwareEncoderType::Software,
+        ],
+        _ => return vec![],
+    };
+
+    let mut result = Vec::new();
+    for hw in candidates {
+        let element = match codec {
+            super::VideoCodec::Av1 => hw.av1_encoder_element(),
+            super::VideoCodec::Vp9 => hw.vp9_encoder_element(),
+            super::VideoCodec::Vp8 => hw.vp8_encoder_element(),
+            super::VideoCodec::Ffv1 => {
+                if gst::ElementFactory::find("avenc_ffv1").is_some() {
+                    Some("avenc_ffv1")
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some(name) = element {
+            if gst::ElementFactory::find(name).is_some() {
+                result.push((hw, name));
+            }
+        }
+    }
+    result
+}
+
 /// Legacy function - detect best AV1 encoder
 pub fn detect_best_encoder() -> HardwareEncoderType {
     detect_best_av1_encoder()
@@ -399,25 +451,23 @@ pub fn has_hardware_vp8_encoder() -> bool {
         && encoder_type.vp8_encoder_element().is_some()
 }
 
-/// Get the recommended default video encoding mode
+/// Get the recommended default encoding codec
 ///
 /// Priority:
 /// 1. AV1 if hardware encoder is available
 /// 2. VP9 if hardware encoder is available
 /// 3. VP8 if hardware encoder is available
 /// 4. VP8 software (fallback - always available)
-pub fn get_recommended_encoding_mode() -> crate::config::VideoEncodingMode {
-    use crate::config::VideoEncodingMode;
-
+pub fn get_recommended_codec() -> VideoCodec {
     if has_hardware_av1_encoder() {
-        VideoEncodingMode::Av1
+        VideoCodec::Av1
     } else if has_hardware_vp9_encoder() {
-        VideoEncodingMode::Vp9
+        VideoCodec::Vp9
     } else if has_hardware_vp8_encoder() {
-        VideoEncodingMode::Vp8
+        VideoCodec::Vp8
     } else {
         // Fallback to VP8 software
-        VideoEncodingMode::Vp8
+        VideoCodec::Vp8
     }
 }
 
@@ -510,6 +560,63 @@ impl AsyncVideoEncoder {
         let config_clone = config.clone();
 
         // Spawn encoder thread
+        let encoder_thread = std::thread::Builder::new()
+            .name("sacho-video-encoder".into())
+            .spawn(move || {
+                Self::encoder_thread_main(
+                    frame_receiver,
+                    output_path,
+                    width,
+                    height,
+                    fps,
+                    config_clone,
+                    hw_type,
+                    state_clone,
+                )
+            })
+            .map_err(|e| {
+                EncoderError::Pipeline(format!("Failed to spawn encoder thread: {}", e))
+            })?;
+
+        Ok(Self {
+            frame_sender,
+            encoder_thread: Some(encoder_thread),
+            config,
+            hw_type,
+            state,
+        })
+    }
+
+    /// Create a new async video encoder with an explicit hardware encoder type.
+    ///
+    /// Same as `new()` but uses the provided `hw_type` instead of auto-detecting.
+    pub fn new_with_encoder(
+        output_path: PathBuf,
+        width: u32,
+        height: u32,
+        fps: f64,
+        config: EncoderConfig,
+        buffer_size: usize,
+        hw_type: HardwareEncoderType,
+    ) -> Result<Self> {
+        println!(
+            "[Encoder] Using {} for {} encoding (explicit)",
+            hw_type.display_name(),
+            config.target_codec.display_name()
+        );
+
+        let (frame_sender, frame_receiver) = bounded::<EncoderMessage>(buffer_size);
+
+        let state = Arc::new(Mutex::new(EncoderState {
+            frames_encoded: 0,
+            bytes_written: 0,
+            is_finished: false,
+            last_error: None,
+        }));
+
+        let state_clone = state.clone();
+        let config_clone = config.clone();
+
         let encoder_thread = std::thread::Builder::new()
             .name("sacho-video-encoder".into())
             .spawn(move || {

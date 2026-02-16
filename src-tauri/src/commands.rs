@@ -593,7 +593,7 @@ pub fn update_config(
     new_config.validate();
 
     // Detect per-pipeline changes before updating config
-    let (midi_changed, audio_changed, video_changed, preroll_changed, preset_or_mode_changed) = {
+    let (midi_changed, audio_changed, video_changed, preroll_changed, preset_only_changed) = {
         let current = config.read();
 
         let midi = current.selected_midi_devices != new_config.selected_midi_devices
@@ -602,16 +602,24 @@ pub fn update_config(
         let audio = current.selected_audio_devices != new_config.selected_audio_devices
             || current.trigger_audio_devices != new_config.trigger_audio_devices;
 
-        let video = current.selected_video_devices != new_config.selected_video_devices
-            || current.video_device_configs != new_config.video_device_configs
-            || current.video_encoding_mode != new_config.video_encoding_mode;
+        // Check if video device configs changed in a way that requires pipeline restart
+        let video_devices_changed = current.selected_video_devices != new_config.selected_video_devices;
+        let video_configs_pipeline_changed = current.video_device_configs.iter().any(|(k, v)| {
+            new_config.video_device_configs.get(k).map_or(true, |nv| !v.pipeline_fields_equal(nv))
+        }) || new_config.video_device_configs.iter().any(|(k, _)| {
+            !current.video_device_configs.contains_key(k)
+        });
+        let video = video_devices_changed || video_configs_pipeline_changed;
 
         let preroll = current.pre_roll_secs != new_config.pre_roll_secs
             || current.encode_during_preroll != new_config.encode_during_preroll;
 
-        let preset = current.encoder_preset_levels != new_config.encoder_preset_levels;
+        // Preset-only change: device configs differ only by preset_level (no pipeline restart needed)
+        let preset_only = !video && current.video_device_configs.iter().any(|(k, v)| {
+            new_config.video_device_configs.get(k).map_or(false, |nv| v.preset_level != nv.preset_level)
+        });
 
-        (midi, audio, video, preroll, preset)
+        (midi, audio, video, preroll, preset_only)
     };
 
     let any_pipeline_changed = midi_changed || audio_changed || video_changed || preroll_changed;
@@ -645,9 +653,13 @@ pub fn update_config(
         println!("[Sacho] Warning: Failed to save config to disk: {}. Pipeline restart will still proceed.", e);
     }
 
-    // Sync preset level to video manager if it changed (no restart needed)
-    if preset_or_mode_changed && !any_pipeline_changed {
-        sync_preset_level_to_video_manager(&monitor, &new_config);
+    // Sync preset levels to video manager if only presets changed (no restart needed)
+    if preset_only_changed && !any_pipeline_changed {
+        let video_mgr = monitor.lock().video_manager();
+        let mut mgr = video_mgr.lock();
+        for (device_id, dev_config) in &new_config.video_device_configs {
+            mgr.update_preset_for_device(device_id, dev_config.preset_level);
+        }
     }
 
     // Restart only the pipelines that changed
@@ -1060,107 +1072,79 @@ pub fn get_video_frame_timestamps(
 // Encoder Availability Commands
 // ============================================================================
 
-/// Information about available video encoders
+/// Information about a single encoder backend
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EncoderAvailability {
-    /// Whether AV1 encoding is available (hardware or software)
-    pub av1_available: bool,
-    /// Whether AV1 hardware encoding is available
-    pub av1_hardware: bool,
-    /// Whether VP9 encoding is available (hardware or software)
-    pub vp9_available: bool,
-    /// Whether VP9 hardware encoding is available
-    pub vp9_hardware: bool,
-    /// Whether VP8 encoding is available (hardware or software)
-    pub vp8_available: bool,
-    /// Whether VP8 hardware encoding is available
-    pub vp8_hardware: bool,
-    /// Name of the AV1 encoder if available
-    pub av1_encoder_name: Option<String>,
-    /// Name of the VP9 encoder if available
-    pub vp9_encoder_name: Option<String>,
-    /// Name of the VP8 encoder if available
-    pub vp8_encoder_name: Option<String>,
-    /// Whether FFV1 encoding is available (software only)
-    pub ffv1_available: bool,
-    /// Name of the FFV1 encoder if available
-    pub ffv1_encoder_name: Option<String>,
-    /// Recommended default encoding mode
-    pub recommended_default: String,
+pub struct EncoderBackendInfo {
+    pub id: String,
+    pub display_name: String,
+    pub is_hardware: bool,
 }
 
-/// Update the encoder preset level on the video manager without restarting.
-/// Called from `update_config` when only the preset level changes.
-fn sync_preset_level_to_video_manager(
-    monitor: &Arc<Mutex<MidiMonitor>>,
-    config: &Config,
-) {
-    let encoding_mode_key = match &config.video_encoding_mode {
-        crate::config::VideoEncodingMode::Av1 => "av1",
-        crate::config::VideoEncodingMode::Vp9 => "vp9",
-        crate::config::VideoEncodingMode::Vp8 => "vp8",
-        crate::config::VideoEncodingMode::Raw => "vp8",
-        crate::config::VideoEncodingMode::Ffv1 => "ffv1",
-    };
-    let level = config.encoder_preset_levels
-        .get(encoding_mode_key)
-        .copied()
-        .unwrap_or(crate::encoding::DEFAULT_PRESET);
+/// Per-codec encoder availability
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodecEncoderInfo {
+    pub available: bool,
+    pub has_hardware: bool,
+    pub encoders: Vec<EncoderBackendInfo>,
+    pub recommended: Option<String>,
+}
 
-    let monitor = monitor.lock();
-    let video_mgr = monitor.video_manager();
-    video_mgr.lock().set_preset_level(level);
+/// Information about available video encoders (per-codec)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncoderAvailability {
+    pub av1: CodecEncoderInfo,
+    pub vp9: CodecEncoderInfo,
+    pub vp8: CodecEncoderInfo,
+    pub ffv1: CodecEncoderInfo,
+    /// Recommended default encoding codec
+    pub recommended_codec: String,
+}
+
+fn build_codec_encoder_info(codec: crate::encoding::VideoCodec) -> CodecEncoderInfo {
+    use crate::encoding::{available_encoders_for_codec, detect_best_encoder_for_codec, HardwareEncoderType};
+
+    let available = available_encoders_for_codec(codec);
+    let has_hardware = available.iter().any(|(hw, _)| !matches!(hw, HardwareEncoderType::Software));
+    let recommended = if !available.is_empty() {
+        let best = detect_best_encoder_for_codec(codec);
+        Some(format!("{:?}", best).to_lowercase())
+    } else {
+        None
+    };
+
+    let encoders = available.iter().map(|(hw, _)| {
+        EncoderBackendInfo {
+            id: format!("{:?}", hw).to_lowercase(),
+            display_name: hw.display_name().to_string(),
+            is_hardware: !matches!(hw, HardwareEncoderType::Software),
+        }
+    }).collect();
+
+    CodecEncoderInfo {
+        available: !available.is_empty(),
+        has_hardware,
+        encoders,
+        recommended,
+    }
 }
 
 #[tauri::command]
 pub fn get_encoder_availability() -> EncoderAvailability {
-    use crate::encoding::{
-        detect_best_av1_encoder, detect_best_vp8_encoder, detect_best_vp9_encoder,
-        has_hardware_av1_encoder, has_hardware_vp9_encoder, has_hardware_vp8_encoder,
-        has_av1_encoder, has_vp8_encoder, has_vp9_encoder,
-        has_ffv1_encoder,
-        get_recommended_encoding_mode,
-    };
+    use crate::encoding::{VideoCodec, get_recommended_codec};
 
-    let av1_type = detect_best_av1_encoder();
-    let vp9_type = detect_best_vp9_encoder();
-    let vp8_type = detect_best_vp8_encoder();
-    let recommended = get_recommended_encoding_mode();
+    let recommended = get_recommended_codec();
 
     EncoderAvailability {
-        av1_available: has_av1_encoder(),
-        av1_hardware: has_hardware_av1_encoder(),
-        vp9_available: has_vp9_encoder(),
-        vp9_hardware: has_hardware_vp9_encoder(),
-        vp8_available: has_vp8_encoder(),
-        vp8_hardware: has_hardware_vp8_encoder(),
-        av1_encoder_name: if has_av1_encoder() {
-            Some(av1_type.display_name().to_string())
-        } else {
-            None
-        },
-        vp9_encoder_name: if has_vp9_encoder() {
-            Some(vp9_type.display_name().to_string())
-        } else {
-            None
-        },
-        vp8_encoder_name: if has_vp8_encoder() {
-            Some(vp8_type.display_name().to_string())
-        } else {
-            None
-        },
-        ffv1_available: has_ffv1_encoder(),
-        ffv1_encoder_name: if has_ffv1_encoder() {
-            Some("Software".to_string())
-        } else {
-            None
-        },
-        recommended_default: match recommended {
-            crate::config::VideoEncodingMode::Av1 => "av1".to_string(),
-            crate::config::VideoEncodingMode::Vp9 => "vp9".to_string(),
-            crate::config::VideoEncodingMode::Vp8 => "vp8".to_string(),
-            crate::config::VideoEncodingMode::Raw => "raw".to_string(),
-            crate::config::VideoEncodingMode::Ffv1 => "ffv1".to_string(),
+        av1: build_codec_encoder_info(VideoCodec::Av1),
+        vp9: build_codec_encoder_info(VideoCodec::Vp9),
+        vp8: build_codec_encoder_info(VideoCodec::Vp8),
+        ffv1: build_codec_encoder_info(VideoCodec::Ffv1),
+        recommended_codec: match recommended {
+            VideoCodec::Av1 => "av1".to_string(),
+            VideoCodec::Vp9 => "vp9".to_string(),
+            VideoCodec::Vp8 => "vp8".to_string(),
+            VideoCodec::Ffv1 => "ffv1".to_string(),
+            _ => "vp8".to_string(),
         },
     }
 }
@@ -1191,13 +1175,12 @@ pub struct AutoSelectProgress {
 #[tauri::command]
 pub async fn auto_select_encoder_preset(
     app: tauri::AppHandle,
+    device_id: String,
     config: State<'_, RwLock<Config>>,
     recording_state: State<'_, RwLock<RecordingState>>,
     monitor: State<'_, Arc<Mutex<MidiMonitor>>>,
     device_manager: State<'_, RwLock<DeviceManager>>,
 ) -> Result<u8, String> {
-    use crate::encoding::VideoCodec;
-    
     // 1. Check we're not recording
     {
         let state = recording_state.read();
@@ -1208,68 +1191,52 @@ pub async fn auto_select_encoder_preset(
             return Err("Recording is stopping, please wait".to_string());
         }
     }
-    
-    // 2. Read config
-    let (selected_video_devices, encoding_mode, video_device_configs) = {
+
+    // 2. Read per-device encoding config
+    let (device_name, dev_config) = {
         let cfg = config.read();
-        (
-            cfg.selected_video_devices.clone(),
-            cfg.video_encoding_mode.clone(),
-            cfg.video_device_configs.clone(),
-        )
-    };
-    
-    // Check encoding mode is valid for testing
-    if encoding_mode == crate::config::VideoEncodingMode::Raw {
-        return Err("Cannot auto-select for raw mode (no encoding)".to_string());
-    }
-    
-    // Find first selected video device that uses raw codec (needs encoding)
-    let test_device = {
         let devices = device_manager.read();
-        selected_video_devices.iter().find_map(|device_id| {
-            let device = devices.video_devices.iter().find(|d| &d.id == device_id)?;
-            
-            // Check per-device config; fall back to preferred codec
-            let codec = if let Some(dev_cfg) = video_device_configs.get(device_id) {
-                dev_cfg.source_codec
-            } else {
-                device.preferred_codec()?
-            };
-            
-            // Only test devices that use raw video (need encoding)
-            if codec == VideoCodec::Raw {
-                Some((device_id.clone(), device.name.clone()))
-            } else {
-                None
-            }
-        })
+
+        let device = devices.video_devices.iter()
+            .find(|d| d.id == device_id)
+            .ok_or_else(|| format!("Device {} not found", device_id))?;
+        let name = device.name.clone();
+
+        let dev_cfg = cfg.video_device_configs.get(&device_id)
+            .cloned()
+            .or_else(|| device.default_config())
+            .ok_or_else(|| format!("No config available for device {}", device_id))?;
+
+        (name, dev_cfg)
     };
-    
-    let (device_id, device_name) = test_device.ok_or_else(|| {
-        "No raw video streams selected. Auto-select only works with devices streaming raw video that requires encoding.".to_string()
-    })?;
-    
+
+    if dev_config.passthrough {
+        return Err("Cannot auto-select for passthrough mode (no encoding)".to_string());
+    }
+
+    let target_codec = dev_config.encoding_codec.unwrap_or_else(|| {
+        crate::encoding::get_recommended_codec()
+    });
+
     // 3. Set status to initializing to prevent recording attempts
     {
         let mut state = recording_state.write();
         state.status = RecordingStatus::Initializing;
     }
     let _ = app.emit("recording-state-changed", "initializing");
-    
+
     // 4. Get the video manager from the monitor and stop video pipelines only.
-    //    This releases the camera without touching audio/MIDI (which use TLS).
     let video_manager = {
         let mon = monitor.lock();
         mon.video_manager()
     };
-    
+
     // Save the info needed to restart pipelines later
     let restart_info = {
         let cfg = config.read();
         let devices = device_manager.read();
         let dev_configs = &cfg.video_device_configs;
-        
+
         let info: Vec<(String, String, crate::config::VideoDeviceConfig)> = cfg.selected_video_devices
             .iter()
             .filter_map(|dev_id| {
@@ -1286,56 +1253,43 @@ pub async fn auto_select_encoder_preset(
                 Some((dev_id.clone(), device.name.clone(), dev_cfg))
             })
             .collect();
-        
-        let enc_mode = cfg.video_encoding_mode.clone();
-        let enc_key = match &enc_mode {
-            crate::config::VideoEncodingMode::Av1 => "av1",
-            crate::config::VideoEncodingMode::Vp9 => "vp9",
-            crate::config::VideoEncodingMode::Vp8 => "vp8",
-            crate::config::VideoEncodingMode::Raw => "vp8",
-            crate::config::VideoEncodingMode::Ffv1 => "ffv1",
-        };
-        let preset = cfg.encoder_preset_levels.get(enc_key).copied()
-            .unwrap_or(crate::encoding::DEFAULT_PRESET);
+
         let pre_roll = cfg.pre_roll_secs.min(5);
-        
-        (info, enc_mode, preset, pre_roll)
+
+        (info, pre_roll)
     };
-    
+
     // Stop video pipelines (releases camera)
     video_manager.lock().stop();
-    
+
     // 5. Run the auto-select test (this is the long-running part)
     let result = run_auto_select_test(
         &app,
         &device_id,
         &device_name,
-        &encoding_mode,
+        &dev_config,
+        target_codec,
     ).await;
-    
+
     // 6. Restart video pipelines regardless of test result
     {
-        let (ref devices_info, ref enc_mode, preset, pre_roll) = restart_info;
+        let (ref devices_info, pre_roll) = restart_info;
         let mut mgr = video_manager.lock();
         mgr.set_preroll_duration(pre_roll);
-        mgr.set_encoding_mode(enc_mode.clone());
-        // Use the auto-selected preset if successful, otherwise keep the old one
-        let final_preset = result.as_ref().copied().unwrap_or(preset);
-        mgr.set_preset_level(final_preset);
         if !devices_info.is_empty() {
             if let Err(e) = mgr.start(devices_info) {
                 println!("[AutoSelect] Warning: Failed to restart video pipelines: {}", e);
             }
         }
     }
-    
+
     // 7. Set status back to idle
     {
         let mut state = recording_state.write();
         state.status = RecordingStatus::Idle;
     }
     let _ = app.emit("recording-state-changed", "idle");
-    
+
     result
 }
 
@@ -1345,37 +1299,33 @@ async fn run_auto_select_test(
     app: &tauri::AppHandle,
     device_id: &str,
     device_name: &str,
-    encoding_mode: &crate::config::VideoEncodingMode,
+    dev_config: &crate::config::VideoDeviceConfig,
+    target_codec: crate::encoding::VideoCodec,
 ) -> Result<u8, String> {
     use crate::recording::video::VideoCapturePipeline;
     use crate::encoding::{AsyncVideoEncoder, EncoderConfig, RawVideoFrame, MAX_PRESET, MIN_PRESET};
     use std::time::{Duration, Instant};
-    
-    let target_codec = match encoding_mode {
-        crate::config::VideoEncodingMode::Av1 => crate::encoding::VideoCodec::Av1,
-        crate::config::VideoEncodingMode::Vp9 => crate::encoding::VideoCodec::Vp9,
-        crate::config::VideoEncodingMode::Vp8 => crate::encoding::VideoCodec::Vp8,
-        crate::config::VideoEncodingMode::Ffv1 => crate::encoding::VideoCodec::Ffv1,
-        crate::config::VideoEncodingMode::Raw => {
-            return Err("Cannot test raw mode".to_string());
-        }
-    };
-    
+
     // Extract device index from device_id
     let device_index = device_id
         .strip_prefix("webcam-")
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(0);
-    
-    // Create a test capture pipeline with default resolution
+
+    // Create a test capture pipeline using the device's source settings
     println!("[AutoSelect] Creating test capture pipeline for {} ({})", device_name, device_id);
     let mut capture = VideoCapturePipeline::new_webcam_raw(
         device_index,
         device_name,
-        &device_id,
-        1920, 1080, 30.0, // Default test resolution
+        device_id,
+        dev_config.source_codec,
+        dev_config.source_width,
+        dev_config.source_height,
+        dev_config.source_fps,
         2, // minimal pre-roll
-        encoding_mode.clone(),
+        Some(target_codec),
+        dev_config.encoder_type,
+        dev_config.preset_level,
         false, // Don't encode during pre-roll for auto-select tests
     ).map_err(|e| format!("Failed to create test pipeline: {}", e))?;
     

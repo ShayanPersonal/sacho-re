@@ -1617,26 +1617,10 @@ impl MidiMonitor {
             })
             .collect();
 
-        // Get encoding mode and preset level for raw video
-        let encoding_mode = config.video_encoding_mode.clone();
-        let encoding_mode_key = match &encoding_mode {
-            crate::config::VideoEncodingMode::Av1 => "av1",
-            crate::config::VideoEncodingMode::Vp9 => "vp9",
-            crate::config::VideoEncodingMode::Vp8 => "vp8",
-            crate::config::VideoEncodingMode::Raw => "vp8",
-            crate::config::VideoEncodingMode::Ffv1 => "ffv1",
-        };
-        let preset_level = config.encoder_preset_levels
-            .get(encoding_mode_key)
-            .copied()
-            .unwrap_or(crate::encoding::DEFAULT_PRESET);
-
         drop(devices); // Release device manager lock
 
         let mut video_mgr = self.video_manager.lock();
         video_mgr.set_preroll_duration(pre_roll);
-        video_mgr.set_encoding_mode(encoding_mode);
-        video_mgr.set_preset_level(preset_level);
         video_mgr.set_encode_during_preroll(encode_during_preroll);
 
         if !video_with_info.is_empty() {

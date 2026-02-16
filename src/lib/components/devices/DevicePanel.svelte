@@ -30,7 +30,6 @@
         VideoCodec,
         VideoDevice,
         VideoDeviceConfig,
-        VideoEncodingMode,
         EncoderAvailability,
     } from "$lib/api";
     import {
@@ -58,10 +57,10 @@
     function isRawEncodingAvailable(): boolean {
         if (!encoderAvailability) return false;
         return (
-            encoderAvailability.av1_available ||
-            encoderAvailability.vp9_available ||
-            encoderAvailability.vp8_available ||
-            encoderAvailability.ffv1_available
+            encoderAvailability.av1.available ||
+            encoderAvailability.vp9.available ||
+            encoderAvailability.vp8.available ||
+            encoderAvailability.ffv1.available
         );
     }
 
@@ -78,21 +77,6 @@
         });
     }
 
-    function getEncodingLabel(mode: VideoEncodingMode | undefined): string {
-        switch (mode) {
-            case "av1":
-                return "AV1";
-            case "vp9":
-                return "VP9";
-            case "vp8":
-                return "VP8";
-            case "ffv1":
-                return "FFV1";
-            default:
-                return "VP8";
-        }
-    }
-
     /** Get a compact summary of the current config for a device */
     function getConfigSummary(device: VideoDevice): string {
         const cfg =
@@ -106,16 +90,16 @@
         ).split(" (")[0];
         const fpsLabel = formatFps(cfg.source_fps);
 
-        if (cfg.source_codec === "raw") {
-            const encoderLabel = getEncodingLabel(
-                $settings?.video_encoding_mode,
-            );
+        if (!cfg.passthrough) {
+            const encoderLabel = cfg.encoding_codec
+                ? getCodecDisplayName(cfg.encoding_codec)
+                : "Auto";
             const isMatchSource =
                 cfg.target_width === 0 &&
                 cfg.target_height === 0 &&
                 cfg.target_fps === 0;
             if (isMatchSource) {
-                return `Raw ${resLabel} ${fpsLabel}fps → ${encoderLabel}`;
+                return `${codec} ${resLabel} ${fpsLabel}fps → ${encoderLabel}`;
             }
             const targetRes =
                 cfg.target_width === 0
@@ -126,7 +110,7 @@
                       ).split(" (")[0];
             const targetFpsLabel =
                 cfg.target_fps === 0 ? fpsLabel : formatFps(cfg.target_fps);
-            return `Raw ${resLabel} ${fpsLabel}fps → ${encoderLabel} ${targetRes} ${targetFpsLabel}fps`;
+            return `${codec} ${resLabel} ${fpsLabel}fps → ${encoderLabel} ${targetRes} ${targetFpsLabel}fps`;
         }
 
         return `${codec} ${resLabel} ${fpsLabel}fps`;

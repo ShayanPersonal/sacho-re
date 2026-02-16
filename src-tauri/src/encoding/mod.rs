@@ -18,7 +18,8 @@ pub use encoder::{
     has_hardware_av1_encoder, has_hardware_vp9_encoder, has_hardware_vp8_encoder,
     has_av1_encoder, has_vp8_encoder, has_vp9_encoder,
     has_ffv1_encoder,
-    get_recommended_encoding_mode,
+    get_recommended_codec,
+    available_encoders_for_codec,
 };
 pub use presets::{DEFAULT_PRESET, MIN_PRESET, MAX_PRESET};
 
@@ -144,14 +145,22 @@ impl VideoCodec {
         }
     }
     
-    /// Check if this codec requires encoding by the application
-    pub fn requires_encoding(&self) -> bool {
-        matches!(self, VideoCodec::Raw)
-    }
-    
-    /// Check if this is a pre-encoded codec (passthrough)
+    /// Check if this is a pre-encoded codec (passthrough by default)
     pub fn is_preencoded(&self) -> bool {
-        !self.requires_encoding()
+        !matches!(self, VideoCodec::Raw)
+    }
+
+    /// Get the GStreamer decoder element for this codec (used when re-encoding).
+    /// Returns None for Raw since it's already uncompressed.
+    pub fn gst_decoder(&self) -> Option<&'static str> {
+        match self {
+            VideoCodec::Mjpeg => Some("jpegdec"),
+            VideoCodec::Vp8 => Some("vp8dec"),
+            VideoCodec::Vp9 => Some("vp9dec"),
+            VideoCodec::Av1 => Some("av1dec"),
+            VideoCodec::Ffv1 => Some("avdec_ffv1"),
+            VideoCodec::Raw => None,
+        }
     }
 }
 

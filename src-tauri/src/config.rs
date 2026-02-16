@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-use crate::encoding::VideoCodec;
+use crate::encoding::{VideoCodec, HardwareEncoderType};
 
 /// Application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,11 +39,6 @@ pub struct Config {
     /// FLAC sample rate
     #[serde(default)]
     pub flac_sample_rate: AudioSampleRate,
-
-    /// Video encoding mode for raw video sources
-    /// Pre-encoded sources (like MJPEG from webcams) are passed through without re-encoding
-    #[serde(default)]
-    pub video_encoding_mode: VideoEncodingMode,
 
     /// Whether to use dark color scheme (default is light)
     #[serde(default)]
@@ -91,12 +86,6 @@ pub struct Config {
     /// Stores source codec, source resolution/fps, and target resolution/fps per device
     #[serde(default)]
     pub video_device_configs: HashMap<String, VideoDeviceConfig>,
-
-    /// Encoder quality preset level per encoding mode (1=lightest, 5=highest quality)
-    /// Keys are the encoding mode names: "av1", "vp9", "vp8"
-    /// See [`crate::encoding::presets`] for per-encoder parameter details.
-    #[serde(default)]
-    pub encoder_preset_levels: HashMap<String, u8>,
 
     /// Whether to encode video during pre-roll (trades CPU/GPU compute for memory).
     /// When enabled, the pre-roll limit increases from 5 to 30 seconds.
@@ -180,36 +169,13 @@ impl AudioSampleRate {
     }
 }
 
-/// Video encoding mode for raw video sources
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum VideoEncodingMode {
-    /// Use AV1 encoding (royalty-free, best compression, hardware or software)
-    Av1,
-    /// Use VP9 encoding (royalty-free, excellent compression, hardware or software)
-    Vp9,
-    /// Use VP8 encoding (royalty-free, widely compatible, hardware or software)
-    Vp8,
-    /// Keep video raw/uncompressed (largest files, no quality loss)
-    Raw,
-    /// Use FFV1 encoding (lossless intra-frame, software only)
-    Ffv1,
-}
-
-impl Default for VideoEncodingMode {
-    fn default() -> Self {
-        // Default to VP8 as it always has software fallback
-        // The frontend will override with the recommended encoder based on hardware availability
-        Self::Vp8
-    }
-}
-
 /// Per-device video source configuration.
-/// Stores the selected source codec, source resolution/fps, and target encoding resolution/fps.
-/// When source_codec is not Raw, the video is recorded as passthrough and target fields are ignored.
+/// Stores the selected source codec, source resolution/fps, encoding settings,
+/// and target encoding resolution/fps.
 ///
-/// A target value of 0 (or 0.0 for fps) means "Match Source" — the encoding will use the
-/// source resolution/fps directly without scaling or rate conversion.
+/// A target value of 0 (or 0.0 for fps) means "smart default":
+/// - Resolution: match source if ≤1080p, else scale to 1080p at source aspect ratio
+/// - FPS: match source if ≤30.5fps, else 30.0
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VideoDeviceConfig {
     /// Source codec to capture from the device
@@ -220,11 +186,27 @@ pub struct VideoDeviceConfig {
     pub source_height: u32,
     /// Source capture framerate (f64 to preserve fractional rates like 29.97)
     pub source_fps: f64,
-    /// Target encoding width (0 = match source). Only used when source_codec is Raw.
+
+    // ── Encoding settings ──────────────────────────────────────────────
+    /// true = record as-is, false = encode. Default: true for pre-encoded, false for Raw.
+    #[serde(default = "default_true")]
+    pub passthrough: bool,
+    /// Target codec when encoding (AV1/VP9/VP8/FFV1). None = auto-detect best.
+    #[serde(default)]
+    pub encoding_codec: Option<VideoCodec>,
+    /// Hardware accelerator. None = auto-detect best for codec.
+    #[serde(default)]
+    pub encoder_type: Option<HardwareEncoderType>,
+    /// Quality preset 1-5. Default: 3.
+    #[serde(default = "default_preset_level")]
+    pub preset_level: u8,
+
+    // ── Target resolution/fps ──────────────────────────────────────────
+    /// Target encoding width. 0 = smart default (match source if ≤1080p, else 1080p).
     pub target_width: u32,
-    /// Target encoding height (0 = match source). Only used when source_codec is Raw.
+    /// Target encoding height. 0 = smart default (match source if ≤1080p, else 1080p).
     pub target_height: u32,
-    /// Target encoding framerate (0.0 = match source). Only used when source_codec is Raw.
+    /// Target encoding framerate. 0.0 = smart default (match source if ≤30fps, else 30).
     pub target_fps: f64,
 }
 
@@ -234,6 +216,10 @@ impl PartialEq for VideoDeviceConfig {
             && self.source_width == other.source_width
             && self.source_height == other.source_height
             && (self.source_fps - other.source_fps).abs() < 0.001
+            && self.passthrough == other.passthrough
+            && self.encoding_codec == other.encoding_codec
+            && self.encoder_type == other.encoder_type
+            && self.preset_level == other.preset_level
             && self.target_width == other.target_width
             && self.target_height == other.target_height
             && (self.target_fps - other.target_fps).abs() < 0.001
@@ -241,27 +227,64 @@ impl PartialEq for VideoDeviceConfig {
 }
 
 impl VideoDeviceConfig {
-    /// Resolve "Match Source" sentinel values (0 / 0.0) to actual source values.
-    /// Returns a config with concrete target dimensions/fps.
+    /// Resolve smart-default sentinel values (0 / 0.0) to concrete values.
+    /// - Resolution: if target == 0 and source ≤ 1080p → match source; else scale to 1080p
+    /// - FPS: if target == 0.0 and source ≤ 30.5 → match source; else 30.0
     pub fn resolved(&self) -> Self {
-        Self {
-            target_width: if self.target_width == 0 {
-                self.source_width
-            } else {
-                self.target_width
-            },
-            target_height: if self.target_height == 0 {
+        let resolved_height = if self.target_height == 0 {
+            if self.source_height <= 1080 {
                 self.source_height
             } else {
-                self.target_height
-            },
-            target_fps: if self.target_fps == 0.0 {
+                1080
+            }
+        } else {
+            self.target_height
+        };
+
+        let resolved_width = if self.target_width == 0 {
+            if self.source_height <= 1080 {
+                self.source_width
+            } else {
+                // Scale to 1080p maintaining aspect ratio
+                let ratio = self.source_width as f64 / self.source_height as f64;
+                let w = (1080.0 * ratio).round() as u32;
+                // Ensure even width (required by encoders)
+                if w % 2 == 0 { w } else { w - 1 }
+            }
+        } else {
+            self.target_width
+        };
+
+        let resolved_fps = if self.target_fps == 0.0 {
+            if self.source_fps <= 30.5 {
                 self.source_fps
             } else {
-                self.target_fps
-            },
+                30.0
+            }
+        } else {
+            self.target_fps
+        };
+
+        Self {
+            target_width: resolved_width,
+            target_height: resolved_height,
+            target_fps: resolved_fps,
             ..self.clone()
         }
+    }
+
+    /// Returns true if only preset_level differs (no pipeline restart needed).
+    pub fn pipeline_fields_equal(&self, other: &Self) -> bool {
+        self.source_codec == other.source_codec
+            && self.source_width == other.source_width
+            && self.source_height == other.source_height
+            && (self.source_fps - other.source_fps).abs() < 0.001
+            && self.passthrough == other.passthrough
+            && self.encoding_codec == other.encoding_codec
+            && self.encoder_type == other.encoder_type
+            && self.target_width == other.target_width
+            && self.target_height == other.target_height
+            && (self.target_fps - other.target_fps).abs() < 0.001
     }
 }
 
@@ -287,7 +310,6 @@ impl Default for Config {
             wav_sample_rate: AudioSampleRate::default(),
             flac_bit_depth: AudioBitDepth::default(),
             flac_sample_rate: AudioSampleRate::default(),
-            video_encoding_mode: VideoEncodingMode::default(),
             dark_mode: false,
             auto_start: true,
             start_minimized: true,
@@ -301,7 +323,6 @@ impl Default for Config {
             audio_trigger_thresholds: HashMap::new(),
             selected_video_devices: Vec::new(),
             video_device_configs: HashMap::new(),
-            encoder_preset_levels: HashMap::new(),
             encode_during_preroll: false,
             combine_audio_video: false,
             device_presets: Vec::new(),
@@ -342,13 +363,14 @@ impl Config {
             }
         }
 
-        for (key, value) in self.encoder_preset_levels.iter_mut() {
-            if *value < 1 || *value > 5 {
-                let old = *value;
-                *value = (*value).clamp(1, 5);
+        // Validate per-device preset levels
+        for (key, dev_config) in self.video_device_configs.iter_mut() {
+            if dev_config.preset_level < 1 || dev_config.preset_level > 5 {
+                let old = dev_config.preset_level;
+                dev_config.preset_level = dev_config.preset_level.clamp(1, 5);
                 clamped.push(format!(
-                    "encoder_preset_levels[{}]: {} -> {}",
-                    key, old, *value
+                    "video_device_configs[{}].preset_level: {} -> {}",
+                    key, old, dev_config.preset_level
                 ));
             }
         }
@@ -425,4 +447,9 @@ fn default_pre_roll_secs() -> u32 {
 /// Default true value (for serde)
 fn default_true() -> bool {
     true
+}
+
+/// Default preset level (for serde)
+fn default_preset_level() -> u8 {
+    3
 }
