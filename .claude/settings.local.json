@@ -6,7 +6,9 @@
       "Bash(npm run check:*)",
       "Bash(powershell -ExecutionPolicy Bypass -File check_deps.ps1)",
       "Bash(cargo run:*)",
-      "Bash(gst-inspect-1.0:*)"
+      "Bash(gst-inspect-1.0:*)",
+      "Bash(ls:*)",
+      "Bash(where:*)"
     ]
   }
 }

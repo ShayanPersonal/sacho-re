@@ -1,0 +1,10 @@
+# FFmpeg source and build artifacts
+ffmpeg-*/
+build/
+dist/
+
+# Downloaded tarballs and signatures
+*.tar.xz
+*.tar.gz
+*.tar.bz2
+*.asc
