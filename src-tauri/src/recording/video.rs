@@ -1123,6 +1123,49 @@ impl VideoCapturePipeline {
 
         // Insert decoder if source is not raw
         if let Some(decoder_name) = source_codec.gst_decoder() {
+            // Workaround for GStreamer issue #1118: mfvideosrc (and ksvideosrc) may put
+            // non-standard fields like colorimetry and pixel-aspect-ratio on image/jpeg
+            // caps. jpegdec tries to preserve these in its output, causing colorimetry
+            // mismatch with downstream videoconvert and failing negotiation silently.
+            // Strip these fields before they reach the decoder.
+            if let Some(src_pad) = capsfilter.static_pad("src") {
+                src_pad.add_probe(
+                    gst::PadProbeType::EVENT_DOWNSTREAM,
+                    move |_pad, info| {
+                        if let Some(gst::PadProbeData::Event(ref event)) = info.data {
+                            if let gst::EventView::Caps(caps_ev) = event.view() {
+                                let caps = caps_ev.caps();
+                                if let Some(s) = caps.structure(0) {
+                                    if s.name().as_str() == "image/jpeg"
+                                        && (s.has_field("colorimetry")
+                                            || s.has_field("pixel-aspect-ratio"))
+                                    {
+                                        let mut builder = gst::Caps::builder("image/jpeg");
+                                        for (field_name, value) in s.iter() {
+                                            match field_name.as_str() {
+                                                "colorimetry" | "pixel-aspect-ratio" => continue,
+                                                _ => {
+                                                    builder =
+                                                        builder.field(field_name, value.to_owned());
+                                                }
+                                            }
+                                        }
+                                        let clean_caps = builder.build();
+                                        println!(
+                                            "[Video]   Stripped non-standard JPEG caps: {} -> {}",
+                                            caps, clean_caps
+                                        );
+                                        let new_event = gst::event::Caps::new(&clean_caps);
+                                        info.data = Some(gst::PadProbeData::Event(new_event));
+                                    }
+                                }
+                            }
+                        }
+                        gst::PadProbeReturn::Ok
+                    },
+                );
+            }
+
             let decoder = gst::ElementFactory::make(decoder_name)
                 .build()
                 .map_err(|e| {
@@ -1132,6 +1175,34 @@ impl VideoCapturePipeline {
                     ))
                 })?;
             println!("[Video]   Inserting decoder: {}", decoder_name);
+
+            // Diagnostic: count buffers entering and leaving the decoder
+            let dec_name = decoder_name.to_string();
+            if let Some(sink_pad) = decoder.static_pad("sink") {
+                let counter = Arc::new(AtomicU64::new(0));
+                let counter_clone = counter.clone();
+                let name = dec_name.clone();
+                sink_pad.add_probe(gst::PadProbeType::BUFFER, move |_pad, _info| {
+                    let n = counter_clone.fetch_add(1, Ordering::Relaxed);
+                    if n < 3 {
+                        println!("[Video]   {} sink: received buffer #{}", name, n + 1);
+                    }
+                    gst::PadProbeReturn::Ok
+                });
+            }
+            if let Some(src_pad) = decoder.static_pad("src") {
+                let counter = Arc::new(AtomicU64::new(0));
+                let counter_clone = counter.clone();
+                let name = dec_name.clone();
+                src_pad.add_probe(gst::PadProbeType::BUFFER, move |_pad, _info| {
+                    let n = counter_clone.fetch_add(1, Ordering::Relaxed);
+                    if n < 3 {
+                        println!("[Video]   {} src: produced buffer #{}", name, n + 1);
+                    }
+                    gst::PadProbeReturn::Ok
+                });
+            }
+
             elements.push(decoder);
         }
 
@@ -1305,9 +1376,12 @@ impl VideoCapturePipeline {
         println!("[Video] Started capture pipeline for {}", self.device_name);
 
         // Query the negotiated caps to get actual resolution.
-        // USB cameras often need >250ms to negotiate, so retry up to 4 times.
+        // USB cameras need time to initialize, especially after a pipeline restart
+        // (camera device must be released and reacquired by the OS). Decoders like
+        // jpegdec add further latency since they need actual data before negotiating
+        // output caps. Allow up to 20 attempts (5 seconds total).
         let mut negotiated = false;
-        for attempt in 1..=4 {
+        for attempt in 1..=20 {
             std::thread::sleep(std::time::Duration::from_millis(250));
 
             if let Some(pad) = self.appsink.static_pad("sink") {
@@ -1334,9 +1408,36 @@ impl VideoCapturePipeline {
                 }
             }
 
-            if attempt < 4 {
+            // Check bus for errors during negotiation
+            if let Some(bus) = self.pipeline.bus() {
+                while let Some(msg) = bus.pop_filtered(&[
+                    gst::MessageType::Error,
+                    gst::MessageType::Warning,
+                    gst::MessageType::StateChanged,
+                ]) {
+                    match msg.view() {
+                        gst::MessageView::Error(err) => {
+                            let src = err.src().map(|s| s.name().to_string()).unwrap_or_default();
+                            println!(
+                                "[Video]   BUS ERROR (attempt {}): '{}': {} (debug: {:?})",
+                                attempt, src, err.error(), err.debug()
+                            );
+                        }
+                        gst::MessageView::Warning(warn) => {
+                            let src = warn.src().map(|s| s.name().to_string()).unwrap_or_default();
+                            println!(
+                                "[Video]   BUS WARNING (attempt {}): '{}': {}",
+                                attempt, src, warn.error()
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            if attempt < 20 {
                 println!(
-                    "[Video]   Cap negotiation attempt {}/4 failed for {}, retrying...",
+                    "[Video]   Cap negotiation attempt {}/20 failed for {}, retrying...",
                     attempt, self.device_name
                 );
             }
