@@ -139,6 +139,8 @@ mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
 echo "=== Configuring FFmpeg (FFV1 only) ==="
+# No --enable-gpl, --enable-version3, or --enable-nonfree flags:
+# FFmpeg defaults to LGPL 2.1+, which is the most permissive option.
 "${SCRIPT_DIR}/${FFMPEG_SRC_DIR}/configure" \
     --toolchain=msvc \
     --prefix="$DIST_DIR" \

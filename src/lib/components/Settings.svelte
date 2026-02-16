@@ -478,7 +478,7 @@
                         {/if}
                         {#if encoderAvailability?.ffv1_available}
                             <option value="ffv1"
-                                >FFV1 (lossless, huge files)</option
+                                >FFV1 (lossless, but huge files)</option
                             >
                         {/if}
                         {#if !encoderAvailability?.av1_available && !encoderAvailability?.vp9_available && !encoderAvailability?.vp8_available && !encoderAvailability?.ffv1_available}
@@ -585,12 +585,20 @@
                                         >
                                     </div>
                                     <p class="preset-description">
-                                        {#if getCurrentPresetLevel() <= 3}
+                                        {#if localSettings.video_encoding_mode === "ffv1"}
+                                            {#if getCurrentPresetLevel() <= 3}
+                                                Faster encoding, larger files.
+                                                Quality is always lossless.
+                                            {:else}
+                                                Slower encoding, smaller files.
+                                                Quality is always lossless.
+                                            {/if}
+                                        {:else if getCurrentPresetLevel() <= 3}
                                             Smaller files. Smoother recordings
                                             on less powerful systems.
                                         {:else}
                                             Larger files. Higher quality video.
-                                            Requires a more powerful system.
+                                            Works best on more powerful systems.
                                         {/if}
                                     </p>
                                 </div>
