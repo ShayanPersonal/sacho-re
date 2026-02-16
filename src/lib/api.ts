@@ -1,7 +1,10 @@
 // Tauri command bindings
 
-import { invoke } from '@tauri-apps/api/core';
-import { enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
+import { invoke } from "@tauri-apps/api/core";
+import {
+  enable as enableAutostart,
+  disable as disableAutostart,
+} from "@tauri-apps/plugin-autostart";
 
 // ============================================================================
 // Types
@@ -22,10 +25,15 @@ export interface MidiDevice {
 }
 
 /** Supported video codecs */
-export type VideoCodec = 'mjpeg' | 'av1' | 'vp8' | 'vp9' | 'raw' | 'ffv1';
+export type VideoCodec = "mjpeg" | "av1" | "vp8" | "vp9" | "raw" | "ffv1";
 
 /** Hardware encoder backend types */
-export type HardwareEncoderType = 'nvenc' | 'amf' | 'qsv' | 'vaapi' | 'software';
+export type HardwareEncoderType =
+  | "nvenc"
+  | "amf"
+  | "qsv"
+  | "vaapi"
+  | "software";
 
 /** Per-codec resolution capability with available framerates */
 export interface CodecCapability {
@@ -74,25 +82,31 @@ export function isVideoDeviceSupported(device: VideoDevice): boolean {
 /** Get human-readable codec name */
 export function getCodecDisplayName(codec: VideoCodec): string {
   switch (codec) {
-    case 'mjpeg': return 'MJPEG';
-    case 'vp8': return 'VP8';
-    case 'vp9': return 'VP9';
-    case 'av1': return 'AV1';
-    case 'raw': return 'Uncompressed';
-    case 'ffv1': return 'FFV1';
+    case "mjpeg":
+      return "MJPEG";
+    case "vp8":
+      return "VP8";
+    case "vp9":
+      return "VP9";
+    case "av1":
+      return "AV1";
+    case "raw":
+      return "RAW";
+    case "ffv1":
+      return "FFV1";
   }
 }
 
 /** Get a friendly resolution label like "1080p (1920x1080)" */
 export function getResolutionLabel(width: number, height: number): string {
   const labels: Record<string, string> = {
-    '3840x2160': '4K',
-    '2560x1440': '1440p',
-    '1920x1080': '1080p',
-    '1280x720': '720p',
-    '854x480': '480p',
-    '640x480': '480p',
-    '640x360': '360p',
+    "3840x2160": "4K",
+    "2560x1440": "1440p",
+    "1920x1080": "1080p",
+    "1280x720": "720p",
+    "854x480": "480p",
+    "640x480": "480p",
+    "640x360": "360p",
   };
   const key = `${width}x${height}`;
   const label = labels[key];
@@ -100,23 +114,26 @@ export function getResolutionLabel(width: number, height: number): string {
 }
 
 /** Generate common target resolutions that match a given aspect ratio and don't exceed source */
-export function getTargetResolutions(sourceWidth: number, sourceHeight: number): { width: number; height: number; label: string }[] {
-  const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
+export function getTargetResolutions(
+  sourceWidth: number,
+  sourceHeight: number,
+): { width: number; height: number; label: string }[] {
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
   const g = gcd(sourceWidth, sourceHeight);
   const ratioW = sourceWidth / g;
   const ratioH = sourceHeight / g;
-  
+
   // Common heights to generate resolutions for
   const commonHeights = [2160, 1440, 1080, 720, 480, 360];
   const results: { width: number; height: number; label: string }[] = [];
-  
+
   // Always include the source resolution itself
-  results.push({ 
-    width: sourceWidth, 
-    height: sourceHeight, 
-    label: getResolutionLabel(sourceWidth, sourceHeight) 
+  results.push({
+    width: sourceWidth,
+    height: sourceHeight,
+    label: getResolutionLabel(sourceWidth, sourceHeight),
   });
-  
+
   for (const h of commonHeights) {
     // Compute width that matches the aspect ratio
     const w = Math.round((h * ratioW) / ratioH);
@@ -129,7 +146,7 @@ export function getTargetResolutions(sourceWidth: number, sourceHeight: number):
     if (ew <= 0 || eh <= 0) continue;
     results.push({ width: ew, height: eh, label: getResolutionLabel(ew, eh) });
   }
-  
+
   return results;
 }
 
@@ -137,27 +154,29 @@ export function getTargetResolutions(sourceWidth: number, sourceHeight: number):
  * Uses a small tolerance (0.5) to include NTSC rates like 29.97 for a "30" threshold. */
 export function getTargetFramerates(sourceFps: number): number[] {
   const common = [120, 60, 30, 24, 15];
-  return common.filter(f => f <= sourceFps + 0.5);
+  return common.filter((f) => f <= sourceFps + 0.5);
 }
 
 /** Format an fps value for display.
  * Integer rates show as "30", fractional rates show as "29.97" */
 export function formatFps(fps: number): string {
-  if (fps === 0) return 'Match Source';
+  if (fps === 0) return "Match Source";
   const rounded = Math.round(fps);
   if (Math.abs(fps - rounded) < 0.01) return `${rounded}`;
   return fps.toFixed(2);
 }
 
 /** Codec preference order for defaults: Raw > AV1 > VP9 > VP8 > MJPEG */
-const CODEC_PRIORITY: VideoCodec[] = ['raw', 'av1', 'vp9', 'vp8', 'mjpeg'];
+const CODEC_PRIORITY: VideoCodec[] = ["raw", "av1", "vp9", "vp8", "mjpeg"];
 
 /** Compute a smart default configuration for a device.
  * - Codec: Raw > AV1 > VP9 > VP8 > MJPEG
  * - Resolution: min(highest available, 1080p)
  * - FPS: min(highest available at chosen resolution, ~30)
  * - Target: "Match Source" (0/0/0) */
-export function computeDefaultConfig(device: VideoDevice): VideoDeviceConfig | null {
+export function computeDefaultConfig(
+  device: VideoDevice,
+): VideoDeviceConfig | null {
   // Pick preferred codec
   let codec: VideoCodec | null = null;
   for (const c of CODEC_PRIORITY) {
@@ -167,34 +186,35 @@ export function computeDefaultConfig(device: VideoDevice): VideoDeviceConfig | n
     }
   }
   if (!codec) return null;
-  
+
   const caps = device.capabilities[codec];
   if (!caps || caps.length === 0) return null;
-  
+
   // Find best resolution: highest that's ≤ 1080p, or smallest available
   // Caps are sorted by resolution descending
-  const chosenCap = caps.find(c => c.height <= 1080) ?? caps[caps.length - 1];
-  
+  const chosenCap = caps.find((c) => c.height <= 1080) ?? caps[caps.length - 1];
+
   const width = chosenCap.width;
   const height = chosenCap.height;
-  
+
   // Find best fps: highest that's ≤ ~30, or lowest available
-  const fps = chosenCap.framerates.find(f => f <= 30.5)
-    ?? chosenCap.framerates[chosenCap.framerates.length - 1]
-    ?? 30;
-  
+  const fps =
+    chosenCap.framerates.find((f) => f <= 30.5) ??
+    chosenCap.framerates[chosenCap.framerates.length - 1] ??
+    30;
+
   return {
     source_codec: codec,
     source_width: width,
     source_height: height,
     source_fps: fps,
-    passthrough: codec !== 'raw' && codec !== 'mjpeg',
+    passthrough: codec !== "raw" && codec !== "mjpeg",
     encoding_codec: null,
     encoder_type: null,
     preset_level: 3,
-    target_width: 0,   // Match Source
-    target_height: 0,  // Match Source
-    target_fps: 0,     // Match Source
+    target_width: 0, // Match Source
+    target_height: 0, // Match Source
+    target_fps: 0, // Match Source
   };
 }
 
@@ -206,7 +226,7 @@ export interface VideoFpsWarning {
 }
 
 export interface RecordingState {
-  status: 'idle' | 'recording' | 'stopping' | 'initializing';
+  status: "idle" | "recording" | "stopping" | "initializing";
   started_at: string | null;
   current_session_path: string | null;
   elapsed_seconds: number;
@@ -276,14 +296,20 @@ export interface VideoFileInfo {
   has_audio?: boolean;
 }
 
-export type AudioBitDepth = 'int16' | 'int24' | 'float32';
-export type AudioSampleRate = 'passthrough' | 'rate44100' | 'rate48000' | 'rate88200' | 'rate96000' | 'rate192000';
+export type AudioBitDepth = "int16" | "int24" | "float32";
+export type AudioSampleRate =
+  | "passthrough"
+  | "rate44100"
+  | "rate48000"
+  | "rate88200"
+  | "rate96000"
+  | "rate192000";
 
 export interface Config {
   storage_path: string;
   idle_timeout_secs: number;
   pre_roll_secs: number;
-  audio_format: 'wav' | 'flac';
+  audio_format: "wav" | "flac";
   wav_bit_depth: AudioBitDepth;
   wav_sample_rate: AudioSampleRate;
   flac_bit_depth: AudioBitDepth;
@@ -359,15 +385,15 @@ export interface ClusterInfo {
 // ============================================================================
 
 export async function getAudioDevices(): Promise<AudioDevice[]> {
-  return invoke('get_audio_devices');
+  return invoke("get_audio_devices");
 }
 
 export async function getMidiDevices(): Promise<MidiDevice[]> {
-  return invoke('get_midi_devices');
+  return invoke("get_midi_devices");
 }
 
 export async function getVideoDevices(): Promise<VideoDevice[]> {
-  return invoke('get_video_devices');
+  return invoke("get_video_devices");
 }
 
 /** Validate that a video device configuration will work at runtime. */
@@ -378,8 +404,12 @@ export async function validateVideoDeviceConfig(
   height: number,
   fps: number,
 ): Promise<boolean> {
-  return invoke('validate_video_device_config', {
-    deviceId, codec, width, height, fps,
+  return invoke("validate_video_device_config", {
+    deviceId,
+    codec,
+    width,
+    height,
+    fps,
   });
 }
 
@@ -409,7 +439,7 @@ export interface EncoderAvailability {
 }
 
 export async function getEncoderAvailability(): Promise<EncoderAvailability> {
-  return invoke('get_encoder_availability');
+  return invoke("get_encoder_availability");
 }
 
 // ============================================================================
@@ -429,8 +459,10 @@ export interface AutoSelectProgress {
  *  Returns the best preset level (1-5).
  *  Emits 'auto-select-progress' events during the test.
  */
-export async function autoSelectEncoderPreset(deviceId: string): Promise<number> {
-  return invoke('auto_select_encoder_preset', { deviceId });
+export async function autoSelectEncoderPreset(
+  deviceId: string,
+): Promise<number> {
+  return invoke("auto_select_encoder_preset", { deviceId });
 }
 
 // ============================================================================
@@ -438,48 +470,66 @@ export async function autoSelectEncoderPreset(deviceId: string): Promise<number>
 // ============================================================================
 
 export async function getRecordingState(): Promise<RecordingState> {
-  return invoke('get_recording_state');
+  return invoke("get_recording_state");
 }
 
 export async function startRecording(): Promise<string> {
-  return invoke('start_recording');
+  return invoke("start_recording");
 }
 
 export async function stopRecording(): Promise<void> {
-  return invoke('stop_recording');
+  return invoke("stop_recording");
 }
 
 // ============================================================================
 // Session Commands
 // ============================================================================
 
-export async function getSessions(filter: SessionFilter = {}): Promise<SessionSummary[]> {
-  return invoke('get_sessions', { filter });
+export async function getSessions(
+  filter: SessionFilter = {},
+): Promise<SessionSummary[]> {
+  return invoke("get_sessions", { filter });
 }
 
-export async function getSessionDetail(sessionId: string): Promise<SessionMetadata | null> {
-  return invoke('get_session_detail', { sessionId });
+export async function getSessionDetail(
+  sessionId: string,
+): Promise<SessionMetadata | null> {
+  return invoke("get_session_detail", { sessionId });
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-  return invoke('delete_session', { sessionId });
+  return invoke("delete_session", { sessionId });
 }
 
-export async function repairSession(sessionId: string): Promise<SessionMetadata> {
-  return invoke('repair_session', { sessionId });
+export async function repairSession(
+  sessionId: string,
+): Promise<SessionMetadata> {
+  return invoke("repair_session", { sessionId });
 }
 
-export async function readSessionFile(sessionPath: string, filename: string): Promise<Uint8Array> {
-  const data = await invoke<number[]>('read_session_file', { sessionPath, filename });
+export async function readSessionFile(
+  sessionPath: string,
+  filename: string,
+): Promise<Uint8Array> {
+  const data = await invoke<number[]>("read_session_file", {
+    sessionPath,
+    filename,
+  });
   return new Uint8Array(data);
 }
 
-export async function updateSessionFavorite(sessionId: string, isFavorite: boolean): Promise<void> {
-  return invoke('update_session_favorite', { sessionId, isFavorite });
+export async function updateSessionFavorite(
+  sessionId: string,
+  isFavorite: boolean,
+): Promise<void> {
+  return invoke("update_session_favorite", { sessionId, isFavorite });
 }
 
-export async function updateSessionNotes(sessionId: string, notes: string): Promise<void> {
-  return invoke('update_session_notes', { sessionId, notes });
+export async function updateSessionNotes(
+  sessionId: string,
+  notes: string,
+): Promise<void> {
+  return invoke("update_session_notes", { sessionId, notes });
 }
 
 // ============================================================================
@@ -490,7 +540,7 @@ export async function updateSessionNotes(sessionId: string, notes: string): Prom
 let previousAutoStart: boolean | null = null;
 
 export async function getConfig(): Promise<Config> {
-  const config = await invoke<Config>('get_config');
+  const config = await invoke<Config>("get_config");
   // Initialize autostart tracking
   previousAutoStart = config.auto_start;
 
@@ -502,19 +552,20 @@ export async function getConfig(): Promise<Config> {
       await disableAutostart();
     }
   } catch (e) {
-    console.error('Failed to sync autostart on init:', e);
+    console.error("Failed to sync autostart on init:", e);
   }
 
   return config;
 }
 
 export async function updateConfig(newConfig: Config): Promise<void> {
-  await invoke('update_config', { newConfig });
-  
+  await invoke("update_config", { newConfig });
+
   // Only sync autostart if the setting actually changed
-  const autoStartChanged = previousAutoStart !== null && previousAutoStart !== newConfig.auto_start;
+  const autoStartChanged =
+    previousAutoStart !== null && previousAutoStart !== newConfig.auto_start;
   previousAutoStart = newConfig.auto_start;
-  
+
   if (autoStartChanged) {
     try {
       if (newConfig.auto_start) {
@@ -523,13 +574,15 @@ export async function updateConfig(newConfig: Config): Promise<void> {
         await disableAutostart();
       }
     } catch (e) {
-      console.error('Failed to sync autostart setting:', e);
+      console.error("Failed to sync autostart setting:", e);
     }
   }
 }
 
-export async function updateAudioTriggerThresholds(thresholds: Record<string, number>): Promise<void> {
-  await invoke('update_audio_trigger_thresholds', { thresholds });
+export async function updateAudioTriggerThresholds(
+  thresholds: Record<string, number>,
+): Promise<void> {
+  await invoke("update_audio_trigger_thresholds", { thresholds });
 }
 
 // ============================================================================
@@ -542,11 +595,11 @@ export interface AutostartInfo {
 }
 
 export async function getAutostartInfo(): Promise<AutostartInfo> {
-  return invoke<AutostartInfo>('get_autostart_info');
+  return invoke<AutostartInfo>("get_autostart_info");
 }
 
 export async function setAllUsersAutostart(enabled: boolean): Promise<void> {
-  return invoke('set_all_users_autostart', { enabled });
+  return invoke("set_all_users_autostart", { enabled });
 }
 
 // ============================================================================
@@ -554,15 +607,15 @@ export async function setAllUsersAutostart(enabled: boolean): Promise<void> {
 // ============================================================================
 
 export async function getSimilarityData(): Promise<SimilarityData> {
-  return invoke('get_similarity_data');
+  return invoke("get_similarity_data");
 }
 
 export async function recalculateSimilarity(): Promise<number> {
-  return invoke('recalculate_similarity');
+  return invoke("recalculate_similarity");
 }
 
 export async function rescanSessions(): Promise<number> {
-  return invoke('rescan_sessions');
+  return invoke("rescan_sessions");
 }
 
 // ============================================================================
@@ -594,30 +647,49 @@ export interface VideoFrameData {
 }
 
 /** Check if a video file's codec is supported for playback */
-export async function checkVideoCodec(sessionPath: string, filename: string): Promise<VideoCodecCheck> {
-  return invoke('check_video_codec', { sessionPath, filename });
+export async function checkVideoCodec(
+  sessionPath: string,
+  filename: string,
+): Promise<VideoCodecCheck> {
+  return invoke("check_video_codec", { sessionPath, filename });
 }
 
-export async function getVideoInfo(sessionPath: string, filename: string): Promise<VideoPlaybackInfo> {
-  return invoke('get_video_info', { sessionPath, filename });
+export async function getVideoInfo(
+  sessionPath: string,
+  filename: string,
+): Promise<VideoPlaybackInfo> {
+  return invoke("get_video_info", { sessionPath, filename });
 }
 
-export async function getVideoFrame(sessionPath: string, filename: string, timestampMs: number): Promise<VideoFrameData> {
-  return invoke('get_video_frame', { sessionPath, filename, timestampMs });
+export async function getVideoFrame(
+  sessionPath: string,
+  filename: string,
+  timestampMs: number,
+): Promise<VideoFrameData> {
+  return invoke("get_video_frame", { sessionPath, filename, timestampMs });
 }
 
 export async function getVideoFramesBatch(
-  sessionPath: string, 
-  filename: string, 
-  startMs: number, 
+  sessionPath: string,
+  filename: string,
+  startMs: number,
   endMs: number,
-  maxFrames?: number
+  maxFrames?: number,
 ): Promise<VideoFrameData[]> {
-  return invoke('get_video_frames_batch', { sessionPath, filename, startMs, endMs, maxFrames });
+  return invoke("get_video_frames_batch", {
+    sessionPath,
+    filename,
+    startMs,
+    endMs,
+    maxFrames,
+  });
 }
 
-export async function getVideoFrameTimestamps(sessionPath: string, filename: string): Promise<number[]> {
-  return invoke('get_video_frame_timestamps', { sessionPath, filename });
+export async function getVideoFrameTimestamps(
+  sessionPath: string,
+  filename: string,
+): Promise<number[]> {
+  return invoke("get_video_frame_timestamps", { sessionPath, filename });
 }
 
 // ============================================================================
@@ -636,7 +708,7 @@ export interface AppStats {
 }
 
 export async function getAppStats(): Promise<AppStats> {
-  return invoke<AppStats>('get_app_stats');
+  return invoke<AppStats>("get_app_stats");
 }
 
 // ============================================================================
@@ -648,32 +720,43 @@ export function formatDuration(secs: number): string {
   const hours = Math.floor(totalSecs / 3600);
   const mins = Math.floor((totalSecs % 3600) / 60);
   const seconds = totalSecs % 60;
-  
+
   if (hours > 0) {
-    return `${hours}:${mins.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    return `${hours}:${mins.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
   }
-  return `${mins}:${seconds.toString().padStart(2, '0')}`;
+  return `${mins}:${seconds.toString().padStart(2, "0")}`;
 }
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 export function formatDate(dateString: string): string {
   const date = new Date(dateString);
   const now = new Date();
-  const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
-  
+  const diffDays = Math.floor(
+    (now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24),
+  );
+
   if (diffDays === 0) {
-    return `Today ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    return `Today ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
   } else if (diffDays === 1) {
-    return `Yesterday ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    return `Yesterday ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
   } else if (diffDays < 7) {
-    return date.toLocaleDateString([], { weekday: 'long', hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleDateString([], {
+      weekday: "long",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   } else {
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    return date.toLocaleDateString([], {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
   }
 }

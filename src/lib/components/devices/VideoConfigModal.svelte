@@ -68,6 +68,9 @@
     // More encoding options revealer
     let showMoreEncoding = $state(false);
 
+    // Stream source help tooltip
+    let showStreamSourceHelp = $state(false);
+
     // Load encoder availability on mount, resolve null codec/encoder to recommended
     $effect(() => {
         getEncoderAvailability()
@@ -381,7 +384,30 @@
         <div class="modal-body">
             <!-- Source Codec -->
             <div class="field">
-                <label for="codec-select">Stream Source</label>
+                <label for="codec-select">
+                    Device Codec
+                    <span class="help-wrapper">
+                        <button
+                            class="help-btn"
+                            onclick={(e) => {
+                                e.stopPropagation();
+                                showStreamSourceHelp = !showStreamSourceHelp;
+                            }}
+                            onblur={() => (showStreamSourceHelp = false)}
+                        >
+                            ?
+                        </button>
+                        {#if showStreamSourceHelp}
+                            <span class="help-tooltip">
+                                We detect that your video device can deliver its
+                                video stream pre-encoded with the codecs in the
+                                dropdown menu. <br /><br />Note that RAW streams
+                                may run into framerate / bandwidth issues
+                                depending on your setup.
+                            </span>
+                        {/if}
+                    </span>
+                </label>
                 <select id="codec-select" bind:value={selectedCodec}>
                     {#each availableCodecs as codec}
                         <option value={codec}
@@ -454,14 +480,16 @@
                     </label>
                 </div>
                 {#if passthrough && selectedCodec === "raw"}
-                    <span class="field-hint warning"
-                        >Uncompressed passthrough stores RAW video. Files will
-                        be very large (~90 MB/s at 1080p30).</span
+                    <span class="field-hint"
+                        ><span class="warning-icon">&#9888;</span> RAW passthrough
+                        stores uncompressed video. Files will be very large (~90 MB/s
+                        at 1080p30).</span
                     >
                 {:else if passthrough && selectedCodec === "mjpeg"}
                     <span class="field-hint"
-                        >MJPEG is recorded directly from the source. Beware that
-                        MJPEG files use a lot of disk space.</span
+                        ><span class="warning-icon">&#9888;</span> MJPEG is recorded
+                        directly from the source. MJPEG uses significant disk space,
+                        which can be saved by re-encoding.</span
                     >
                 {:else if passthrough}
                     <span class="field-hint"
@@ -481,8 +509,7 @@
                     >
                 {:else}
                     <span class="field-hint"
-                        >The uncompressed source will be encoded using the
-                        settings below.</span
+                        >RAW source will be encoded using the settings below.</span
                     >
                 {/if}
             </div>
@@ -730,6 +757,56 @@
         margin: 0.25rem 0;
     }
 
+    .help-wrapper {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+    }
+
+    .help-btn {
+        width: 13px;
+        height: 13px;
+        padding: 0;
+        background: rgba(255, 255, 255, 0.06);
+        border: none;
+        border-radius: 50%;
+        color: #5a5a5a;
+        font-size: 0.5625rem;
+        font-weight: 500;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s ease;
+    }
+
+    .help-btn:hover {
+        background: rgba(255, 255, 255, 0.2);
+        color: #8a8a8a;
+    }
+
+    .help-tooltip {
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        margin-top: 0.5rem;
+        padding: 0.625rem 0.75rem;
+        background: #1a1a1a;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 0.5rem;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        font-size: 0.6875rem;
+        color: #a8a8a8;
+        line-height: 1.5;
+        white-space: normal;
+        width: 240px;
+        z-index: 10;
+        text-transform: none;
+        letter-spacing: normal;
+        font-weight: normal;
+    }
+
     .encoder-info {
         margin: 0;
         padding: 0.5rem 0.75rem;
@@ -821,6 +898,10 @@
     }
 
     .field-hint.warning {
+        color: #c9a962;
+    }
+
+    .warning-icon {
         color: #c9a962;
     }
 
@@ -1022,6 +1103,23 @@
 
     :global(body.light-mode) .encoder-info strong {
         color: #3a3a3a;
+    }
+
+    :global(body.light-mode) .help-btn {
+        background: rgba(0, 0, 0, 0.08);
+        color: #7a7a7a;
+    }
+
+    :global(body.light-mode) .help-btn:hover {
+        background: rgba(0, 0, 0, 0.12);
+        color: #4a4a4a;
+    }
+
+    :global(body.light-mode) .help-tooltip {
+        background: #f5f5f5;
+        border-color: rgba(0, 0, 0, 0.12);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+        color: #5a5a5a;
     }
 
     :global(body.light-mode) .advanced-toggle {
