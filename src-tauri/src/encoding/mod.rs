@@ -41,6 +41,8 @@ pub enum VideoCodec {
     Raw,
     /// FFV1 - lossless intra-frame compression (avenc_ffv1)
     Ffv1,
+    /// H.264 - passthrough only (cannot encode/decode due to licensing)
+    H264,
 }
 
 impl VideoCodec {
@@ -75,6 +77,9 @@ impl VideoCodec {
             // FFV1
             "video/x-ffv" => Some(VideoCodec::Ffv1),
 
+            // H.264 - passthrough only
+            "video/x-h264" => Some(VideoCodec::H264),
+
             _ => None,
         }
     }
@@ -88,6 +93,7 @@ impl VideoCodec {
             VideoCodec::Vp9 => "video/x-vp9",
             VideoCodec::Raw => "video/x-raw",
             VideoCodec::Ffv1 => "video/x-ffv",
+            VideoCodec::H264 => "video/x-h264",
         }
     }
     
@@ -101,6 +107,7 @@ impl VideoCodec {
             VideoCodec::Vp9 => ContainerFormat::Mkv,
             VideoCodec::Raw => ContainerFormat::Mkv,
             VideoCodec::Ffv1 => ContainerFormat::Mkv,
+            VideoCodec::H264 => ContainerFormat::Mkv,
         }
     }
     
@@ -118,6 +125,7 @@ impl VideoCodec {
             VideoCodec::Vp9 => "identity", // VP9 doesn't need parsing before muxing
             VideoCodec::Raw => "identity", // No parsing needed, use identity element
             VideoCodec::Ffv1 => "identity", // No parser needed
+            VideoCodec::H264 => "h264parse", // NAL unit framing before muxing (gst-plugins-good, LGPL)
         }
     }
     
@@ -130,9 +138,10 @@ impl VideoCodec {
             VideoCodec::Vp9 => "VP9",
             VideoCodec::Raw => "RAW",
             VideoCodec::Ffv1 => "FFV1",
+            VideoCodec::H264 => "H.264",
         }
     }
-    
+
     /// Check if native HTML5 video player can handle this codec
     pub fn native_playback_supported(&self) -> bool {
         match self {
@@ -142,6 +151,7 @@ impl VideoCodec {
             VideoCodec::Vp9 => true,
             VideoCodec::Raw => true, // Will be encoded, which is supported
             VideoCodec::Ffv1 => false, // Uses custom frame player (GstDecodeDemuxer), not HTML5 native
+            VideoCodec::H264 => false, // Cannot decode — licensing restrictions
         }
     }
     
@@ -160,6 +170,7 @@ impl VideoCodec {
             VideoCodec::Av1 => Some("av1dec"),
             VideoCodec::Ffv1 => Some("avdec_ffv1"),
             VideoCodec::Raw => None,
+            VideoCodec::H264 => None, // Cannot decode — licensing restrictions
         }
     }
 }

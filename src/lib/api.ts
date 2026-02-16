@@ -25,7 +25,7 @@ export interface MidiDevice {
 }
 
 /** Supported video codecs */
-export type VideoCodec = "mjpeg" | "av1" | "vp8" | "vp9" | "raw" | "ffv1";
+export type VideoCodec = "mjpeg" | "av1" | "vp8" | "vp9" | "raw" | "ffv1" | "h264";
 
 /** Hardware encoder backend types */
 export type HardwareEncoderType =
@@ -94,6 +94,8 @@ export function getCodecDisplayName(codec: VideoCodec): string {
       return "RAW";
     case "ffv1":
       return "FFV1";
+    case "h264":
+      return "H.264";
   }
 }
 
@@ -165,6 +167,9 @@ export function formatFps(fps: number): string {
   if (Math.abs(fps - rounded) < 0.01) return `${rounded}`;
   return fps.toFixed(2);
 }
+
+/** Codecs that only support passthrough (no encoding/decoding due to licensing) */
+export const PASSTHROUGH_ONLY_CODECS: VideoCodec[] = ["h264"];
 
 /** Codec preference order for defaults: Raw > AV1 > VP9 > VP8 > MJPEG */
 const CODEC_PRIORITY: VideoCodec[] = ["raw", "av1", "vp9", "vp8", "mjpeg"];

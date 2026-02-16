@@ -92,6 +92,7 @@ fn normalize_codec_name(caps_name: &str) -> String {
         "video/x-av1" | "video/av1" => "av1".to_string(),
         "video/x-raw" => "raw".to_string(),
         "video/x-ffv" => "ffv1".to_string(),
+        "video/x-h264" => "h264".to_string(),
         // Unknown codecs
         _ => caps_name.replace("video/x-", "").replace("video/", "").replace("image/", ""),
     }

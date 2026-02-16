@@ -36,6 +36,7 @@ pub fn validate_video_config(device_id: &str, codec: &str, width: u32, height: u
         "av1" => "video/x-av1",
         "vp8" => "video/x-vp8",
         "vp9" => "video/x-vp9",
+        "h264" => "video/x-h264",
         _ => return false,
     };
     get_device_for_caps(device_id, caps_name, width, height, fps).is_some()
@@ -74,6 +75,28 @@ pub fn get_device_for_caps(
                 println!("[Video] Found exact caps via provider '{}': {}",
                     gst_dev.device_class(), matched);
                 return Some((matched, gst_dev.clone()));
+            }
+        }
+    }
+
+    // Some capture cards advertise H.264 as video/x-raw with format=H264.
+    // If the standard caps didn't match, try the raw-format variant.
+    if caps_name == "video/x-h264" {
+        let raw_h264_filter = gst::Caps::builder("video/x-raw")
+            .field("format", "H264")
+            .field("width", width as i32)
+            .field("height", height as i32)
+            .field("framerate", target_fps)
+            .build();
+
+        for gst_dev in devices {
+            if let Some(device_caps) = gst_dev.caps() {
+                let matched = device_caps.intersect_with_mode(&raw_h264_filter, gst::CapsIntersectMode::First);
+                if !matched.is_empty() {
+                    println!("[Video] Found H.264-as-raw caps via provider '{}': {}",
+                        gst_dev.device_class(), matched);
+                    return Some((matched, gst_dev.clone()));
+                }
             }
         }
     }
@@ -152,7 +175,27 @@ fn process_caps(
             
             // Try to match to a supported codec
             let codec = match VideoCodec::from_gst_caps_name(format_name) {
-                Some(VideoCodec::Raw) if !can_encode_raw => continue,
+                Some(VideoCodec::Raw) => {
+                    // Some capture cards (e.g. Elgato HD60) advertise H.264 as
+                    // video/x-raw with format=H264. Detect and remap.
+                    if let Ok(fmt) = structure.get::<&str>("format") {
+                        if fmt == "H264" {
+                            let h264_name = "H.264".to_string();
+                            if !detected_formats.contains(&h264_name) {
+                                detected_formats.push(h264_name);
+                            }
+                            VideoCodec::H264
+                        } else if !can_encode_raw {
+                            continue
+                        } else {
+                            VideoCodec::Raw
+                        }
+                    } else if !can_encode_raw {
+                        continue
+                    } else {
+                        VideoCodec::Raw
+                    }
+                }
                 Some(c) => c,
                 None => continue,
             };
@@ -321,6 +364,7 @@ fn format_display_name(gst_name: &str) -> String {
         "video/x-av1" | "video/av1" => "AV1".to_string(),
         "video/x-vp8" => "VP8".to_string(),
         "video/x-vp9" => "VP9".to_string(),
+        "video/x-h264" => "H.264".to_string(),
         "video/x-dv" => "DV".to_string(),
         "video/mpeg" => "MPEG".to_string(),
         _ => gst_name.replace("video/x-", "").replace("video/", "").replace("image/", "").to_uppercase(),
@@ -573,10 +617,22 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
             }
         }
         
-        // Save all providers for this device
+        // Save all providers for this device, sorted so that Media Foundation
+        // ("Source/Video" → mfvideosrc) comes before Kernel Streaming
+        // ("Video/Source" → ksvideosrc). MF is the modern Windows capture API and
+        // produces data that GStreamer decoders (e.g. jpegdec) handle correctly,
+        // whereas KS is deprecated and its JPEG output can fail negotiation.
+        // get_device_for_caps() picks the first matching provider, so order matters.
+        let mut sorted_devices = info.gst_devices;
+        sorted_devices.sort_by_key(|d| {
+            let class = d.device_class().to_string();
+            if class == "Source/Video" { 0 }   // MF first
+            else if class == "Video/Source" { 2 } // KS last
+            else { 1 }                           // anything else in between
+        });
         if let Ok(mut store) = GST_DEVICE_STORE.lock() {
             if let Some(map) = store.as_mut() {
-                map.insert(device_id.clone(), info.gst_devices);
+                map.insert(device_id.clone(), sorted_devices);
             }
         }
         

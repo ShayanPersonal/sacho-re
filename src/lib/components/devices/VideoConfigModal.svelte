@@ -17,6 +17,7 @@
         validateVideoDeviceConfig,
         getEncoderAvailability,
         autoSelectEncoderPreset,
+        PASSTHROUGH_ONLY_CODECS,
     } from "$lib/api";
     interface Props {
         device: VideoDevice;
@@ -118,6 +119,11 @@
         )?.framerates ?? [],
     );
 
+    // Whether this codec is passthrough-only (no encoding/decoding available)
+    const isPassthroughOnly = $derived(
+        PASSTHROUGH_ONLY_CODECS.includes(selectedCodec),
+    );
+
     // Whether encoding settings are active (not passthrough)
     const isEncoding = $derived(!passthrough);
 
@@ -216,12 +222,18 @@
         5: "Heaviest",
     };
 
-    // When codec changes, set passthrough default: raw/mjpeg = encode, all others = passthrough
+    // When codec changes, set passthrough default: passthrough-only codecs are forced,
+    // raw/mjpeg = encode, all others = passthrough
     let lastCodecForPassthrough = selectedCodec;
     $effect(() => {
         if (selectedCodec !== lastCodecForPassthrough) {
             lastCodecForPassthrough = selectedCodec;
-            passthrough = selectedCodec !== "raw" && selectedCodec !== "mjpeg";
+            if (PASSTHROUGH_ONLY_CODECS.includes(selectedCodec)) {
+                passthrough = true;
+            } else {
+                passthrough =
+                    selectedCodec !== "raw" && selectedCodec !== "mjpeg";
+            }
         }
     });
 
@@ -401,9 +413,8 @@
                             <span class="help-tooltip">
                                 We detect that your video device can deliver its
                                 video stream pre-encoded with the codecs in the
-                                dropdown menu. <br /><br />Note that RAW streams
-                                may run into framerate / bandwidth issues
-                                depending on your setup.
+                                dropdown menu. <br /><br />RAW streams are most
+                                reliable over high-speed connections.
                             </span>
                         {/if}
                     </span>
@@ -451,12 +462,16 @@
             <!-- Encode / Passthrough -->
             <div class="field">
                 <div class="radio-group">
-                    <label class="radio-label">
+                    <label
+                        class="radio-label"
+                        class:radio-disabled={isPassthroughOnly}
+                    >
                         <input
                             type="radio"
                             name="passthrough"
                             value="encode"
                             checked={!passthrough}
+                            disabled={isPassthroughOnly}
                             onchange={() => (passthrough = false)}
                         />
                         {selectedCodec === "raw"
@@ -474,12 +489,20 @@
                             onchange={() => (passthrough = true)}
                         />
                         Passthrough{selectedCodec !== "raw" &&
-                        selectedCodec !== "mjpeg"
+                        selectedCodec !== "mjpeg" &&
+                        !isPassthroughOnly
                             ? " (Recommended)"
                             : ""}
                     </label>
                 </div>
-                {#if passthrough && selectedCodec === "raw"}
+                {#if isPassthroughOnly}
+                    <span class="field-hint">
+                        <span class="warning-icon">&#9888;</span>
+                        {getCodecDisplayName(selectedCodec)} is a proprietary codec
+                        and will be recorded as passthrough only. In-app playback
+                        is not supported.
+                    </span>
+                {:else if passthrough && selectedCodec === "raw"}
                     <span class="field-hint"
                         ><span class="warning-icon">&#9888;</span> RAW passthrough
                         stores uncompressed video. Files will be very large (~90 MB/s
@@ -748,6 +771,8 @@
         padding: 1rem 1.5rem;
         display: flex;
         flex-direction: column;
+        max-height: 60vh;
+        overflow-y: auto;
         gap: 0.875rem;
     }
 
@@ -917,6 +942,11 @@
         cursor: pointer;
         font-size: 0.8125rem;
         color: #a8a8a8;
+    }
+
+    .radio-disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
     }
 
     .radio-label input {

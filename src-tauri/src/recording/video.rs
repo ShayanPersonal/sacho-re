@@ -988,6 +988,9 @@ impl VideoCapturePipeline {
                                     .map(|t| t.nseconds())
                                     .unwrap_or(default_duration_ns);
 
+                                let is_delta =
+                                    buffer.flags().contains(gst::BufferFlags::DELTA_UNIT);
+
                                 if let Ok(map) = buffer.map_readable() {
                                     let data = map.as_slice().to_vec();
                                     frame_counter_clone.fetch_add(1, Ordering::Relaxed);
@@ -998,7 +1001,7 @@ impl VideoCapturePipeline {
                                         duration,
                                         wall_time: Instant::now(),
                                         pixel_format: None, // Pre-encoded, no pixel format
-                                        is_delta_unit: false, // Not relevant for passthrough capture
+                                        is_delta_unit: is_delta,
                                     };
                                     preroll_clone.lock().push(frame);
                                 }
@@ -1340,6 +1343,38 @@ impl VideoCapturePipeline {
         }
 
         if !negotiated {
+            // Dump per-element state and pad caps BEFORE stopping the pipeline
+            println!("[Video] === Pipeline negotiation diagnostics for {} ===", self.device_name);
+            for element in self.pipeline.iterate_elements().into_iter().flatten() {
+                let name = element.name().to_string();
+                let (_, state, _) = element.state(Some(gst::ClockTime::from_mseconds(10)));
+                println!("[Video]   Element '{}': state={:?}", name, state);
+                for pad in element.pads() {
+                    let pad_name = pad.name().to_string();
+                    let caps_str = pad.current_caps()
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "NOT NEGOTIATED".to_string());
+                    println!("[Video]     pad '{}': {}", pad_name, caps_str);
+                }
+            }
+            // Check bus for errors before stopping
+            if let Some(bus) = self.pipeline.bus() {
+                while let Some(msg) = bus.pop_filtered(&[gst::MessageType::Error, gst::MessageType::Warning]) {
+                    match msg.view() {
+                        gst::MessageView::Error(err) => {
+                            let src = err.src().map(|s| s.name().to_string()).unwrap_or_default();
+                            println!("[Video]   BUS ERROR from '{}': {} (debug: {:?})", src, err.error(), err.debug());
+                        }
+                        gst::MessageView::Warning(warn) => {
+                            let src = warn.src().map(|s| s.name().to_string()).unwrap_or_default();
+                            println!("[Video]   BUS WARNING from '{}': {}", src, warn.error());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            println!("[Video] === End diagnostics ===");
+
             // Stop the pipeline since it can't produce valid output
             self.pipeline.set_state(gst::State::Null).ok();
 
@@ -1497,12 +1532,28 @@ impl VideoCapturePipeline {
 
         // Drain pre-roll buffer. When pre-roll is disabled, discard any stale
         // frames that may have leaked in (race between appsink and needs_frames flag).
-        let preroll_frames = if self.pre_roll_secs == 0 {
+        let mut preroll_frames = if self.pre_roll_secs == 0 {
             let _ = self.preroll_buffer.lock().drain(); // discard stale frames
             Vec::new()
         } else {
             self.preroll_buffer.lock().drain()
         };
+
+        // H.264 uses I/P/B frames — the file must start at a keyframe.
+        // Strip leading delta frames so the muxer gets a clean GOP start.
+        if self.codec == crate::encoding::VideoCodec::H264 {
+            let before = preroll_frames.len();
+            while preroll_frames.first().map(|f| f.is_delta_unit).unwrap_or(false) {
+                preroll_frames.remove(0);
+            }
+            if before != preroll_frames.len() {
+                println!(
+                    "[Video] H.264: stripped {} leading delta frames for keyframe alignment",
+                    before - preroll_frames.len()
+                );
+            }
+        }
+
         println!(
             "[Video] Pre-roll buffer has {} frames",
             preroll_frames.len()
