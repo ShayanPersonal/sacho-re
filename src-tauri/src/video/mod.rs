@@ -7,9 +7,11 @@
 // This module is primarily used for MJPEG frame extraction for the custom player.
 
 pub mod demux;
+pub mod gst_decode;
 pub mod mjpeg;
 
 pub use demux::{VideoDemuxer, VideoFrame, VideoInfo};
+pub use gst_decode::GstDecodeDemuxer;
 pub use mjpeg::MjpegDemuxer;
 
 use std::path::Path;
@@ -18,7 +20,7 @@ use gstreamer_pbutils as gst_pbutils;
 use gst_pbutils::prelude::*;
 
 /// Supported codecs for playback
-const SUPPORTED_CODECS: &[&str] = &["mjpeg", "vp8", "vp9", "av1", "raw"];
+const SUPPORTED_CODECS: &[&str] = &["mjpeg", "vp8", "vp9", "av1", "raw", "ffv1"];
 
 /// Information about a video file's codec
 #[derive(Debug, Clone)]
@@ -67,7 +69,7 @@ pub fn probe_video_codec<P: AsRef<Path>>(path: P) -> Result<VideoCodecInfo, Vide
     let is_supported = is_codec_supported(&codec);
     
     let reason = if !is_supported {
-        Some(format!("Codec '{}' is not supported. Supported codecs: MJPEG, VP8, VP9, AV1", codec))
+        Some(format!("Codec '{}' is not supported. Supported codecs: MJPEG, VP8, VP9, AV1, FFV1", codec))
     } else {
         None
     };
@@ -89,6 +91,7 @@ fn normalize_codec_name(caps_name: &str) -> String {
         "video/x-vp9" => "vp9".to_string(),
         "video/x-av1" | "video/av1" => "av1".to_string(),
         "video/x-raw" => "raw".to_string(),
+        "video/x-ffv" => "ffv1".to_string(),
         // Unknown codecs
         _ => caps_name.replace("video/x-", "").replace("video/", "").replace("image/", ""),
     }
@@ -113,6 +116,10 @@ pub fn open_video<P: AsRef<Path>>(path: P) -> Result<Box<dyn VideoDemuxer>, Vide
     match codec_info.codec.as_str() {
         "mjpeg" => {
             let demuxer = MjpegDemuxer::open(path)?;
+            Ok(Box::new(demuxer))
+        }
+        "ffv1" => {
+            let demuxer = GstDecodeDemuxer::open(path, "ffv1")?;
             Ok(Box::new(demuxer))
         }
         codec @ ("vp8" | "vp9" | "av1") => {

@@ -74,8 +74,8 @@
         1: "Lightest",
         2: "Light",
         3: "Balanced",
-        4: "Quality",
-        5: "Maximum",
+        4: "Heavy",
+        5: "Heaviest",
     };
 
     // Listen for auto-select progress events and load autostart info
@@ -509,7 +509,7 @@
                                     .filter(Boolean)
                                     .join(", ")
                                     .replace(/, ([^,]*)$/, " and $1")}. We
-                                recommend using
+                                recommend selecting
                                 <strong
                                     >{encoderAvailability.av1_hardware
                                         ? "AV1"
@@ -520,7 +520,7 @@
                             {:else}
                                 Your system does not support hardware
                                 acceleration for the available codecs. We
-                                recommend using <strong>VP8</strong> for the best
+                                recommend selecting <strong>VP8</strong> for the best
                                 experience. Use the Advanced menu if you experience
                                 choppiness.
                             {/if}
@@ -588,10 +588,10 @@
                                         {#if localSettings.video_encoding_mode === "ffv1"}
                                             {#if getCurrentPresetLevel() <= 3}
                                                 Faster encoding, larger files.
-                                                Quality is always lossless.
+                                                FFV1 quality is always lossless.
                                             {:else}
                                                 Slower encoding, smaller files.
-                                                Quality is always lossless.
+                                                FFV1 quality is always lossless.
                                             {/if}
                                         {:else if getCurrentPresetLevel() <= 3}
                                             Smaller files. Smoother recordings

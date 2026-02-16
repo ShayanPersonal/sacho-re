@@ -140,7 +140,7 @@ impl VideoCodec {
             VideoCodec::Vp8 => true,
             VideoCodec::Vp9 => true,
             VideoCodec::Raw => true, // Will be encoded, which is supported
-            VideoCodec::Ffv1 => false, // Needs external player (VLC)
+            VideoCodec::Ffv1 => false, // Uses custom frame player (GstDecodeDemuxer), not HTML5 native
         }
     }
     

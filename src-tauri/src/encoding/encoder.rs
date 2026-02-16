@@ -793,21 +793,31 @@ impl AsyncVideoEncoder {
         // Give filesystem time to sync
         std::thread::sleep(std::time::Duration::from_millis(100));
 
-        // Remux the file to add proper duration header
-        let bytes_written = match Self::remux_with_duration(&output_path) {
-            Ok(size) => {
-                println!(
-                    "[Encoder] Remuxed with duration header, size: {} bytes",
+        // Remux the file to add proper duration header.
+        // FFV1 is skipped: GStreamer bug — matroskademux outputs caps with
+        // field name "ffvversion" but matroskamux expects "ffversion", causing
+        // not-negotiated error. FFV1 doesn't need remuxing anyway since
+        // matroskamux writes correct duration on EOS for intra-frame codecs.
+        let bytes_written = if config.target_codec == VideoCodec::Ffv1 {
+            std::fs::metadata(&output_path)
+                .map(|m| m.len())
+                .unwrap_or(0)
+        } else {
+            match Self::remux_with_duration(&output_path) {
+                Ok(size) => {
+                    println!(
+                        "[Encoder] Remuxed with duration header, size: {} bytes",
+                        size
+                    );
                     size
-                );
-                size
-            }
-            Err(e) => {
-                println!("[Encoder] Warning: Failed to remux with duration: {}", e);
-                // Fall back to original file size
-                std::fs::metadata(&output_path)
-                    .map(|m| m.len())
-                    .unwrap_or(0)
+                }
+                Err(e) => {
+                    println!("[Encoder] Warning: Failed to remux with duration: {}", e);
+                    // Fall back to original file size
+                    std::fs::metadata(&output_path)
+                        .map(|m| m.len())
+                        .unwrap_or(0)
+                }
             }
         };
 

@@ -8,7 +8,8 @@
       "Bash(cargo run:*)",
       "Bash(gst-inspect-1.0:*)",
       "Bash(ls:*)",
-      "Bash(where:*)"
+      "Bash(where:*)",
+      "Bash(gst-discoverer-1.0:*)"
     ]
   }
 }
