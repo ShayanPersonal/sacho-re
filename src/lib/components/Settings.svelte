@@ -15,9 +15,21 @@
     import { invoke } from "@tauri-apps/api/core";
     import { onMount, onDestroy } from "svelte";
 
+    function positionTooltip(node: HTMLElement) {
+        const rect = node.getBoundingClientRect();
+        if (rect.bottom > window.innerHeight) {
+            node.style.top = "auto";
+            node.style.bottom = "100%";
+            node.style.marginTop = "0";
+            node.style.marginBottom = "0.5rem";
+        }
+    }
+
     // Local editable copy
     let localSettings = $state<Config | null>(null);
     let showPrerollEncodeHelp = $state(false);
+    let showAutostartHelp = $state(false);
+    let showBackgroundHelp = $state(false);
     let showCombineHelp = $state(false);
     let showAudioAdvanced = $state(false);
 
@@ -269,53 +281,6 @@
                                 style="margin-left: 0.25rem;">(turned off)</span
                             >
                         {/if}
-                        <span style="flex: 1;"></span>
-                        <label
-                            class="inline-checkbox"
-                            class:inline-checkbox-disabled={localSettings.pre_roll_secs ===
-                                0}
-                        >
-                            <input
-                                type="checkbox"
-                                bind:checked={
-                                    localSettings.encode_during_preroll
-                                }
-                                disabled={localSettings.pre_roll_secs === 0}
-                                onchange={() => {
-                                    if (!localSettings) return;
-                                    if (
-                                        !localSettings.encode_during_preroll &&
-                                        localSettings.pre_roll_secs > 5
-                                    ) {
-                                        localSettings.pre_roll_secs = 5;
-                                    }
-                                    autoSave();
-                                }}
-                            />
-                            <span class="input-suffix"
-                                >Encode video during pre-roll</span
-                            >
-                        </label>
-                        <span class="setting-label-with-help">
-                            <button
-                                class="help-btn"
-                                onclick={() =>
-                                    (showPrerollEncodeHelp =
-                                        !showPrerollEncodeHelp)}
-                                onblur={() => (showPrerollEncodeHelp = false)}
-                            >
-                                ?
-                            </button>
-                            {#if showPrerollEncodeHelp}
-                                <div class="help-tooltip">
-                                    Increases the pre-roll length limit from 5
-                                    to 30 seconds at the cost of background CPU
-                                    usage. Best combined with hardware
-                                    acceleration.<br /><br />If not sure, leave
-                                    this off.
-                                </div>
-                            {/if}
-                        </span>
                     </div>
                 </div>
             </section>
@@ -520,48 +485,126 @@
             <section class="settings-section">
                 <h3>System</h3>
                 <div class="setting-row">
-                    <label class="checkbox-row">
-                        <input
-                            type="checkbox"
-                            checked={isAutostartEnabled()}
-                            disabled={allUsersToggling}
-                            onchange={handleAutostartToggle}
-                        />
-                        <span class="setting-label"
-                            >Start at system startup <i>(recommended)</i></span
+                    <div class="checkbox-row-with-help">
+                        <label
+                            class="checkbox-row"
+                            class:checkbox-row-disabled={localSettings.pre_roll_secs ===
+                                0}
                         >
-                    </label>
-
-                    <p class="setting-recommendation">
-                        Ensures the application will start back up if the system
-                        restarts (such as for system updates). <b
-                            >You may have to log back in if your computer has a
-                            login screen.</b
+                            <input
+                                type="checkbox"
+                                bind:checked={
+                                    localSettings.encode_during_preroll
+                                }
+                                disabled={localSettings.pre_roll_secs === 0}
+                                onchange={() => {
+                                    if (!localSettings) return;
+                                    if (
+                                        !localSettings.encode_during_preroll &&
+                                        localSettings.pre_roll_secs > 5
+                                    ) {
+                                        localSettings.pre_roll_secs = 5;
+                                    }
+                                    autoSave();
+                                }}
+                            />
+                            <span class="setting-label"
+                                >Run encoder during pre-roll</span
+                            >
+                        </label>
+                        <span class="setting-label-with-help">
+                            <button
+                                class="help-btn"
+                                onclick={() =>
+                                    (showPrerollEncodeHelp =
+                                        !showPrerollEncodeHelp)}
+                                onblur={() => (showPrerollEncodeHelp = false)}
+                            >
+                                ?
+                            </button>
+                            {#if showPrerollEncodeHelp}
+                                <div class="help-tooltip" use:positionTooltip>
+                                    Signficantly increases background CPU usage,
+                                    even when no recording has been started.
+                                    Increases the pre-roll length limit from 5
+                                    to 30 seconds. <br /><br />If not sure,
+                                    leave this off. <br /><br />
+                                    Best combined with hardware acceleration.
+                                </div>
+                            {/if}
+                        </span>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div class="checkbox-row-with-help">
+                        <label class="checkbox-row">
+                            <input
+                                type="checkbox"
+                                checked={isAutostartEnabled()}
+                                disabled={allUsersToggling}
+                                onchange={handleAutostartToggle}
+                            />
+                            <span class="setting-label"
+                                >Start at system startup</span
+                            >
+                        </label>
+                        <span class="setting-label-with-help">
+                            <button
+                                class="help-btn"
+                                onclick={() =>
+                                    (showAutostartHelp = !showAutostartHelp)}
+                                onblur={() => (showAutostartHelp = false)}
+                            >
+                                ?
+                            </button>
+                            {#if showAutostartHelp}
+                                <div class="help-tooltip" use:positionTooltip>
+                                    Ensures the application will start back up
+                                    if the system restarts (such as for system
+                                    updates). You may have to log back in if
+                                    your computer has a login screen.
+                                </div>
+                            {/if}
+                        </span>
+                    </div>
+                    <div class="checkbox-row-with-help checkbox-sub-option">
+                        <label
+                            class="checkbox-row"
+                            class:checkbox-row-disabled={!isAutostartEnabled()}
                         >
-                    </p>
-                    <p
-                        class="setting-recommendation"
-                        style="margin-bottom: 0.7rem"
-                    >
-                        To stop the application from running in the background,
-                        right-click the tray icon and select Quit. Note that
-                        your performances will not be recorded until the
-                        application is started again.
-                    </p>
-                    <label
-                        class="checkbox-row"
-                        class:checkbox-row-disabled={!isAutostartEnabled()}
-                    >
-                        <input
-                            type="checkbox"
-                            bind:checked={localSettings.start_minimized}
-                            disabled={!isAutostartEnabled()}
-                            onchange={autoSave}
-                        />
-                        <span class="setting-label"
-                            >Hide application window at system startup</span
-                        >
-                    </label>
+                            <input
+                                type="checkbox"
+                                bind:checked={localSettings.start_minimized}
+                                disabled={!isAutostartEnabled()}
+                                onchange={autoSave}
+                            />
+                            <span class="setting-label"
+                                >Hide application window</span
+                            >
+                        </label>
+                        <span class="setting-label-with-help">
+                            <button
+                                class="help-btn"
+                                disabled={!isAutostartEnabled()}
+                                onclick={() =>
+                                    (showBackgroundHelp = !showBackgroundHelp)}
+                                onblur={() => (showBackgroundHelp = false)}
+                            >
+                                ?
+                            </button>
+                            {#if showBackgroundHelp}
+                                <div class="help-tooltip" use:positionTooltip>
+                                    To stop the application from running in the
+                                    background, right-click the tray icon and
+                                    select Quit. Note that your performances
+                                    will not be recorded until the application
+                                    is started again.
+                                </div>
+                            {/if}
+                        </span>
+                    </div>
+                </div>
+                <div class="setting-row">
                     <button
                         class="debug-crash-btn"
                         onclick={() => invoke("simulate_crash")}
@@ -982,11 +1025,30 @@
         border-color: rgba(255, 255, 255, 0.1);
     }
 
+    .checkbox-row-with-help {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
     .checkbox-row {
         display: flex;
         align-items: center;
         gap: 0.75rem;
         cursor: pointer;
+    }
+
+    .checkbox-sub-option {
+        margin-left: 2.25rem;
+    }
+
+    .checkbox-sub-option .setting-label {
+        font-size: 0.8125rem;
+        color: #7a7a7a;
+    }
+
+    :global(body.light-mode) .checkbox-sub-option .setting-label {
+        color: #6a6a6a;
     }
 
     .checkbox-row:has(input:disabled) {
