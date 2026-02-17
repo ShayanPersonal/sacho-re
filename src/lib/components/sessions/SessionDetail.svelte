@@ -626,9 +626,7 @@
                         <div class="video-unsupported-overlay">
                             <span class="error-icon">⚠</span>
                             <span class="error-text"
-                                >{videoUnsupportedCodec === "H264"
-                                    ? "H.264 playback not supported"
-                                    : "Unsupported video format"}</span
+                                >Unsupported video format</span
                             >
                             <span class="error-hint">Use external player</span>
                         </div>

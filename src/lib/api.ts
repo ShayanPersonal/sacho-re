@@ -25,7 +25,14 @@ export interface MidiDevice {
 }
 
 /** Supported video codecs */
-export type VideoCodec = "mjpeg" | "av1" | "vp8" | "vp9" | "raw" | "ffv1" | "h264";
+export type VideoCodec =
+  | "mjpeg"
+  | "av1"
+  | "vp8"
+  | "vp9"
+  | "raw"
+  | "ffv1"
+  | "h264";
 
 /** Hardware encoder backend types */
 export type HardwareEncoderType =
