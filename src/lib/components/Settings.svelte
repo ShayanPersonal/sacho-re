@@ -351,7 +351,8 @@
                         >
                     </div>
                     <p class="setting-recommendation">
-                        dd backing up this folder to a cloud storage service.
+                        This folder contains all your recordings. We recommend
+                        it up to a cloud storage service.
                     </p>
                 </div>
                 <div class="setting-row">
