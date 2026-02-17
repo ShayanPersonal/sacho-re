@@ -121,7 +121,7 @@
         setVideoDeviceConfig(deviceId, cfg);
     }
 
-    let expandedSections = $state<Set<string>>(new Set());
+    let expandedSections = $state<Set<string>>(new Set(["midi"]));
     let filterQuery = $state("");
     let showMidiHelp = $state(false);
     let showAudioTriggerHelp = $state(false);

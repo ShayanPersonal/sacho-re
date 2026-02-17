@@ -321,12 +321,11 @@
                             </button>
                             {#if showPrerollEncodeHelp}
                                 <div class="help-tooltip" use:positionTooltip>
-                                    Can signficantly increase background CPU
-                                    usage before any recording has started.
                                     Increases the pre-roll limit from 5 to 30
-                                    seconds. <br /><br />Best combined with
-                                    hardware acceleration. If not sure, leave
-                                    this off.
+                                    seconds at the cost of background CPU usage
+                                    before any recording has started. <br /><br
+                                    />Best combined with hardware acceleration.
+                                    If not sure, leave this off.
                                 </div>
                             {/if}
                         </span>
@@ -532,7 +531,17 @@
         -->
             </section>
             <section class="settings-section">
-                <h3>System</h3>
+                <h3>Application</h3>
+                <div class="setting-row">
+                    <label class="checkbox-row">
+                        <input
+                            type="checkbox"
+                            bind:checked={localSettings.dark_mode}
+                            onchange={autoSave}
+                        />
+                        <span class="setting-label">Dark color scheme</span>
+                    </label>
+                </div>
                 <div class="setting-row">
                     <label class="checkbox-row">
                         <input
@@ -572,26 +581,18 @@
                         your performances will not be recorded until the
                         application is started again.
                     </p>
+                    <!--
                     <button
                         class="debug-crash-btn"
                         onclick={() => invoke("simulate_crash")}
                     >
                         Simulate Crash (dev)
                     </button>
+                    -->
                 </div>
             </section>
             <section class="settings-section">
-                <h3>Application</h3>
-                <div class="setting-row">
-                    <label class="checkbox-row">
-                        <input
-                            type="checkbox"
-                            bind:checked={localSettings.dark_mode}
-                            onchange={autoSave}
-                        />
-                        <span class="setting-label">Dark color scheme</span>
-                    </label>
-                </div>
+                <h3>Notifications</h3>
                 <div class="setting-row">
                     <label class="checkbox-row">
                         <input
