@@ -178,6 +178,9 @@ export function formatFps(fps: number): string {
 /** Codecs that only support passthrough (no encoding/decoding due to licensing) */
 export const PASSTHROUGH_ONLY_CODECS: VideoCodec[] = ["h264"];
 
+/** Codecs that require encoding (cannot be stored as passthrough in MKV) */
+export const ENCODE_ONLY_CODECS: VideoCodec[] = ["raw"];
+
 /** Codec preference order for defaults: Raw > AV1 > VP9 > VP8 > MJPEG */
 const CODEC_PRIORITY: VideoCodec[] = ["raw", "av1", "vp9", "vp8", "mjpeg"];
 

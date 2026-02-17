@@ -29,6 +29,22 @@ export const audioTriggerLevels = writable<Record<string, { current_rms: number;
 // Per-device video configuration (device_id -> config)
 export const videoDeviceConfigs = writable<Record<string, VideoDeviceConfig>>({});
 
+// Active video devices whose effective output codec is FFV1 (large disk usage warning)
+export const ffv1WarningDevices = derived(
+  [videoDevices, selectedVideoDevices, videoDeviceConfigs],
+  ([$devices, $selected, $configs]) => {
+    const warnings: string[] = [];
+    for (const device of $devices) {
+      if (!$selected.has(device.id)) continue;
+      const cfg = $configs[device.id];
+      if (!cfg) continue;
+      const outputCodec = cfg.passthrough ? cfg.source_codec : cfg.encoding_codec;
+      if (outputCodec === 'ffv1') warnings.push(device.name);
+    }
+    return warnings;
+  }
+);
+
 // FPS mismatch warnings from video capture devices
 export const videoFpsWarnings = writable<VideoFpsWarning[]>([]);
 

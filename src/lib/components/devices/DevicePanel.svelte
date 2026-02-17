@@ -12,6 +12,7 @@
         selectedVideoDevices,
         videoDeviceConfigs,
         videoFpsWarnings,
+        ffv1WarningDevices,
         audioDeviceCount,
         midiDeviceCount,
         videoDeviceCount,
@@ -130,13 +131,13 @@
     let draggingThreshold = $state<Record<string, number>>({});
 
     function onThresholdInput(deviceId: string, value: number) {
-        if ($deviceSaveStatus === 'saving') return;
+        if ($deviceSaveStatus === "saving") return;
         draggingThreshold = { ...draggingThreshold, [deviceId]: value };
     }
 
     function onThresholdCommit(deviceId: string) {
         const value = draggingThreshold[deviceId];
-        if (value === undefined || $deviceSaveStatus === 'saving') return;
+        if (value === undefined || $deviceSaveStatus === "saving") return;
         const { [deviceId]: _, ...rest } = draggingThreshold;
         draggingThreshold = rest;
         setAudioTriggerThreshold(deviceId, value);
@@ -165,7 +166,7 @@
     function linearToMeterPercent(value: number): number {
         if (value <= 0) return 0;
         const db = linearToDbNum(value);
-        return Math.max(0, Math.min(100, (db - (-60)) / ((-3) - (-60)) * 100));
+        return Math.max(0, Math.min(100, ((db - -60) / (-3 - -60)) * 100));
     }
 
     function toggleSection(section: string) {
@@ -352,7 +353,8 @@
                                 class="help-btn"
                                 onclick={(e) => {
                                     e.stopPropagation();
-                                    showAudioTriggerHelp = !showAudioTriggerHelp;
+                                    showAudioTriggerHelp =
+                                        !showAudioTriggerHelp;
                                 }}
                                 onblur={() => (showAudioTriggerHelp = false)}
                             >
@@ -362,7 +364,8 @@
                                 <div class="help-tooltip">
                                     When audio level on a device marked as <strong
                                         >Trigger</strong
-                                    > exceeds the threshold, all devices marked as
+                                    >
+                                    exceeds the threshold, all devices marked as
                                     <strong>Record</strong> will automatically start
                                     recording.
                                 </div>
@@ -372,10 +375,18 @@
                     </div>
                     <div class="device-list">
                         {#each filterDevices($audioDevices) as device}
-                            {@const isTrigger = $triggerAudioDevices.has(device.id)}
+                            {@const isTrigger = $triggerAudioDevices.has(
+                                device.id,
+                            )}
                             {@const levels = $audioTriggerLevels[device.id]}
-                            {@const threshold = draggingThreshold[device.id] ?? $audioTriggerThresholds[device.id] ?? 0.1}
-                            <div class="device-row audio-device-row" class:has-meter={isTrigger}>
+                            {@const threshold =
+                                draggingThreshold[device.id] ??
+                                $audioTriggerThresholds[device.id] ??
+                                0.1}
+                            <div
+                                class="device-row audio-device-row"
+                                class:has-meter={isTrigger}
+                            >
                                 <div class="device-info">
                                     <span class="device-name"
                                         >{device.name}</span
@@ -401,18 +412,27 @@
                                             <div class="meter-track">
                                                 <div
                                                     class="meter-fill"
-                                                    class:above-threshold={levels && levels.current_rms > threshold}
-                                                    style="width: {linearToMeterPercent(levels?.current_rms ?? 0)}%"
+                                                    class:above-threshold={levels &&
+                                                        levels.current_rms >
+                                                            threshold}
+                                                    style="width: {linearToMeterPercent(
+                                                        levels?.current_rms ??
+                                                            0,
+                                                    )}%"
                                                 ></div>
                                                 {#if levels && levels.peak_level > 0}
                                                     <div
                                                         class="meter-peak"
-                                                        style="left: {linearToMeterPercent(levels.peak_level)}%"
+                                                        style="left: {linearToMeterPercent(
+                                                            levels.peak_level,
+                                                        )}%"
                                                     ></div>
                                                 {/if}
                                                 <div
                                                     class="meter-threshold"
-                                                    style="left: {linearToMeterPercent(threshold)}%"
+                                                    style="left: {linearToMeterPercent(
+                                                        threshold,
+                                                    )}%"
                                                 ></div>
                                             </div>
                                             <input
@@ -422,12 +442,27 @@
                                                 max="-3"
                                                 step="1"
                                                 value={linearToDbNum(threshold)}
-                                                disabled={$deviceSaveStatus === 'saving'}
-                                                oninput={(e) => onThresholdInput(device.id, dbToLinear(parseFloat(e.currentTarget.value)))}
-                                                onchange={() => onThresholdCommit(device.id)}
+                                                disabled={$deviceSaveStatus ===
+                                                    "saving"}
+                                                oninput={(e) =>
+                                                    onThresholdInput(
+                                                        device.id,
+                                                        dbToLinear(
+                                                            parseFloat(
+                                                                e.currentTarget
+                                                                    .value,
+                                                            ),
+                                                        ),
+                                                    )}
+                                                onchange={() =>
+                                                    onThresholdCommit(
+                                                        device.id,
+                                                    )}
                                             />
                                         </div>
-                                        <span class="threshold-label">{linearToDb(threshold)}</span>
+                                        <span class="threshold-label"
+                                            >{linearToDb(threshold)}</span
+                                        >
                                     </div>
                                 {/if}
                                 <label class="checkbox-cell">
@@ -476,6 +511,16 @@
 
             {#if expandedSections.has("video")}
                 <div class="section-content">
+                    {#if $ffv1WarningDevices.length > 0}
+                        <div class="fps-warning">
+                            {#each $ffv1WarningDevices as name}
+                                <p>
+                                    ⚠️ {name} is configured with FFV1. Recordings
+                                    will use significant disk space
+                                </p>
+                            {/each}
+                        </div>
+                    {/if}
                     {#if $videoFpsWarnings.length > 0}
                         <div class="fps-warning">
                             {#each $videoFpsWarnings as warning}

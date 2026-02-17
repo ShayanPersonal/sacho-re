@@ -18,6 +18,7 @@
         getEncoderAvailability,
         autoSelectEncoderPreset,
         PASSTHROUGH_ONLY_CODECS,
+        ENCODE_ONLY_CODECS,
     } from "$lib/api";
     interface Props {
         device: VideoDevice;
@@ -122,6 +123,11 @@
     // Whether this codec is passthrough-only (no encoding/decoding available)
     const isPassthroughOnly = $derived(
         PASSTHROUGH_ONLY_CODECS.includes(selectedCodec),
+    );
+
+    // Whether this codec requires encoding (cannot passthrough, e.g. raw → MKV)
+    const isEncodeOnly = $derived(
+        ENCODE_ONLY_CODECS.includes(selectedCodec),
     );
 
     // Whether encoding settings are active (not passthrough)
@@ -230,9 +236,10 @@
             lastCodecForPassthrough = selectedCodec;
             if (PASSTHROUGH_ONLY_CODECS.includes(selectedCodec)) {
                 passthrough = true;
+            } else if (ENCODE_ONLY_CODECS.includes(selectedCodec)) {
+                passthrough = false;
             } else {
-                passthrough =
-                    selectedCodec !== "raw" && selectedCodec !== "mjpeg";
+                passthrough = selectedCodec !== "mjpeg";
             }
         }
     });
@@ -480,12 +487,16 @@
                               ? "Re-encode (Recommended)"
                               : "Re-encode"}
                     </label>
-                    <label class="radio-label">
+                    <label
+                        class="radio-label"
+                        class:radio-disabled={isEncodeOnly}
+                    >
                         <input
                             type="radio"
                             name="passthrough"
                             value="passthrough"
                             checked={passthrough}
+                            disabled={isEncodeOnly}
                             onchange={() => (passthrough = true)}
                         />
                         Passthrough{selectedCodec !== "raw" &&
@@ -502,11 +513,10 @@
                         and will be recorded as passthrough only. In-app playback
                         is not supported.
                     </span>
-                {:else if passthrough && selectedCodec === "raw"}
+                {:else if isEncodeOnly}
                     <span class="field-hint"
-                        ><span class="warning-icon">&#9888;</span> RAW passthrough
-                        stores uncompressed video. Files will be very large (~90 MB/s
-                        at 1080p30).</span
+                        >RAW video cannot be stored as passthrough and must be
+                        encoded.</span
                     >
                 {:else if passthrough && selectedCodec === "mjpeg"}
                     <span class="field-hint"
