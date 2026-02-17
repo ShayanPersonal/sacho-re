@@ -430,6 +430,9 @@
                                 </div>
                                 {#if isTrigger}
                                     <div class="audio-trigger-meter">
+                                        <span class="threshold-label"
+                                            >Threshold {linearToDb(threshold)}</span
+                                        >
                                         <div class="meter-container">
                                             <div class="meter-track">
                                                 <div
@@ -482,9 +485,6 @@
                                                     )}
                                             />
                                         </div>
-                                        <span class="threshold-label"
-                                            >{linearToDb(threshold)}</span
-                                        >
                                     </div>
                                 {/if}
                                 <label class="checkbox-cell">
@@ -893,11 +893,17 @@
     .device-name {
         font-size: 0.8125rem;
         color: #a8a8a8;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex-shrink: 1;
+        min-width: 0;
     }
 
     .device-meta {
         display: flex;
         gap: 0.375rem;
+        flex-shrink: 0;
     }
 
     .meta-tag {
@@ -1122,8 +1128,9 @@
 
     .device-info {
         display: flex;
-        flex-direction: column;
-        gap: 0.125rem;
+        align-items: center;
+        gap: 0.5rem;
+        min-width: 0;
     }
 
     .placeholder-cell {
@@ -1262,8 +1269,9 @@
         font-family: "DM Mono", "SF Mono", Menlo, monospace;
         font-size: 0.5625rem;
         color: #5a5a5a;
-        min-width: 2.5rem;
-        text-align: right;
+        width: 6.5rem;
+        text-align: left;
+        flex-shrink: 0;
     }
 
     .checkbox-cell {

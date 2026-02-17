@@ -334,6 +334,9 @@ export interface Config {
   start_minimized: boolean;
   notify_recording_start: boolean;
   notify_recording_stop: boolean;
+  sound_recording_start: boolean;
+  sound_recording_stop: boolean;
+  sound_volume: number;
   selected_audio_devices: string[];
   selected_midi_devices: string[];
   trigger_midi_devices: string[];

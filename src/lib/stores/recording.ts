@@ -5,6 +5,9 @@ import { listen } from '@tauri-apps/api/event';
 import type { RecordingState, SessionMetadata } from '$lib/api';
 import { getRecordingState, startRecording, stopRecording } from '$lib/api';
 import { addNewSession } from './sessions';
+import { settings } from './settings';
+import { playStartSound, playStopSound } from '$lib/sounds';
+import { get } from 'svelte/store';
 
 // Create the store with initial state
 const initialState: RecordingState = {
@@ -22,11 +25,19 @@ export const recordingState = writable<RecordingState>(initialState);
 // Listen for backend recording events
 listen('recording-started', (event) => {
   console.log('Recording started from backend:', event.payload);
+  const cfg = get(settings);
+  if (cfg?.sound_recording_start) {
+    playStartSound(cfg.sound_volume);
+  }
   refreshRecordingState();
 });
 
 listen('recording-stopped', async (event) => {
     console.log('Recording stopped from backend:', event.payload);
+    const cfg = get(settings);
+    if (cfg?.sound_recording_stop) {
+      playStopSound(cfg.sound_volume);
+    }
     await refreshRecordingState();
     
     // Add the new session to the list without full refresh

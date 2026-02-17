@@ -126,9 +126,7 @@
     );
 
     // Whether this codec requires encoding (cannot passthrough, e.g. raw → MKV)
-    const isEncodeOnly = $derived(
-        ENCODE_ONLY_CODECS.includes(selectedCodec),
-    );
+    const isEncodeOnly = $derived(ENCODE_ONLY_CODECS.includes(selectedCodec));
 
     // Whether encoding settings are active (not passthrough)
     const isEncoding = $derived(!passthrough);
@@ -514,15 +512,12 @@
                         is not supported.
                     </span>
                 {:else if isEncodeOnly}
-                    <span class="field-hint"
-                        >RAW video cannot be stored as passthrough and must be
-                        encoded.</span
-                    >
+                    <span class="field-hint">RAW video must be encoded</span>
                 {:else if passthrough && selectedCodec === "mjpeg"}
                     <span class="field-hint"
-                        ><span class="warning-icon">&#9888;</span> MJPEG is recorded
-                        directly from the source. MJPEG uses significant disk space,
-                        which can be saved by re-encoding.</span
+                        ><span class="warning-icon">&#9888;</span>MJPEG uses
+                        significant disk space, which can be saved by
+                        re-encoding.</span
                     >
                 {:else if passthrough}
                     <span class="field-hint"

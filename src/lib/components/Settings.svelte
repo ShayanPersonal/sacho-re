@@ -14,6 +14,7 @@
     } from "$lib/api";
     import { invoke } from "@tauri-apps/api/core";
     import { onMount, onDestroy } from "svelte";
+    import { playStartSound, playStopSound } from "$lib/sounds";
 
     function positionTooltip(node: HTMLElement) {
         const rect = node.getBoundingClientRect();
@@ -316,8 +317,8 @@
                         >
                     </div>
                     <p class="setting-recommendation">
-                        This folder contains all your recordings. We recommend
-                        it up to a cloud storage service.
+                        We recommend backing up this folder to a cloud storage
+                        service.
                     </p>
                 </div>
                 <div class="setting-row">
@@ -524,87 +525,56 @@
                             </button>
                             {#if showPrerollEncodeHelp}
                                 <div class="help-tooltip" use:positionTooltip>
-                                    Signficantly increases background CPU usage,
-                                    even when no recording has been started.
-                                    Increases the pre-roll length limit from 5
+                                    Can signficantly increase background CPU
+                                    usage, even before any recording has
+                                    started. Increases the pre-roll limit from 5
                                     to 30 seconds. <br /><br />If not sure,
-                                    leave this off. <br /><br />
-                                    Best combined with hardware acceleration.
+                                    leave this off. Best combined with hardware
+                                    acceleration.
                                 </div>
                             {/if}
                         </span>
                     </div>
                 </div>
                 <div class="setting-row">
-                    <div class="checkbox-row-with-help">
-                        <label class="checkbox-row">
-                            <input
-                                type="checkbox"
-                                checked={isAutostartEnabled()}
-                                disabled={allUsersToggling}
-                                onchange={handleAutostartToggle}
-                            />
-                            <span class="setting-label"
-                                >Start at system startup</span
-                            >
-                        </label>
-                        <span class="setting-label-with-help">
-                            <button
-                                class="help-btn"
-                                onclick={() =>
-                                    (showAutostartHelp = !showAutostartHelp)}
-                                onblur={() => (showAutostartHelp = false)}
-                            >
-                                ?
-                            </button>
-                            {#if showAutostartHelp}
-                                <div class="help-tooltip" use:positionTooltip>
-                                    Ensures the application will start back up
-                                    if the system restarts (such as for system
-                                    updates). You may have to log back in if
-                                    your computer has a login screen.
-                                </div>
-                            {/if}
-                        </span>
-                    </div>
-                    <div class="checkbox-row-with-help checkbox-sub-option">
-                        <label
-                            class="checkbox-row"
-                            class:checkbox-row-disabled={!isAutostartEnabled()}
+                    <label class="checkbox-row">
+                        <input
+                            type="checkbox"
+                            checked={isAutostartEnabled()}
+                            disabled={allUsersToggling}
+                            onchange={handleAutostartToggle}
+                        />
+                        <span class="setting-label"
+                            >Start application at system startup (<i
+                                >recommended</i
+                            >)</span
                         >
-                            <input
-                                type="checkbox"
-                                bind:checked={localSettings.start_minimized}
-                                disabled={!isAutostartEnabled()}
-                                onchange={autoSave}
-                            />
-                            <span class="setting-label"
-                                >Hide application window</span
-                            >
-                        </label>
-                        <span class="setting-label-with-help">
-                            <button
-                                class="help-btn"
-                                disabled={!isAutostartEnabled()}
-                                onclick={() =>
-                                    (showBackgroundHelp = !showBackgroundHelp)}
-                                onblur={() => (showBackgroundHelp = false)}
-                            >
-                                ?
-                            </button>
-                            {#if showBackgroundHelp}
-                                <div class="help-tooltip" use:positionTooltip>
-                                    To stop the application from running in the
-                                    background, right-click the tray icon and
-                                    select Quit. Note that your performances
-                                    will not be recorded until the application
-                                    is started again.
-                                </div>
-                            {/if}
-                        </span>
-                    </div>
-                </div>
-                <div class="setting-row">
+                    </label>
+                    <label
+                        class="checkbox-row checkbox-sub-option"
+                        class:checkbox-row-disabled={!isAutostartEnabled()}
+                    >
+                        <input
+                            type="checkbox"
+                            bind:checked={localSettings.start_minimized}
+                            disabled={!isAutostartEnabled()}
+                            onchange={autoSave}
+                        />
+                        <span class="setting-label"
+                            >Hide application window at startup</span
+                        >
+                    </label>
+                    <p class="setting-recommendation">
+                        Ensures the application will start back up if the system
+                        restarts (such as for system updates). You may have to
+                        log back in if your computer has a login screen.
+                    </p>
+                    <p class="setting-recommendation">
+                        To stop the application from running in the background,
+                        right-click the tray icon and select Quit. Note that
+                        your performances will not be recorded until the
+                        application is started again.
+                    </p>
                     <button
                         class="debug-crash-btn"
                         onclick={() => invoke("simulate_crash")}
@@ -633,7 +603,7 @@
                             onchange={autoSave}
                         />
                         <span class="setting-label"
-                            >Notify when recording starts</span
+                            >Desktop notification when recording starts</span
                         >
                     </label>
                 </div>
@@ -645,10 +615,68 @@
                             onchange={autoSave}
                         />
                         <span class="setting-label"
-                            >Notify when recording stops</span
+                            >Desktop notification when recording stops</span
                         >
                     </label>
                 </div>
+                <div class="setting-row">
+                    <label class="checkbox-row">
+                        <input
+                            type="checkbox"
+                            bind:checked={localSettings.sound_recording_start}
+                            onchange={autoSave}
+                        />
+                        <span class="setting-label"
+                            >Play sound when recording starts</span
+                        >
+                    </label>
+                </div>
+                <div class="setting-row">
+                    <label class="checkbox-row">
+                        <input
+                            type="checkbox"
+                            bind:checked={localSettings.sound_recording_stop}
+                            onchange={autoSave}
+                        />
+                        <span class="setting-label"
+                            >Play sound when recording stops</span
+                        >
+                    </label>
+                </div>
+                {#if localSettings.sound_recording_start || localSettings.sound_recording_stop}
+                    <div class="setting-row">
+                        <label>
+                            <span class="setting-label">Sound Volume</span>
+                        </label>
+                        <div class="volume-slider-row">
+                            <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.05"
+                                bind:value={localSettings.sound_volume}
+                                oninput={autoSaveDebounced}
+                            />
+                            <span class="volume-value"
+                                >{Math.round(
+                                    localSettings.sound_volume * 100,
+                                )}%</span
+                            >
+                            <button
+                                class="preview-btn"
+                                disabled={!localSettings.sound_recording_start}
+                                onclick={() => localSettings && playStartSound(localSettings.sound_volume)}
+                                title="Preview start sound"
+                            ><svg class="preview-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg> Start</button>
+                            <button
+                                class="preview-btn"
+                                disabled={!localSettings.sound_recording_stop}
+                                onclick={() => localSettings && playStopSound(localSettings.sound_volume)}
+                                title="Preview stop sound"
+                            ><svg class="preview-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg> Stop</button>
+                        </div>
+                    </div>
+                {/if}
             </section>
         </div>
     {:else}
@@ -1067,6 +1095,76 @@
         accent-color: #c9a962;
         width: 16px;
         height: 16px;
+    }
+
+    .volume-slider-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .volume-slider-row input[type="range"] {
+        flex: 1;
+        height: 4px;
+        accent-color: #c9a962;
+        cursor: pointer;
+    }
+
+    .volume-value {
+        font-size: 0.75rem;
+        color: #6b6b6b;
+        min-width: 2.5rem;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .preview-btn {
+        padding: 0.25rem 0.625rem;
+        background: transparent;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 0.25rem;
+        color: #6b6b6b;
+        font-family: inherit;
+        font-size: 0.6875rem;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all 0.2s ease;
+    }
+
+    .preview-btn:hover:not(:disabled) {
+        color: #a8a8a8;
+        border-color: rgba(255, 255, 255, 0.1);
+    }
+
+    .preview-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+    }
+
+    .preview-icon {
+        width: 11px;
+        height: 11px;
+        vertical-align: -1px;
+    }
+
+    :global(body.light-mode) .volume-slider-row input[type="range"] {
+        accent-color: #a08030;
+    }
+
+    :global(body.light-mode) .volume-value {
+        color: #6a6a6a;
+    }
+
+    :global(body.light-mode) .preview-btn {
+        border-color: rgba(0, 0, 0, 0.12);
+        color: #5a5a5a;
+    }
+
+    :global(body.light-mode) .preview-btn:hover {
+        color: #3a3a3a;
+        border-color: rgba(0, 0, 0, 0.2);
     }
 
     .loading {

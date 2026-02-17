@@ -62,6 +62,18 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub notify_recording_stop: bool,
 
+    /// Whether to play a sound when recording starts
+    #[serde(default)]
+    pub sound_recording_start: bool,
+
+    /// Whether to play a sound when recording stops
+    #[serde(default)]
+    pub sound_recording_stop: bool,
+
+    /// Volume for recording start/stop sounds (0.0-1.0)
+    #[serde(default = "default_sound_volume")]
+    pub sound_volume: f64,
+
     /// Selected audio device IDs
     pub selected_audio_devices: Vec<String>,
 
@@ -316,6 +328,9 @@ impl Default for Config {
             minimize_to_tray: true,
             notify_recording_start: false,
             notify_recording_stop: true,
+            sound_recording_start: false,
+            sound_recording_stop: false,
+            sound_volume: 0.5,
             selected_audio_devices: Vec::new(),
             selected_midi_devices: Vec::new(),
             trigger_midi_devices: Vec::new(),
@@ -350,6 +365,12 @@ impl Config {
             let old = self.pre_roll_secs;
             self.pre_roll_secs = self.pre_roll_secs.clamp(0, 30);
             clamped.push(format!("pre_roll_secs: {} -> {}", old, self.pre_roll_secs));
+        }
+
+        if self.sound_volume < 0.0 || self.sound_volume > 1.0 {
+            let old = self.sound_volume;
+            self.sound_volume = self.sound_volume.clamp(0.0, 1.0);
+            clamped.push(format!("sound_volume: {} -> {}", old, self.sound_volume));
         }
 
         for (key, value) in self.audio_trigger_thresholds.iter_mut() {
@@ -452,4 +473,9 @@ fn default_true() -> bool {
 /// Default preset level (for serde)
 fn default_preset_level() -> u8 {
     3
+}
+
+/// Default sound volume (for serde)
+fn default_sound_volume() -> f64 {
+    0.5
 }
