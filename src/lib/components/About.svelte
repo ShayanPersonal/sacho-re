@@ -131,8 +131,7 @@
                     </span>
                     <span class="feature-label">Pre-roll Capture</span>
                     <span class="feature-desc"
-                        >Capture the moments leading up to the perfect
-                        performance.</span
+                        >Capture the moments leading up to the performance.</span
                     >
                 </div>
             </div>

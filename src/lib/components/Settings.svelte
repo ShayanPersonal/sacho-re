@@ -282,6 +282,54 @@
                                 style="margin-left: 0.25rem;">(turned off)</span
                             >
                         {/if}
+                        <span style="flex: 1;"></span>
+                        <label
+                            class="inline-checkbox"
+                            class:inline-checkbox-disabled={localSettings.pre_roll_secs ===
+                                0}
+                        >
+                            <input
+                                type="checkbox"
+                                bind:checked={
+                                    localSettings.encode_during_preroll
+                                }
+                                disabled={localSettings.pre_roll_secs === 0}
+                                onchange={() => {
+                                    if (!localSettings) return;
+                                    if (
+                                        !localSettings.encode_during_preroll &&
+                                        localSettings.pre_roll_secs > 5
+                                    ) {
+                                        localSettings.pre_roll_secs = 5;
+                                    }
+                                    autoSave();
+                                }}
+                            />
+                            <span class="input-suffix"
+                                >Encode during pre-roll</span
+                            >
+                        </label>
+                        <span class="setting-label-with-help">
+                            <button
+                                class="help-btn"
+                                onclick={() =>
+                                    (showPrerollEncodeHelp =
+                                        !showPrerollEncodeHelp)}
+                                onblur={() => (showPrerollEncodeHelp = false)}
+                            >
+                                ?
+                            </button>
+                            {#if showPrerollEncodeHelp}
+                                <div class="help-tooltip" use:positionTooltip>
+                                    Can signficantly increase background CPU
+                                    usage before any recording has started.
+                                    Increases the pre-roll limit from 5 to 30
+                                    seconds. <br /><br />Best combined with
+                                    hardware acceleration. If not sure, leave
+                                    this off.
+                                </div>
+                            {/if}
+                        </span>
                     </div>
                 </div>
             </section>
@@ -486,57 +534,6 @@
             <section class="settings-section">
                 <h3>System</h3>
                 <div class="setting-row">
-                    <div class="checkbox-row-with-help">
-                        <label
-                            class="checkbox-row"
-                            class:checkbox-row-disabled={localSettings.pre_roll_secs ===
-                                0}
-                        >
-                            <input
-                                type="checkbox"
-                                bind:checked={
-                                    localSettings.encode_during_preroll
-                                }
-                                disabled={localSettings.pre_roll_secs === 0}
-                                onchange={() => {
-                                    if (!localSettings) return;
-                                    if (
-                                        !localSettings.encode_during_preroll &&
-                                        localSettings.pre_roll_secs > 5
-                                    ) {
-                                        localSettings.pre_roll_secs = 5;
-                                    }
-                                    autoSave();
-                                }}
-                            />
-                            <span class="setting-label"
-                                >Run encoder during pre-roll</span
-                            >
-                        </label>
-                        <span class="setting-label-with-help">
-                            <button
-                                class="help-btn"
-                                onclick={() =>
-                                    (showPrerollEncodeHelp =
-                                        !showPrerollEncodeHelp)}
-                                onblur={() => (showPrerollEncodeHelp = false)}
-                            >
-                                ?
-                            </button>
-                            {#if showPrerollEncodeHelp}
-                                <div class="help-tooltip" use:positionTooltip>
-                                    Can signficantly increase background CPU
-                                    usage, even before any recording has
-                                    started. Increases the pre-roll limit from 5
-                                    to 30 seconds. <br /><br />If not sure,
-                                    leave this off. Best combined with hardware
-                                    acceleration.
-                                </div>
-                            {/if}
-                        </span>
-                    </div>
-                </div>
-                <div class="setting-row">
                     <label class="checkbox-row">
                         <input
                             type="checkbox"
@@ -665,15 +662,43 @@
                             <button
                                 class="preview-btn"
                                 disabled={!localSettings.sound_recording_start}
-                                onclick={() => localSettings && playStartSound(localSettings.sound_volume)}
+                                onclick={() =>
+                                    localSettings &&
+                                    playStartSound(localSettings.sound_volume)}
                                 title="Preview start sound"
-                            ><svg class="preview-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg> Start</button>
+                                ><svg
+                                    class="preview-icon"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    ><polygon
+                                        points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"
+                                    /><path
+                                        d="M15.54 8.46a5 5 0 0 1 0 7.07"
+                                    /></svg
+                                > Start</button
+                            >
                             <button
                                 class="preview-btn"
                                 disabled={!localSettings.sound_recording_stop}
-                                onclick={() => localSettings && playStopSound(localSettings.sound_volume)}
+                                onclick={() =>
+                                    localSettings &&
+                                    playStopSound(localSettings.sound_volume)}
                                 title="Preview stop sound"
-                            ><svg class="preview-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg> Stop</button>
+                                ><svg
+                                    class="preview-icon"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    ><polygon
+                                        points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"
+                                    /><path
+                                        d="M15.54 8.46a5 5 0 0 1 0 7.07"
+                                    /></svg
+                                > Stop</button
+                            >
                         </div>
                     </div>
                 {/if}
