@@ -1,6 +1,4 @@
 // Sound notification utilities using Tone.js
-// Uses perfect fifths (harmonically ambiguous — no major/minor implication)
-// with a bell-like timbre so it sits outside the musical context.
 
 import * as Tone from "tone";
 
@@ -12,8 +10,8 @@ function ensureSynth(): Tone.PolySynth {
       oscillator: { type: "sine" },
       envelope: {
         attack: 0.01,
-        decay: 0.35,
-        sustain: 0,
+        decay: 0.15,
+        sustain: 0.05,
         release: 0.2,
       },
     }).toDestination();
@@ -21,18 +19,24 @@ function ensureSynth(): Tone.PolySynth {
   return synth;
 }
 
-/** Play a single high note for recording start */
+/** Play a short ascending chime (C5→E5→G5) for recording start */
 export function playStartSound(volume: number): void {
   const s = ensureSynth();
   s.volume.value = volumeToDb(volume);
-  s.triggerAttackRelease("A5", "8n", Tone.now());
+  const now = Tone.now();
+  s.triggerAttackRelease("C5", "16n", now);
+  s.triggerAttackRelease("E5", "16n", now + 0.1);
+  s.triggerAttackRelease("G5", "16n", now + 0.2);
 }
 
-/** Play a single lower note for recording stop */
+/** Play the same chime reversed (G5→E5→C5) for recording stop */
 export function playStopSound(volume: number): void {
   const s = ensureSynth();
   s.volume.value = volumeToDb(volume);
-  s.triggerAttackRelease("D5", "8n", Tone.now());
+  const now = Tone.now();
+  s.triggerAttackRelease("G5", "16n", now);
+  s.triggerAttackRelease("E5", "16n", now + 0.1);
+  s.triggerAttackRelease("C5", "16n", now + 0.2);
 }
 
 /** Convert a 0.0-1.0 volume to decibels */
