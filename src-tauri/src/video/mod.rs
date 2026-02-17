@@ -20,7 +20,7 @@ use gstreamer_pbutils as gst_pbutils;
 use gst_pbutils::prelude::*;
 
 /// Supported codecs for playback
-const SUPPORTED_CODECS: &[&str] = &["mjpeg", "vp8", "vp9", "av1", "raw", "ffv1"];
+const SUPPORTED_CODECS: &[&str] = &["mjpeg", "vp8", "vp9", "av1", "raw", "ffv1", "h264"];
 
 /// Information about a video file's codec
 #[derive(Debug, Clone)]
@@ -69,7 +69,7 @@ pub fn probe_video_codec<P: AsRef<Path>>(path: P) -> Result<VideoCodecInfo, Vide
     let is_supported = is_codec_supported(&codec);
     
     let reason = if !is_supported {
-        Some(format!("Codec '{}' is not supported. Supported codecs: MJPEG, VP8, VP9, AV1, FFV1", codec))
+        Some(format!("Codec '{}' is not supported. Supported codecs: MJPEG, VP8, VP9, AV1, FFV1, H264", codec))
     } else {
         None
     };

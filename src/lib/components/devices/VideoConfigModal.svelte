@@ -509,7 +509,7 @@
                         <span class="warning-icon">&#9888;</span>
                         {getCodecDisplayName(selectedCodec)} is a proprietary codec
                         and will be recorded as passthrough only. In-app playback
-                        is not supported.
+                        depends on support from your operating system.
                     </span>
                 {:else if isEncodeOnly}
                     <span class="field-hint">RAW video must be encoded</span>
