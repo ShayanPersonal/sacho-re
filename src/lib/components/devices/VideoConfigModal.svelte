@@ -397,7 +397,7 @@
             <!-- Source Codec -->
             <div class="field">
                 <label for="codec-select">
-                    Device Codec
+                    Source Codec
                     <span class="help-wrapper">
                         <button
                             class="help-btn"
