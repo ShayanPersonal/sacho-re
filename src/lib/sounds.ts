@@ -1,8 +1,22 @@
 // Sound notification utilities using Tone.js
 
 import * as Tone from "tone";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { appConfigDir, join } from "@tauri-apps/api/path";
 
 let synth: Tone.PolySynth | null = null;
+let cachedConfigDir: string | null = null;
+
+// Playback tracking for preview toggle
+let currentAudio: HTMLAudioElement | null = null;
+let playingType: "start" | "stop" | null = null;
+
+async function getConfigDir(): Promise<string> {
+  if (!cachedConfigDir) {
+    cachedConfigDir = await appConfigDir();
+  }
+  return cachedConfigDir;
+}
 
 function ensureSynth(): Tone.PolySynth {
   if (!synth) {
@@ -19,24 +33,114 @@ function ensureSynth(): Tone.PolySynth {
   return synth;
 }
 
-/** Play a short ascending chime (C5→E5→G5) for recording start */
-export function playStartSound(volume: number): void {
+/** Stop any currently playing preview sound */
+export function stopPlayback(): void {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+    currentAudio = null;
+  }
+  if (synth) {
+    synth.releaseAll();
+  }
+  playingType = null;
+}
+
+/** Play a custom audio file via HTMLAudioElement. Returns true if playback started. */
+async function playCustomFile(
+  relativePath: string,
+  volume: number,
+): Promise<boolean> {
+  try {
+    const configDir = await getConfigDir();
+    const fullPath = await join(configDir, relativePath);
+    const url = convertFileSrc(fullPath);
+    const audio = new Audio(url);
+    audio.volume = Math.max(0, Math.min(1, volume));
+    currentAudio = audio;
+    audio.addEventListener("ended", () => {
+      if (currentAudio === audio) {
+        currentAudio = null;
+        playingType = null;
+      }
+    });
+    await audio.play();
+    return true;
+  } catch (e) {
+    console.warn("Failed to play custom sound, falling back to default:", e);
+    currentAudio = null;
+    return false;
+  }
+}
+
+/** Play a short ascending chime (C5->E5->G5) for recording start.
+ *  When called as a preview (from Settings), toggles playback on repeat press. */
+export async function playStartSound(
+  volume: number,
+  customPath?: string | null,
+): Promise<void> {
+  // Toggle: if already playing start sound, stop it
+  if (playingType === "start") {
+    stopPlayback();
+    return;
+  }
+  stopPlayback();
+  playingType = "start";
+
+  if (customPath) {
+    const played = await playCustomFile(customPath, volume);
+    if (played) return;
+  }
+  // Fall back to Tone.js synth
   const s = ensureSynth();
   s.volume.value = volumeToDb(volume);
   const now = Tone.now();
   s.triggerAttackRelease("C5", "16n", now);
   s.triggerAttackRelease("E5", "16n", now + 0.1);
   s.triggerAttackRelease("G5", "16n", now + 0.2);
+  // Tone.js chime is ~0.4s total; clear playing state after it finishes
+  setTimeout(() => {
+    if (playingType === "start") playingType = null;
+  }, 500);
 }
 
-/** Play the same chime reversed (G5→E5→C5) for recording stop */
-export function playStopSound(volume: number): void {
+/** Play the same chime reversed (G5->E5->C5) for recording stop.
+ *  When called as a preview (from Settings), toggles playback on repeat press. */
+export async function playStopSound(
+  volume: number,
+  customPath?: string | null,
+): Promise<void> {
+  // Toggle: if already playing stop sound, stop it
+  if (playingType === "stop") {
+    stopPlayback();
+    return;
+  }
+  stopPlayback();
+  playingType = "stop";
+
+  if (customPath) {
+    const played = await playCustomFile(customPath, volume);
+    if (played) return;
+  }
+  // Fall back to Tone.js synth
   const s = ensureSynth();
   s.volume.value = volumeToDb(volume);
   const now = Tone.now();
   s.triggerAttackRelease("G5", "16n", now);
   s.triggerAttackRelease("E5", "16n", now + 0.1);
   s.triggerAttackRelease("C5", "16n", now + 0.2);
+  setTimeout(() => {
+    if (playingType === "stop") playingType = null;
+  }, 500);
+}
+
+/** Preview a custom sound file by its relative path in the config dir */
+export async function previewCustomSound(
+  relativePath: string,
+  volume: number,
+): Promise<void> {
+  stopPlayback();
+  await playCustomFile(relativePath, volume);
 }
 
 /** Convert a 0.0-1.0 volume to decibels */

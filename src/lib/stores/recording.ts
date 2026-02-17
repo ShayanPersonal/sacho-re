@@ -27,7 +27,7 @@ listen('recording-started', (event) => {
   console.log('Recording started from backend:', event.payload);
   const cfg = get(settings);
   if (cfg?.sound_recording_start) {
-    playStartSound(cfg.sound_volume);
+    playStartSound(cfg.sound_volume, cfg.custom_sound_start);
   }
   refreshRecordingState();
 });
@@ -36,7 +36,7 @@ listen('recording-stopped', async (event) => {
     console.log('Recording stopped from backend:', event.payload);
     const cfg = get(settings);
     if (cfg?.sound_recording_stop) {
-      playStopSound(cfg.sound_volume);
+      playStopSound(cfg.sound_volume, cfg.custom_sound_stop);
     }
     await refreshRecordingState();
     

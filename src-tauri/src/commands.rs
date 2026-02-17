@@ -8,7 +8,7 @@ use crate::session::{SessionDatabase, SessionSummary, SessionMetadata, SessionFi
 use crate::similarity;
 use crate::autostart::{self, AutostartInfo};
 use parking_lot::{RwLock, Mutex};
-use tauri::{State, Emitter};
+use tauri::{State, Emitter, Manager};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -1458,6 +1458,87 @@ async fn run_auto_select_test(
     println!("[AutoSelect] Best preset level: {} ({})", best_level, crate::encoding::presets::preset_label(best_level));
     
     Ok(best_level)
+}
+
+// ============================================================================
+// Custom Sound Commands
+// ============================================================================
+
+/// Copy a user-selected audio file into the app config dir (sounds/ subfolder)
+/// and store the relative path in config.
+#[tauri::command]
+pub fn set_custom_sound(
+    app: tauri::AppHandle,
+    config: State<'_, RwLock<Config>>,
+    source_path: String,
+    sound_type: String,
+) -> Result<String, String> {
+    use std::path::Path;
+
+    let source = Path::new(&source_path);
+    if !source.exists() {
+        return Err("Source file does not exist".to_string());
+    }
+
+    let filename = source.file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("Invalid filename")?;
+
+    // Build destination: <app_config_dir>/sounds/<sound_type>_<filename>
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let sounds_dir = config_dir.join("sounds");
+    std::fs::create_dir_all(&sounds_dir).map_err(|e| e.to_string())?;
+
+    let dest_filename = format!("{}_{}", sound_type, filename);
+    let dest_path = sounds_dir.join(&dest_filename);
+
+    std::fs::copy(&source, &dest_path).map_err(|e| e.to_string())?;
+
+    let relative_path = format!("sounds/{}", dest_filename);
+
+    // Update config
+    {
+        let mut cfg = config.write();
+        match sound_type.as_str() {
+            "start" => cfg.custom_sound_start = Some(relative_path.clone()),
+            "stop" => cfg.custom_sound_stop = Some(relative_path.clone()),
+            _ => return Err("Invalid sound_type: must be 'start' or 'stop'".to_string()),
+        }
+        cfg.save(&app).map_err(|e| e.to_string())?;
+    }
+
+    Ok(relative_path)
+}
+
+/// Clear a custom sound: delete the copied file and remove the path from config.
+#[tauri::command]
+pub fn clear_custom_sound(
+    app: tauri::AppHandle,
+    config: State<'_, RwLock<Config>>,
+    sound_type: String,
+) -> Result<(), String> {
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+
+    {
+        let mut cfg = config.write();
+        let path_opt = match sound_type.as_str() {
+            "start" => cfg.custom_sound_start.take(),
+            "stop" => cfg.custom_sound_stop.take(),
+            _ => return Err("Invalid sound_type: must be 'start' or 'stop'".to_string()),
+        };
+
+        // Delete the file if it exists
+        if let Some(ref rel_path) = path_opt {
+            let full_path = config_dir.join(rel_path);
+            if full_path.exists() {
+                let _ = std::fs::remove_file(&full_path);
+            }
+        }
+
+        cfg.save(&app).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 // ============================================================================

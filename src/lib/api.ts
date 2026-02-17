@@ -337,6 +337,8 @@ export interface Config {
   sound_recording_start: boolean;
   sound_recording_stop: boolean;
   sound_volume: number;
+  custom_sound_start: string | null;
+  custom_sound_stop: string | null;
   selected_audio_devices: string[];
   selected_midi_devices: string[];
   trigger_midi_devices: string[];
@@ -601,6 +603,21 @@ export async function updateAudioTriggerThresholds(
   thresholds: Record<string, number>,
 ): Promise<void> {
   await invoke("update_audio_trigger_thresholds", { thresholds });
+}
+
+/** Copy a custom sound file into the app config dir. Returns the relative path. */
+export async function setCustomSound(
+  sourcePath: string,
+  soundType: "start" | "stop",
+): Promise<string> {
+  return invoke("set_custom_sound", { sourcePath, soundType });
+}
+
+/** Clear a custom sound: delete the copied file and remove from config. */
+export async function clearCustomSound(
+  soundType: "start" | "stop",
+): Promise<void> {
+  return invoke("clear_custom_sound", { soundType });
 }
 
 // ============================================================================

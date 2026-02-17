@@ -14,7 +14,12 @@
     } from "$lib/api";
     import { invoke } from "@tauri-apps/api/core";
     import { onMount, onDestroy } from "svelte";
-    import { playStartSound, playStopSound } from "$lib/sounds";
+    import {
+        playStartSound,
+        playStopSound,
+        previewCustomSound,
+    } from "$lib/sounds";
+    import { setCustomSound, clearCustomSound } from "$lib/api";
 
     function positionTooltip(node: HTMLElement) {
         const rect = node.getBoundingClientRect();
@@ -174,6 +179,61 @@
             autoSave();
         }
     }
+
+    /** Extract just the filename from a relative path like "sounds/start_mysound.mp3" */
+    function customSoundFilename(relativePath: string | null): string {
+        if (!relativePath) return "";
+        const parts = relativePath.split("/");
+        const name = parts[parts.length - 1];
+        // Strip the "start_" or "stop_" prefix added by the backend
+        const prefixMatch = name.match(/^(?:start|stop)_(.+)$/);
+        return prefixMatch ? prefixMatch[1] : name;
+    }
+
+    async function browseCustomSound(soundType: "start" | "stop") {
+        if (!localSettings) return;
+
+        const selected = await open({
+            multiple: false,
+            title: `Select custom ${soundType} sound`,
+            filters: [
+                {
+                    name: "Audio Files",
+                    extensions: ["wav", "mp3", "ogg", "flac", "webm"],
+                },
+            ],
+        });
+
+        if (selected && typeof selected === "string") {
+            try {
+                const relativePath = await setCustomSound(selected, soundType);
+                if (soundType === "start") {
+                    localSettings.custom_sound_start = relativePath;
+                } else {
+                    localSettings.custom_sound_stop = relativePath;
+                }
+                autoSave();
+            } catch (e) {
+                console.error("Failed to set custom sound:", e);
+            }
+        }
+    }
+
+    async function resetCustomSound(soundType: "start" | "stop") {
+        if (!localSettings) return;
+
+        try {
+            await clearCustomSound(soundType);
+            if (soundType === "start") {
+                localSettings.custom_sound_start = null;
+            } else {
+                localSettings.custom_sound_stop = null;
+            }
+            autoSave();
+        } catch (e) {
+            console.error("Failed to clear custom sound:", e);
+        }
+    }
 </script>
 
 <div class="settings">
@@ -231,7 +291,7 @@
                     {#if appStats}
                         <span
                             class="section-stats"
-                            title="Current CPU and memory usage of this application"
+                            title="Current CPU and memory usage of the application (estimate)"
                             >CPU: {Math.round(appStats.cpu_percent)}% · RAM: {formatGB(
                                 appStats.memory_bytes,
                             )}</span
@@ -322,10 +382,9 @@
                             {#if showPrerollEncodeHelp}
                                 <div class="help-tooltip" use:positionTooltip>
                                     Increases the pre-roll limit from 5 to 30
-                                    seconds at the cost of background CPU usage
-                                    before any recording has started. <br /><br
-                                    />Best combined with hardware acceleration.
-                                    If not sure, leave this off.
+                                    seconds at the cost of background CPU usage. <br
+                                    /><br />Best combined with hardware
+                                    acceleration. If not sure, leave this off.
                                 </div>
                             {/if}
                         </span>
@@ -461,8 +520,9 @@
                                 {/if}
                                 <p class="advanced-field-description">
                                     {#if (localSettings.audio_format === "wav" ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === "int16"}
-                                        Smallest files. Not optimal if you need
-                                        to boost the volume of quiet sections.
+                                        {localSettings.audio_format === "flac"
+                                            ? "Smallest files. Not optimal if you need to boost the volume of quiet sections."
+                                            : "Smaller files. Not optimal if you need to boost the volume of quiet sections."}
                                     {:else if (localSettings.audio_format === "wav" ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === "int24"}
                                         Studio quality. Wide compatibility.
                                     {:else}
@@ -618,28 +678,94 @@
                     </label>
                 </div>
                 <div class="setting-row">
-                    <label class="checkbox-row">
-                        <input
-                            type="checkbox"
-                            bind:checked={localSettings.sound_recording_start}
-                            onchange={autoSave}
-                        />
-                        <span class="setting-label"
-                            >Play sound when recording starts</span
-                        >
-                    </label>
+                    <div class="checkbox-row-with-customize">
+                        <label class="checkbox-row">
+                            <input
+                                type="checkbox"
+                                bind:checked={
+                                    localSettings.sound_recording_start
+                                }
+                                onchange={() => {
+                                    if (!localSettings) return;
+                                    if (!localSettings.sound_recording_start) {
+                                        resetCustomSound("start");
+                                    } else {
+                                        autoSave();
+                                    }
+                                }}
+                            />
+                            <span class="setting-label"
+                                >Play sound when recording starts</span
+                            >
+                        </label>
+                        {#if localSettings.sound_recording_start}
+                            <button
+                                class="customize-btn"
+                                onclick={() => browseCustomSound("start")}
+                                >Customize</button
+                            >
+                            {#if localSettings.custom_sound_start}
+                                <span
+                                    class="custom-sound-name"
+                                    title={localSettings.custom_sound_start}
+                                    >{customSoundFilename(
+                                        localSettings.custom_sound_start,
+                                    )}</span
+                                >
+                                <button
+                                    class="custom-sound-clear"
+                                    onclick={() => resetCustomSound("start")}
+                                    title="Reset to default sound"
+                                    >&times;</button
+                                >
+                            {/if}
+                        {/if}
+                    </div>
                 </div>
                 <div class="setting-row">
-                    <label class="checkbox-row">
-                        <input
-                            type="checkbox"
-                            bind:checked={localSettings.sound_recording_stop}
-                            onchange={autoSave}
-                        />
-                        <span class="setting-label"
-                            >Play sound when recording stops</span
-                        >
-                    </label>
+                    <div class="checkbox-row-with-customize">
+                        <label class="checkbox-row">
+                            <input
+                                type="checkbox"
+                                bind:checked={
+                                    localSettings.sound_recording_stop
+                                }
+                                onchange={() => {
+                                    if (!localSettings) return;
+                                    if (!localSettings.sound_recording_stop) {
+                                        resetCustomSound("stop");
+                                    } else {
+                                        autoSave();
+                                    }
+                                }}
+                            />
+                            <span class="setting-label"
+                                >Play sound when recording stops</span
+                            >
+                        </label>
+                        {#if localSettings.sound_recording_stop}
+                            <button
+                                class="customize-btn"
+                                onclick={() => browseCustomSound("stop")}
+                                >Customize</button
+                            >
+                            {#if localSettings.custom_sound_stop}
+                                <span
+                                    class="custom-sound-name"
+                                    title={localSettings.custom_sound_stop}
+                                    >{customSoundFilename(
+                                        localSettings.custom_sound_stop,
+                                    )}</span
+                                >
+                                <button
+                                    class="custom-sound-clear"
+                                    onclick={() => resetCustomSound("stop")}
+                                    title="Reset to default sound"
+                                    >&times;</button
+                                >
+                            {/if}
+                        {/if}
+                    </div>
                 </div>
                 {#if localSettings.sound_recording_start || localSettings.sound_recording_stop}
                     <div class="setting-row">
@@ -665,7 +791,10 @@
                                 disabled={!localSettings.sound_recording_start}
                                 onclick={() =>
                                     localSettings &&
-                                    playStartSound(localSettings.sound_volume)}
+                                    playStartSound(
+                                        localSettings.sound_volume,
+                                        localSettings.custom_sound_start,
+                                    )}
                                 title="Preview start sound"
                                 ><svg
                                     class="preview-icon"
@@ -685,7 +814,10 @@
                                 disabled={!localSettings.sound_recording_stop}
                                 onclick={() =>
                                     localSettings &&
-                                    playStopSound(localSettings.sound_volume)}
+                                    playStopSound(
+                                        localSettings.sound_volume,
+                                        localSettings.custom_sound_stop,
+                                    )}
                                 title="Preview stop sound"
                                 ><svg
                                     class="preview-icon"
@@ -1173,6 +1305,82 @@
         width: 11px;
         height: 11px;
         vertical-align: -1px;
+    }
+
+    .checkbox-row-with-customize {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .checkbox-row-with-customize > .checkbox-row {
+        min-width: 240px;
+    }
+
+    .custom-sound-name {
+        font-size: 0.6875rem;
+        color: #c9a962;
+        max-width: 120px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .custom-sound-clear {
+        background: none;
+        border: none;
+        color: #6b6b6b;
+        font-size: 0.875rem;
+        cursor: pointer;
+        padding: 0 0.125rem;
+        line-height: 1;
+        transition: color 0.15s ease;
+    }
+
+    .custom-sound-clear:hover {
+        color: #e57373;
+    }
+
+    .customize-btn {
+        padding: 0.1875rem 0.5rem;
+        background: transparent;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 0.25rem;
+        color: #6b6b6b;
+        font-family: inherit;
+        font-size: 0.625rem;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all 0.2s ease;
+    }
+
+    .customize-btn:hover {
+        color: #a8a8a8;
+        border-color: rgba(255, 255, 255, 0.1);
+    }
+
+    :global(body.light-mode) .custom-sound-name {
+        color: #8a6a20;
+    }
+
+    :global(body.light-mode) .custom-sound-clear {
+        color: #888;
+    }
+
+    :global(body.light-mode) .custom-sound-clear:hover {
+        color: #d32f2f;
+    }
+
+    :global(body.light-mode) .customize-btn {
+        border-color: rgba(0, 0, 0, 0.12);
+        color: #5a5a5a;
+    }
+
+    :global(body.light-mode) .customize-btn:hover {
+        color: #3a3a3a;
+        border-color: rgba(0, 0, 0, 0.2);
     }
 
     :global(body.light-mode) .volume-slider-row input[type="range"] {

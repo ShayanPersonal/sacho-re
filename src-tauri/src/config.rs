@@ -74,6 +74,14 @@ pub struct Config {
     #[serde(default = "default_sound_volume")]
     pub sound_volume: f64,
 
+    /// Path to custom start sound file (relative to app config dir, inside sounds/)
+    #[serde(default)]
+    pub custom_sound_start: Option<String>,
+
+    /// Path to custom stop sound file (relative to app config dir, inside sounds/)
+    #[serde(default)]
+    pub custom_sound_stop: Option<String>,
+
     /// Selected audio device IDs
     pub selected_audio_devices: Vec<String>,
 
@@ -331,6 +339,8 @@ impl Default for Config {
             sound_recording_start: false,
             sound_recording_stop: false,
             sound_volume: 0.5,
+            custom_sound_start: None,
+            custom_sound_stop: None,
             selected_audio_devices: Vec::new(),
             selected_midi_devices: Vec::new(),
             trigger_midi_devices: Vec::new(),

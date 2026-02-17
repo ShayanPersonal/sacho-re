@@ -182,6 +182,8 @@ pub fn run() {
             commands::get_video_frame_timestamps,
             commands::get_encoder_availability,
             commands::auto_select_encoder_preset,
+            commands::set_custom_sound,
+            commands::clear_custom_sound,
             commands::get_autostart_info,
             commands::set_all_users_autostart,
             commands::simulate_crash,
