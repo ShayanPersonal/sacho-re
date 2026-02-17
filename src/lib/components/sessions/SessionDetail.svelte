@@ -626,12 +626,11 @@
                         <div class="video-unsupported-overlay">
                             <span class="error-icon">⚠</span>
                             <span class="error-text"
-                                >Unsupported video format</span
+                                >{videoUnsupportedCodec === "H264"
+                                    ? "H.264 playback not supported"
+                                    : "Unsupported video format"}</span
                             >
-                            <span class="error-hint"
-                                >We recommend using VLC Media Player for
-                                playback</span
-                            >
+                            <span class="error-hint">Use external player</span>
                         </div>
                     {:else if useCustomPlayer && currentVideoFile}
                         <!-- Custom JPEG frame player for MJPEG -->
@@ -678,9 +677,7 @@
                 </div>
                 {#if currentVideoFile}
                     <p class="source-label">
-                        {useCustomPlayer
-                            ? " (frame player)"
-                            : ""}{videoUnsupportedCodec ? " (unsupported)" : ""}
+                        {useCustomPlayer ? " (frame player)" : ""}
                     </p>
                 {/if}
             {:else}

@@ -351,8 +351,7 @@
                         >
                     </div>
                     <p class="setting-recommendation">
-                        We recommend backing up this folder to a cloud storage
-                        service.
+                        dd backing up this folder to a cloud storage service.
                     </p>
                 </div>
                 <div class="setting-row">
