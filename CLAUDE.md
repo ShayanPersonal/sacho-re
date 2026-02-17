@@ -24,6 +24,13 @@ npm run tauri dev              # Run full app in development (frontend HMR + bac
 npm run tauri build            # Production build (NSIS installer on Windows)
 npm run check                  # TypeScript + Svelte validation
 npm run check:watch            # Watch mode for type checking
+
+# Integration tests (from src-tauri/)
+cargo run --bin integration_tests              # Run all tests
+cargo run --bin integration_tests -- --list    # List tests without running
+cargo run --bin integration_tests -- --filter <pattern>  # Run matching tests
+cargo run --bin integration_tests -- --verbose           # Extra debug output
+cargo run --bin integration_tests -- --keep-sessions     # Preserve output files
 ```
 
 Frontend dev server runs on `http://localhost:1420`. GStreamer must be installed on the system for development.
@@ -75,4 +82,42 @@ Async encoder on separate thread pool. Raw sources re-encoded (AV1/VP9/VP8), MJP
 - Tauri commands are snake_case in Rust, invoked as strings from TS (`invoke('get_audio_devices')`)
 - Frontend types in `api.ts` must stay in sync with Rust serde structs in `commands.rs`
 - Config stored at platform-appropriate path (e.g., `%APPDATA%\com.sacho.app\config.toml` on Windows)
-- No test suite currently — validation via `npm run check` and manual testing with `npm run tauri dev`
+- Frontend validation via `npm run check`; backend integration tests via `cargo run --bin integration_tests` (see below)
+
+## Integration Tests
+
+A standalone `[[bin]]` target that builds a real headless Tauri app, discovers hardware, runs test permutations sequentially, validates output files, and reports results. Tests exercise the full recording pipeline (MIDI trigger → pre-roll → audio/video capture → idle timeout → session save) with real hardware.
+
+### Setup
+
+1. Copy `src-tauri/test_devices.example.toml` to `src-tauri/test_devices.toml`
+2. Edit `test_devices.toml` to match your hardware (substring matches against device names)
+3. Required: a virtual MIDI loopback driver (e.g. LoopBe1 on Windows) for programmatic triggering
+4. The runner auto-skips tests whose required devices aren't available
+
+### How It Works
+
+- **Device config** (`test_devices.toml`): declares MIDI/audio/video devices by name substring, resolved against actual hardware at runtime
+- **TestApp** (`test_harness/app.rs`): headless Tauri app mirroring production setup — temp dir for sessions, in-memory SQLite DB
+- **MidiSender** (`test_harness/midi_sender.rs`): sends MIDI through a loopback device to trigger recording
+- **Validators** (`test_harness/validators.rs`): deep file validation — WAV (RIFF parsing + RMS), FLAC (STREAMINFO), MIDI (note extraction), MKV (GStreamer Discoverer)
+- **Permutations** (`test_harness/permutations.rs`): test matrix built from available devices (midi-only, midi+audio, midi+video, full pipeline, manual start/stop, double trigger, rapid restart)
+
+### Key Modules
+
+| Path | Purpose |
+|------|---------|
+| `src-tauri/src/bin/integration_tests.rs` | Binary entry point with CLI arg parsing |
+| `src-tauri/src/test_harness/discovery.rs` | Load test_devices.toml, resolve against hardware |
+| `src-tauri/src/test_harness/app.rs` | Headless Tauri app builder |
+| `src-tauri/src/test_harness/midi_sender.rs` | MIDI output via loopback device |
+| `src-tauri/src/test_harness/validators.rs` | WAV/FLAC/MIDI/MKV deep validation |
+| `src-tauri/src/test_harness/runner.rs` | Test execution framework |
+| `src-tauri/src/test_harness/permutations.rs` | Test matrix definitions |
+
+### Notes
+
+- Tests run sequentially (shared physical hardware)
+- Each test gets its own temp directory, auto-cleaned on completion
+- `test_devices.toml` is gitignored; `test_devices.example.toml` is checked in
+- The test harness module is compiled into the main lib crate (no production code refactoring needed)

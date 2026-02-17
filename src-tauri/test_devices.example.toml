@@ -1,0 +1,35 @@
+# Sacho Integration Test - Device Configuration
+#
+# Copy this file to test_devices.toml and edit for your setup.
+# Each [[midi]], [[audio]], [[video]] entry declares a device to test with.
+# The test runner matches these against actually-connected devices at runtime.
+
+# MIDI devices — at least one must be a virtual loopback (for programmatic triggering)
+[[midi]]
+name_contains = "LoopBe"        # Substring match against MIDI port name
+role = "trigger_and_record"     # "trigger_and_record" | "record_only"
+label = "loopbe1"               # Short label used in test names
+
+# Audio input devices
+[[audio]]
+name_contains = "C270"          # Substring match against cpal device name
+label = "c270_mic"
+
+# [[audio]]
+# name_contains = "Scarlett"
+# label = "scarlett"
+
+# Video capture devices
+[[video]]
+name_contains = "C270"          # Substring match against GStreamer device name
+label = "c270_cam"
+
+[[video]]
+name_contains = "HD60"
+label = "hd60"
+
+# Global test settings (optional, sensible defaults used if omitted)
+[settings]
+pipeline_warmup_secs = 3        # Seconds to wait after MidiMonitor::start() before triggering
+file_finalization_secs = 2      # Seconds to wait after recording stops for files to flush
+duration_tolerance_secs = 2.0   # Acceptable +/- for duration checks

@@ -69,6 +69,14 @@ The app uses FFV1 through GStreamer's `avenc_ffv1` element (provided by `gstliba
    npm run tauri build
    ```
 
+Tests
+  cd src-tauri
+  cp test_devices.example.toml test_devices.toml  # edit for your setup
+  cargo run --bin integration_tests -- --list      # see available tests
+  cargo run --bin integration_tests -- --verbose   # run all
+  cargo run --bin integration_tests -- --filter full_c270  # run subset
+  cargo run --bin integration_tests -- --keep-sessions     # debug output files
+
 ## Expected Output
 
 | DLL | Full GStreamer size | FFV1-only (expected) |

@@ -12,6 +12,7 @@ pub mod similarity;
 pub mod tray;
 pub mod notifications;
 pub mod commands;
+pub mod test_harness;
 pub mod video;
 
 use std::sync::Arc;

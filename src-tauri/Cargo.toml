@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Automatic recording companion for musicians - captures MIDI, audio, and video"
 authors = ["Sacho Team"]
 edition = "2021"
+default-run = "sacho"
 
 [lib]
 name = "sacho_lib"
@@ -82,6 +83,9 @@ ringbuf = "0.4"
 
 # Base64 encoding for video frame transfer
 base64 = "0.22"
+# Temp directories for integration tests
+tempfile = "3"
+
 sysinfo = { version = "0.38.1", default-features = false, features = ["disk", "system"] }
 
 # Windows console attachment for CLI logging
@@ -92,6 +96,10 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Registry",
     "Win32_UI_Shell",
 ] }
+
+[[bin]]
+name = "integration_tests"
+path = "src/bin/integration_tests.rs"
 
 [features]
 default = []
