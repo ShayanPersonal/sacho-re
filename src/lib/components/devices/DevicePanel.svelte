@@ -127,6 +127,28 @@
     let showAudioTriggerHelp = $state(false);
     let showFormatHelp = $state(false);
 
+    // Dismissed warning banners (reset on config change or app restart)
+    let dismissedFfv1 = $state<Set<string>>(new Set());
+    let dismissedFps = $state<Set<string>>(new Set());
+
+    // Reset dismissed warnings when video device configs change
+    let lastConfigSnapshot = JSON.stringify($videoDeviceConfigs);
+    $effect(() => {
+        const snapshot = JSON.stringify($videoDeviceConfigs);
+        if (snapshot !== lastConfigSnapshot) {
+            lastConfigSnapshot = snapshot;
+            dismissedFfv1 = new Set();
+            dismissedFps = new Set();
+        }
+    });
+
+    const visibleFfv1Warnings = $derived(
+        $ffv1WarningDevices.filter((name) => !dismissedFfv1.has(name)),
+    );
+    const visibleFpsWarnings = $derived(
+        $videoFpsWarnings.filter((w) => !dismissedFps.has(w.device_name)),
+    );
+
     // Local threshold being dragged (device_id -> value), saved on release
     let draggingThreshold = $state<Record<string, number>>({});
 
@@ -511,22 +533,30 @@
 
             {#if expandedSections.has("video")}
                 <div class="section-content">
-                    {#if $ffv1WarningDevices.length > 0}
+                    {#if visibleFfv1Warnings.length > 0}
                         <div class="fps-warning">
-                            {#each $ffv1WarningDevices as name}
+                            {#each visibleFfv1Warnings as name}
                                 <p>
                                     ⚠️ {name} is configured with FFV1. Recordings
-                                    will use significant disk space
+                                    may use significant disk space
+                                    <button
+                                        class="warning-dismiss"
+                                        onclick={() => { dismissedFfv1 = new Set([...dismissedFfv1, name]); }}
+                                    >&times;</button>
                                 </p>
                             {/each}
                         </div>
                     {/if}
-                    {#if $videoFpsWarnings.length > 0}
+                    {#if visibleFpsWarnings.length > 0}
                         <div class="fps-warning">
-                            {#each $videoFpsWarnings as warning}
+                            {#each visibleFpsWarnings as warning}
                                 <p>
                                     ⚠️{warning.device_name} delivering {warning.actual_fps}fps
                                     instead of requested {warning.expected_fps}fps
+                                    <button
+                                        class="warning-dismiss"
+                                        onclick={() => { dismissedFps = new Set([...dismissedFps, warning.device_name]); }}
+                                    >&times;</button>
                                 </p>
                             {/each}
                         </div>
@@ -939,10 +969,29 @@
 
     .fps-warning p {
         margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
     }
 
     .fps-warning p + p {
         margin-top: 0.25rem;
+    }
+
+    .warning-dismiss {
+        margin-left: auto;
+        background: none;
+        border: none;
+        color: inherit;
+        font-size: 1rem;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0 0.25rem;
+        opacity: 0.6;
+    }
+
+    .warning-dismiss:hover {
+        opacity: 1;
     }
 
     /* Video device section */
