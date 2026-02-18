@@ -136,6 +136,15 @@
                 </div>
             </div>
 
+            <div class="disclaimer">
+                <p>
+                    This software is provided "as-is" without warranty of any
+                    kind, express or implied. In no event shall the author be
+                    liable for any claim, damages, or other liability arising
+                    from the use of this software. Use at your own risk.
+                </p>
+            </div>
+
             <div class="open-source-notice">
                 <p class="notice-title">Open Source Licenses</p>
                 <p class="notice-text">
@@ -150,7 +159,8 @@
                         onclick={() =>
                             openExternal(
                                 "https://www.gnu.org/licenses/lgpl-2.1.html",
-                            )}>GNU Lesser General Public License (LGPL)</button
+                            )}
+                        >GNU Lesser General Public License (LGPL) v2.1</button
                     >. The complete source code for this version of GStreamer is
                     available at
                     <button
@@ -160,17 +170,43 @@
                                 "https://gitlab.freedesktop.org/gstreamer/gstreamer/-/tree/1.26.10",
                             )}
                         >gitlab.freedesktop.org/gstreamer/-/tree/1.26.10</button
-                    >. The GStreamer dynamic libraries used by this application
-                    are located in the application installation folder.
+                    >.
                 </p>
-            </div>
-
-            <div class="disclaimer">
-                <p>
-                    This software is provided "as-is" without warranty of any
-                    kind, express or implied. In no event shall the author be
-                    liable for any claim, damages, or other liability arising
-                    from the use of this software. Use at your own risk.
+                <p class="notice-text">
+                    This software uses libraries from the <button
+                        class="link-btn"
+                        onclick={() => openExternal("https://ffmpeg.org/")}
+                        >FFmpeg</button
+                    >
+                    project under the
+                    <button
+                        class="link-btn"
+                        onclick={() =>
+                            openExternal(
+                                "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html",
+                            )}>LGPLv2.1</button
+                    >. The complete source code for this version of FFmpeg is
+                    available at
+                    <button
+                        class="link-btn"
+                        onclick={() =>
+                            openExternal(
+                                "https://www.ffmpeg.org/releases/ffmpeg-7.1.1.tar.gz",
+                            )}>ffmpeg.org/releases/ffmpeg-7.1.1.tar.gz</button
+                    >. It was compiled with:
+                    <code class="notice-code"
+                        >--toolchain=msvc --enable-shared --disable-static
+                        --disable-programs --disable-doc --disable-everything
+                        --enable-encoder=ffv1 --enable-decoder=ffv1
+                        --disable-avdevice --disable-postproc --disable-network
+                        --disable-autodetect</code
+                    >. FFmpeg is a trademark of Fabrice Bellard, originator of
+                    the FFmpeg project.
+                </p>
+                <p class="notice-text notice-muted">
+                    This software does not include H.264 encoders or decoders.
+                    When available, it delegates to platform-native tools such
+                    as Windows Media Foundation and Apple VideoToolbox.
                 </p>
             </div>
         </div>
@@ -368,6 +404,10 @@
         text-align: center;
     }
 
+    .notice-text + .notice-text {
+        margin-top: 0.75rem;
+    }
+
     .notice-text .link-btn {
         background: none;
         border: none;
@@ -380,6 +420,18 @@
 
     .notice-text .link-btn:hover {
         text-decoration: underline;
+    }
+
+    .notice-code {
+        font-family: monospace;
+        font-size: 0.5625rem;
+        color: #4a4a4a;
+        word-break: break-all;
+    }
+
+    .notice-muted {
+        color: #4a4a4a;
+        font-style: italic;
     }
 
     .disclaimer {
@@ -467,6 +519,14 @@
 
     :global(body.light-mode) .notice-text .link-btn {
         color: #8a6a20;
+    }
+
+    :global(body.light-mode) .notice-code {
+        color: #7a7a7a;
+    }
+
+    :global(body.light-mode) .notice-muted {
+        color: #8a8a8a;
     }
 
     :global(body.light-mode) .disclaimer {

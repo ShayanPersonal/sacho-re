@@ -169,7 +169,7 @@
             encoderAvailability[
                 encodingCodec as keyof Pick<
                     EncoderAvailability,
-                    "av1" | "vp9" | "vp8" | "ffv1"
+                    "av1" | "vp9" | "vp8" | "h264" | "ffv1"
                 >
             ];
         return info?.encoders ?? [];
@@ -188,7 +188,7 @@
                 encoderAvailability[
                     codec as keyof Pick<
                         EncoderAvailability,
-                        "av1" | "vp9" | "vp8" | "ffv1"
+                        "av1" | "vp9" | "vp8" | "h264" | "ffv1"
                     >
                 ];
             if (info?.recommended) {
@@ -214,7 +214,7 @@
             encoderAvailability[
                 encodingCodec as keyof Pick<
                     EncoderAvailability,
-                    "av1" | "vp9" | "vp8" | "ffv1"
+                    "av1" | "vp9" | "vp8" | "h264" | "ffv1"
                 >
             ];
         return info?.recommended ?? null;
@@ -517,14 +517,14 @@
                     <span class="field-hint">RAW video must be encoded</span>
                 {:else if passthrough && selectedCodec === "mjpeg"}
                     <span class="field-hint"
-                        ><span class="warning-icon">&#9888;</span>MJPEG uses
-                        significant disk space, which can be saved by
-                        re-encoding.</span
+                        ><span class="field-hint warning"
+                            >&#9888;MJPEG uses significant disk space, which can
+                            be saved by re-encoding.</span
+                        ></span
                     >
                 {:else if passthrough}
                     <span class="field-hint"
-                        >Video is recorded directly from the source without
-                        re-encoding.</span
+                        >Video is recorded to disk directly from the source.</span
                     >
                 {:else if !passthrough && selectedCodec === "mjpeg"}
                     <span class="field-hint"
@@ -533,9 +533,8 @@
                     >
                 {:else if !passthrough && selectedCodec !== "raw"}
                     <span class="field-hint warning"
-                        >Re-encoding an already-compressed stream causes quality
-                        loss. Use this only if you need to change resolution or
-                        frame rate.</span
+                        >&#9888;Re-encoding an already-compressed stream can
+                        cause quality loss.</span
                     >
                 {:else}
                     <span class="field-hint"

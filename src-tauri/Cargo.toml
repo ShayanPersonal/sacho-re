@@ -101,5 +101,9 @@ windows-sys = { version = "0.59", features = [
 name = "integration_tests"
 path = "src/bin/integration_tests.rs"
 
+[[bin]]
+name = "encoder_benchmark"
+path = "src/bin/encoder_benchmark.rs"
+
 [features]
 default = []
