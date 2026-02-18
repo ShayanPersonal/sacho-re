@@ -157,7 +157,7 @@
         if (encoderAvailability.ffv1.available)
             codecs.push({
                 codec: "ffv1",
-                label: "FFV1 (Lossless, huge files)",
+                label: "FFV1 (Lossless, very large files)",
             });
         return codecs;
     });
@@ -518,8 +518,8 @@
                 {:else if passthrough && selectedCodec === "mjpeg"}
                     <span class="field-hint"
                         ><span class="field-hint warning"
-                            >&#9888;MJPEG uses significant disk space, which can
-                            be saved by re-encoding.</span
+                            >&#9888; MJPEG uses significant disk space, which
+                            can be saved by re-encoding.</span
                         ></span
                     >
                 {:else if passthrough}
@@ -533,7 +533,7 @@
                     >
                 {:else if !passthrough && selectedCodec !== "raw"}
                     <span class="field-hint warning"
-                        >&#9888;Re-encoding an already-compressed stream can
+                        >&#9888; Re-encoding an already-compressed stream can
                         cause quality loss.</span
                     >
                 {:else}
@@ -572,7 +572,9 @@
                             {#each availableEncoders as enc}
                                 <option value={enc.id}
                                     >{enc.display_name}{enc.id ===
-                                        recommendedEncoder && enc.is_hardware
+                                        recommendedEncoder &&
+                                    enc.is_hardware &&
+                                    availableEncoders.length > 1
                                         ? " (Recommended)"
                                         : ""}</option
                                 >
@@ -705,12 +707,14 @@
                                     Slower encoding, smaller files. FFV1 quality
                                     is always lossless.
                                 {/if}
-                            {:else if presetLevel <= 3}
+                            {:else if presetLevel < 3}
                                 Smaller files. Smoother recordings on less
                                 powerful systems.
+                            {:else if presetLevel > 3}
+                                Larger, higher quality files. Works best on more
+                                powerful systems.
                             {:else}
-                                Larger files. Higher quality video. Works best
-                                on more powerful systems.
+                                Balanced quality and file size.
                             {/if}
                         </span>
                     </div>

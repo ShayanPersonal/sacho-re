@@ -631,17 +631,17 @@ impl PrerollVideoEncoder {
         // Create encoder element based on target codec
         let encoder = match target_codec {
             crate::encoding::VideoCodec::Av1 => {
-                AsyncVideoEncoder::create_av1_encoder(hw_type, &config)
+                AsyncVideoEncoder::create_av1_encoder(hw_type, &config, width, height, fps)
             }
             crate::encoding::VideoCodec::Vp8 => {
-                AsyncVideoEncoder::create_vp8_encoder(hw_type, &config)
+                AsyncVideoEncoder::create_vp8_encoder(hw_type, &config, width, height, fps)
             }
             crate::encoding::VideoCodec::Vp9 => {
-                AsyncVideoEncoder::create_vp9_encoder(hw_type, &config)
+                AsyncVideoEncoder::create_vp9_encoder(hw_type, &config, width, height, fps)
             }
 
             crate::encoding::VideoCodec::Ffv1 => {
-                AsyncVideoEncoder::create_ffv1_encoder(hw_type, &config)
+                AsyncVideoEncoder::create_ffv1_encoder(hw_type, &config, width, height, fps)
             }
             _ => {
                 return Err(VideoError::Pipeline(format!(
