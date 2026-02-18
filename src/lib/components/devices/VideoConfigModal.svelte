@@ -88,7 +88,7 @@
                         a[
                             encodingCodec as keyof Pick<
                                 EncoderAvailability,
-                                "av1" | "vp9" | "vp8" | "ffv1"
+                                "av1" | "vp9" | "vp8" | "h264" | "ffv1"
                             >
                         ];
                     if (info?.recommended) {
@@ -152,6 +152,8 @@
             codecs.push({ codec: "vp9", label: "VP9" });
         if (encoderAvailability.vp8.available)
             codecs.push({ codec: "vp8", label: "VP8" });
+        if (encoderAvailability.h264.available)
+            codecs.push({ codec: "h264", label: "H.264" });
         if (encoderAvailability.ffv1.available)
             codecs.push({
                 codec: "ffv1",
@@ -582,7 +584,7 @@
 
                 {#if encoderAvailability}
                     <p class="encoder-info">
-                        {#if encoderAvailability.av1.has_hardware || encoderAvailability.vp9.has_hardware || encoderAvailability.vp8.has_hardware}
+                        {#if encoderAvailability.av1.has_hardware || encoderAvailability.vp9.has_hardware || encoderAvailability.vp8.has_hardware || encoderAvailability.h264.has_hardware}
                             Your device supports hardware acceleration for {[
                                 encoderAvailability.av1.has_hardware
                                     ? "AV1"
@@ -592,6 +594,9 @@
                                     : null,
                                 encoderAvailability.vp8.has_hardware
                                     ? "VP8"
+                                    : null,
+                                encoderAvailability.h264.has_hardware
+                                    ? "H.264"
                                     : null,
                             ]
                                 .filter(Boolean)

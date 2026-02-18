@@ -152,6 +152,10 @@ pub enum HardwareEncoderType {
     Qsv,
     /// VA-API (Linux)
     VaApi,
+    /// Windows Media Foundation
+    MediaFoundation,
+    /// Apple VideoToolbox
+    VideoToolbox,
     /// Software fallback
     Software,
 }
@@ -176,6 +180,9 @@ impl HardwareEncoderType {
             }
             // Software AV1 encoding via libaom (slower but works everywhere)
             HardwareEncoderType::Software => Some("av1enc"),
+            // These don't support AV1 encoding
+            HardwareEncoderType::MediaFoundation => None,
+            HardwareEncoderType::VideoToolbox => None,
         }
     }
 
@@ -199,6 +206,8 @@ impl HardwareEncoderType {
             // These don't support VP8 encoding
             HardwareEncoderType::Nvenc => None,
             HardwareEncoderType::Amf => None,
+            HardwareEncoderType::MediaFoundation => None,
+            HardwareEncoderType::VideoToolbox => None,
         }
     }
 
@@ -222,6 +231,17 @@ impl HardwareEncoderType {
             // These don't support VP9 encoding
             HardwareEncoderType::Nvenc => None,
             HardwareEncoderType::Amf => None,
+            HardwareEncoderType::MediaFoundation => None,
+            HardwareEncoderType::VideoToolbox => None,
+        }
+    }
+
+    /// Get the GStreamer element name for H264 encoding (platform-native only)
+    pub fn h264_encoder_element(&self) -> Option<&'static str> {
+        match self {
+            HardwareEncoderType::MediaFoundation => Some("mfh264enc"),
+            HardwareEncoderType::VideoToolbox => Some("vtenc_h264"),
+            _ => None,
         }
     }
 
@@ -232,6 +252,8 @@ impl HardwareEncoderType {
             HardwareEncoderType::Amf => "AMD AMF",
             HardwareEncoderType::Qsv => "Intel QuickSync",
             HardwareEncoderType::VaApi => "VA-API",
+            HardwareEncoderType::MediaFoundation => "Windows Media Foundation",
+            HardwareEncoderType::VideoToolbox => "Apple VideoToolbox",
             HardwareEncoderType::Software => "Software",
         }
     }
@@ -363,12 +385,44 @@ pub fn has_ffv1_encoder() -> bool {
     gst::ElementFactory::find("avenc_ffv1").is_some()
 }
 
+/// Detect the best available H264 encoder (platform-native only)
+///
+/// Only platform-native encoders are used to avoid patent licensing issues:
+/// - Windows: Media Foundation (mfh264enc)
+/// - macOS: Apple VideoToolbox (vtenc_h264)
+///
+/// No software fallback (x264) — intentionally omitted for licensing reasons.
+pub fn detect_best_h264_encoder() -> Option<HardwareEncoderType> {
+    // Check Windows Media Foundation
+    if gst::ElementFactory::find("mfh264enc").is_some() {
+        return Some(HardwareEncoderType::MediaFoundation);
+    }
+    // Check Apple VideoToolbox
+    if gst::ElementFactory::find("vtenc_h264").is_some() {
+        return Some(HardwareEncoderType::VideoToolbox);
+    }
+    // No software fallback for H264 (licensing)
+    None
+}
+
+/// Check if any H264 encoder is available (platform-native only)
+pub fn has_h264_encoder() -> bool {
+    detect_best_h264_encoder().is_some()
+}
+
+/// Check if an H264 hardware encoder is available
+pub fn has_hardware_h264_encoder() -> bool {
+    // All H264 encoders are hardware/platform-native (no software fallback)
+    has_h264_encoder()
+}
+
 /// Detect the best encoder for a given target codec
 pub fn detect_best_encoder_for_codec(codec: VideoCodec) -> HardwareEncoderType {
     match codec {
         VideoCodec::Av1 => detect_best_av1_encoder(),
         VideoCodec::Vp8 => detect_best_vp8_encoder(),
         VideoCodec::Vp9 => detect_best_vp9_encoder(),
+        VideoCodec::H264 => detect_best_h264_encoder().unwrap_or(HardwareEncoderType::Software),
         VideoCodec::Ffv1 => HardwareEncoderType::Software,
         _ => HardwareEncoderType::Software,
     }
@@ -395,6 +449,10 @@ pub fn available_encoders_for_codec(codec: super::VideoCodec) -> Vec<(HardwareEn
             HardwareEncoderType::VaApi,
             HardwareEncoderType::Software,
         ],
+        super::VideoCodec::H264 => vec![
+            HardwareEncoderType::MediaFoundation,
+            HardwareEncoderType::VideoToolbox,
+        ],
         super::VideoCodec::Ffv1 => vec![
             HardwareEncoderType::Software,
         ],
@@ -407,6 +465,7 @@ pub fn available_encoders_for_codec(codec: super::VideoCodec) -> Vec<(HardwareEn
             super::VideoCodec::Av1 => hw.av1_encoder_element(),
             super::VideoCodec::Vp9 => hw.vp9_encoder_element(),
             super::VideoCodec::Vp8 => hw.vp8_encoder_element(),
+            super::VideoCodec::H264 => hw.h264_encoder_element(),
             super::VideoCodec::Ffv1 => {
                 if gst::ElementFactory::find("avenc_ffv1").is_some() {
                     Some("avenc_ffv1")
@@ -461,6 +520,8 @@ pub fn has_hardware_vp8_encoder() -> bool {
 pub fn get_recommended_codec() -> VideoCodec {
     if has_hardware_av1_encoder() {
         VideoCodec::Av1
+    } else if has_hardware_h264_encoder() {
+        VideoCodec::H264
     } else if has_hardware_vp9_encoder() {
         VideoCodec::Vp9
     } else if has_hardware_vp8_encoder() {
@@ -1106,6 +1167,9 @@ impl AsyncVideoEncoder {
             VideoCodec::Vp8 => {
                 Self::create_vp8_pipeline(output_path, width, height, fps, config, hw_type)
             }
+            VideoCodec::H264 => {
+                Self::create_h264_pipeline(output_path, width, height, fps, config, hw_type)
+            }
             VideoCodec::Ffv1 => {
                 Self::create_ffv1_pipeline(output_path, width, height, fps, config, hw_type)
             }
@@ -1509,6 +1573,92 @@ impl AsyncVideoEncoder {
         super::presets::apply_preset(
             &encoder,
             VideoCodec::Vp9,
+            hw_type,
+            config.preset_level,
+            config.keyframe_interval,
+        );
+
+        Ok(encoder)
+    }
+
+    /// Create H264 encoding pipeline (MKV container)
+    ///
+    /// Uses platform-native encoders only (Media Foundation on Windows, VideoToolbox on macOS).
+    /// Pipeline: common_chain → encoder → h264parse → matroskamux → filesink
+    fn create_h264_pipeline(
+        output_path: &PathBuf,
+        width: u32,
+        height: u32,
+        fps: f64,
+        config: &EncoderConfig,
+        hw_type: HardwareEncoderType,
+    ) -> Result<gst::Pipeline> {
+        let (pipeline, _appsrc, chain_tail) = Self::create_common_pipeline_start_with_target(
+            width,
+            height,
+            fps,
+            config.target_width,
+            config.target_height,
+            config.target_fps,
+        )?;
+
+        // Create H264 encoder
+        let encoder = Self::create_h264_encoder(hw_type, config)?;
+
+        // H264 parser for NAL unit framing before muxing
+        let parser = gst::ElementFactory::make("h264parse")
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create h264parse: {}", e)))?;
+
+        // MKV muxer for H264
+        let muxer = gst::ElementFactory::make("matroskamux")
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
+        muxer.set_property("writing-app", "Sacho");
+
+        // File sink with sync disabled for better performance
+        let filesink = gst::ElementFactory::make("filesink")
+            .property("location", output_path.to_string_lossy().to_string())
+            .property("async", false)
+            .property("sync", false)
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
+
+        // Add encoder-specific elements and link from the common chain tail
+        pipeline
+            .add_many([&encoder, &parser, &muxer, &filesink])
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
+        gst::Element::link_many([&chain_tail, &encoder, &parser, &muxer, &filesink])
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
+
+        Ok(pipeline)
+    }
+
+    /// Create the H264 encoder element based on hardware type
+    ///
+    /// Only platform-native encoders are supported (no x264 software fallback).
+    /// Encoder parameters are configured by the preset system.
+    pub(crate) fn create_h264_encoder(
+        hw_type: HardwareEncoderType,
+        config: &EncoderConfig,
+    ) -> Result<gst::Element> {
+        let encoder_name = hw_type.h264_encoder_element().ok_or_else(|| {
+            EncoderError::NotAvailable(format!(
+                "{} does not support H264 encoding",
+                hw_type.display_name()
+            ))
+        })?;
+
+        let encoder = gst::ElementFactory::make(encoder_name)
+            .build()
+            .map_err(|e| {
+                EncoderError::NotAvailable(format!("Failed to create {}: {}", encoder_name, e))
+            })?;
+
+        // Apply preset-based parameters
+        super::presets::apply_preset(
+            &encoder,
+            VideoCodec::H264,
             hw_type,
             config.preset_level,
             config.keyframe_interval,

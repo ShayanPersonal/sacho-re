@@ -40,6 +40,8 @@ export type HardwareEncoderType =
   | "amf"
   | "qsv"
   | "vaapi"
+  | "mediafoundation"
+  | "videotoolbox"
   | "software";
 
 /** Per-codec resolution capability with available framerates */
@@ -176,7 +178,7 @@ export function formatFps(fps: number): string {
 }
 
 /** Codecs that only support passthrough (no encoding/decoding due to licensing) */
-export const PASSTHROUGH_ONLY_CODECS: VideoCodec[] = ["h264"];
+export const PASSTHROUGH_ONLY_CODECS: VideoCodec[] = [];
 
 /** Codecs that require encoding (cannot be stored as passthrough in MKV) */
 export const ENCODE_ONLY_CODECS: VideoCodec[] = ["raw"];
@@ -454,6 +456,7 @@ export interface EncoderAvailability {
   av1: CodecEncoderInfo;
   vp9: CodecEncoderInfo;
   vp8: CodecEncoderInfo;
+  h264: CodecEncoderInfo;
   ffv1: CodecEncoderInfo;
   recommended_codec: string;
 }

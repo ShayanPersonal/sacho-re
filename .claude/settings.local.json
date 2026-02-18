@@ -13,7 +13,9 @@
       "mcp__plugin_context7_context7__query-docs",
       "mcp__plugin_context7_context7__resolve-library-id",
       "Bash(cargo build:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(gst-inspect-1.0.exe:*)",
+      "WebFetch(domain:gstreamer.freedesktop.org)"
     ]
   }
 }

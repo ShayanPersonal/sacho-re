@@ -109,6 +109,14 @@ pub fn apply_preset(
             apply_software_vp8(encoder, level, keyframe_interval);
         }
 
+        // ── H264 encoders (platform-native only) ────────────────────────
+        (VideoCodec::H264, HardwareEncoderType::MediaFoundation) => {
+            apply_mf_h264(encoder, level, keyframe_interval);
+        }
+        (VideoCodec::H264, HardwareEncoderType::VideoToolbox) => {
+            apply_vtb_h264(encoder, level, keyframe_interval);
+        }
+
         // ── FFV1 encoder ────────────────────────────────────────────────
         (VideoCodec::Ffv1, HardwareEncoderType::Software) => {
             apply_software_ffv1(encoder, level);
@@ -417,4 +425,84 @@ fn apply_software_ffv1(encoder: &gst::Element, level: u8) {
     encoder.set_property_from_str("coder", coder_name);
     encoder.set_property("slices", slices);
     encoder.set_property_from_str("slicecrc", "on");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// H264 Encoders (platform-native only)
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Windows Media Foundation H264 (mfh264enc)
+///
+/// Most properties are "conditionally available" — their presence depends on
+/// the underlying MFT (e.g., NVIDIA MF vs Intel MF vs software MF). We guard
+/// each with `find_property()` to avoid panics on hardware that doesn't expose them.
+///
+/// Properties used (when available):
+/// - `bitrate`: target bitrate in kbps (guint, always available)
+/// - `quality-vs-speed`: 0 (quality) to 100 (speed) (guint)
+/// - `low-latency`: enable low-latency mode (gboolean)
+/// - `bframes`: number of B-frames (guint, 0 for low-latency; not all MFTs expose this)
+/// - `ref`: number of reference frames (guint)
+/// - `rc-mode`: rate control mode (enum, CBR for predictable output)
+/// - `gop-size`: keyframe interval (gint)
+fn apply_mf_h264(encoder: &gst::Element, level: u8, keyframe_interval: u32) {
+    let (bitrate_kbps, quality_vs_speed, low_latency, bframes, ref_frames) = match level {
+        1 => (2_000u32, 100u32, true, 0u32, 1u32),
+        2 => (3_000, 75, true, 0, 1),
+        3 => (4_000, 50, true, 0, 2),
+        4 => (5_000, 25, false, 2, 2),
+        _ => (6_000, 0, false, 3, 4),
+    };
+
+    // bitrate is always available
+    encoder.set_property("bitrate", bitrate_kbps);
+
+    // Conditionally-available properties — guard each to avoid panics
+    // on MFTs that don't expose them (e.g., NVIDIA MF lacks bframes)
+    if encoder.find_property("quality-vs-speed").is_some() {
+        encoder.set_property("quality-vs-speed", quality_vs_speed);
+    }
+    if encoder.find_property("low-latency").is_some() {
+        encoder.set_property("low-latency", low_latency);
+    }
+    if encoder.find_property("bframes").is_some() {
+        encoder.set_property("bframes", bframes);
+    }
+    if encoder.find_property("ref").is_some() {
+        encoder.set_property("ref", ref_frames);
+    }
+    if encoder.find_property("rc-mode").is_some() {
+        encoder.set_property_from_str("rc-mode", "cbr");
+    }
+    if keyframe_interval > 0 {
+        if encoder.find_property("gop-size").is_some() {
+            encoder.set_property("gop-size", keyframe_interval as i32);
+        }
+    }
+}
+
+/// Apple VideoToolbox H264 (vtenc_h264)
+///
+/// Properties used:
+/// - `bitrate`: target bitrate in kbps (guint, 0 = auto)
+/// - `quality`: compression quality 0.0–1.0 (gdouble)
+/// - `realtime`: enable realtime encoding (gboolean)
+/// - `allow-frame-reordering`: enable B-frames (gboolean, levels 4–5 only)
+/// - `max-keyframe-interval`: keyframe interval (gint, 0 = auto)
+fn apply_vtb_h264(encoder: &gst::Element, level: u8, keyframe_interval: u32) {
+    let (bitrate_kbps, quality, realtime, allow_reorder) = match level {
+        1 => (2_000u32, 0.25f64, true, false),
+        2 => (3_000, 0.40, true, false),
+        3 => (4_000, 0.55, true, false),
+        4 => (5_000, 0.70, false, true),
+        _ => (6_000, 0.85, false, true),
+    };
+
+    encoder.set_property("bitrate", bitrate_kbps);
+    encoder.set_property("quality", quality);
+    encoder.set_property("realtime", realtime);
+    encoder.set_property("allow-frame-reordering", allow_reorder);
+    if keyframe_interval > 0 {
+        encoder.set_property("max-keyframe-interval", keyframe_interval as i32);
+    }
 }

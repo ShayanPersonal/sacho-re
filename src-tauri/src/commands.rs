@@ -1095,6 +1095,7 @@ pub struct EncoderAvailability {
     pub av1: CodecEncoderInfo,
     pub vp9: CodecEncoderInfo,
     pub vp8: CodecEncoderInfo,
+    pub h264: CodecEncoderInfo,
     pub ffv1: CodecEncoderInfo,
     /// Recommended default encoding codec
     pub recommended_codec: String,
@@ -1138,9 +1139,11 @@ pub fn get_encoder_availability() -> EncoderAvailability {
         av1: build_codec_encoder_info(VideoCodec::Av1),
         vp9: build_codec_encoder_info(VideoCodec::Vp9),
         vp8: build_codec_encoder_info(VideoCodec::Vp8),
+        h264: build_codec_encoder_info(VideoCodec::H264),
         ffv1: build_codec_encoder_info(VideoCodec::Ffv1),
         recommended_codec: match recommended {
             VideoCodec::Av1 => "av1".to_string(),
+            VideoCodec::H264 => "h264".to_string(),
             VideoCodec::Vp9 => "vp9".to_string(),
             VideoCodec::Vp8 => "vp8".to_string(),
             VideoCodec::Ffv1 => "ffv1".to_string(),

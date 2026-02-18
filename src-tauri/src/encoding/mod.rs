@@ -15,6 +15,7 @@ pub use encoder::{
     AsyncVideoEncoder, EncoderConfig, EncoderError, EncoderStats,
     HardwareEncoderType, RawVideoFrame,
     detect_best_encoder, detect_best_encoder_for_codec, detect_best_av1_encoder, detect_best_vp8_encoder, detect_best_vp9_encoder,
+    detect_best_h264_encoder, has_h264_encoder, has_hardware_h264_encoder,
     has_hardware_av1_encoder, has_hardware_vp9_encoder, has_hardware_vp8_encoder,
     has_av1_encoder, has_vp8_encoder, has_vp9_encoder,
     has_ffv1_encoder,
@@ -41,7 +42,7 @@ pub enum VideoCodec {
     Raw,
     /// FFV1 - lossless intra-frame compression (avenc_ffv1)
     Ffv1,
-    /// H.264 - passthrough only (cannot encode/decode due to licensing)
+    /// H.264 - passthrough or platform-native encoding (Media Foundation / VideoToolbox)
     H264,
 }
 
@@ -52,6 +53,7 @@ impl VideoCodec {
         VideoCodec::Av1,
         VideoCodec::Vp8,
         VideoCodec::Vp9,
+        VideoCodec::H264,
         VideoCodec::Raw,
     ];
     
@@ -151,7 +153,7 @@ impl VideoCodec {
             VideoCodec::Vp9 => true,
             VideoCodec::Raw => true, // Will be encoded, which is supported
             VideoCodec::Ffv1 => false, // Uses custom frame player (GstDecodeDemuxer), not HTML5 native
-            VideoCodec::H264 => false, // Cannot decode — licensing restrictions
+            VideoCodec::H264 => true, // WebView2 (Windows) and WKWebView (macOS) handle H264 natively
         }
     }
     
@@ -170,7 +172,7 @@ impl VideoCodec {
             VideoCodec::Av1 => Some("av1dec"),
             VideoCodec::Ffv1 => Some("avdec_ffv1"),
             VideoCodec::Raw => None,
-            VideoCodec::H264 => None, // Cannot decode — licensing restrictions
+            VideoCodec::H264 => Some("avdec_h264"), // LGPL decoder from gst-libav, no licensing issue for decoding
         }
     }
 }
