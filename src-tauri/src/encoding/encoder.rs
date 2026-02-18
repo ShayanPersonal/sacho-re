@@ -162,7 +162,7 @@ pub enum HardwareEncoderType {
 
 impl HardwareEncoderType {
     /// Get the GStreamer element name for AV1 encoding
-    /// Supports both hardware and software (libaom) encoders
+    /// Supports both hardware and software (SVT-AV1) encoders
     pub fn av1_encoder_element(&self) -> Option<&'static str> {
         match self {
             HardwareEncoderType::Nvenc => Some("nvav1enc"),
@@ -178,8 +178,8 @@ impl HardwareEncoderType {
                     None
                 }
             }
-            // Software AV1 encoding via libaom (slower but works everywhere)
-            HardwareEncoderType::Software => Some("av1enc"),
+            // Software AV1 encoding via SVT-AV1 (fast, works everywhere)
+            HardwareEncoderType::Software => Some("svtav1enc"),
             // These don't support AV1 encoding
             HardwareEncoderType::MediaFoundation => None,
             HardwareEncoderType::VideoToolbox => None,

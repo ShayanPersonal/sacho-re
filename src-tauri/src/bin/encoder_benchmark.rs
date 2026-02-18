@@ -3,6 +3,9 @@
 //! Benchmarks all available video encoders using the app's actual encoding
 //! infrastructure (same codecs, presets, pipeline construction, hardware detection).
 //!
+//! Each encoder runs in a subprocess for isolation — if a GStreamer plugin crashes
+//! (e.g. buggy driver), the benchmark reports the failure and continues.
+//!
 //! Usage:
 //!   cargo run --bin encoder_benchmark [-- [OPTIONS]]
 //!
@@ -11,11 +14,12 @@
 //!   --duration <secs>   Override benchmark duration per encoder (default: 15s)
 //!   --verbose           Extra debug output
 
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use sacho_lib::encoding::{
-    available_encoders_for_codec, AsyncVideoEncoder, EncoderConfig, EncoderStats,
-    HardwareEncoderType, RawVideoFrame, VideoCodec,
+    available_encoders_for_codec, AsyncVideoEncoder, EncoderConfig, HardwareEncoderType,
+    RawVideoFrame, VideoCodec,
 };
 use sacho_lib::encoding::presets::{preset_label, DEFAULT_PRESET};
 use sacho_lib::gstreamer_init;
@@ -34,19 +38,103 @@ const HEIGHT: u32 = 1080;
 const FPS: f64 = 30.0;
 const DEFAULT_DURATION_SECS: u64 = 15;
 
-/// Result for a single encoder benchmark run
+/// Marker prefix for structured result output from worker subprocess
+const RESULT_OK: &str = "BENCH_OK,";
+const RESULT_ERR: &str = "BENCH_ERR,";
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Codec/HwType string conversion for subprocess CLI args
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn codec_to_arg(codec: VideoCodec) -> &'static str {
+    match codec {
+        VideoCodec::Av1 => "av1",
+        VideoCodec::Vp9 => "vp9",
+        VideoCodec::Vp8 => "vp8",
+        VideoCodec::H264 => "h264",
+        VideoCodec::Ffv1 => "ffv1",
+        _ => "unknown",
+    }
+}
+
+fn codec_from_arg(s: &str) -> Option<VideoCodec> {
+    match s {
+        "av1" => Some(VideoCodec::Av1),
+        "vp9" => Some(VideoCodec::Vp9),
+        "vp8" => Some(VideoCodec::Vp8),
+        "h264" => Some(VideoCodec::H264),
+        "ffv1" => Some(VideoCodec::Ffv1),
+        _ => None,
+    }
+}
+
+fn hw_type_to_arg(hw: HardwareEncoderType) -> &'static str {
+    match hw {
+        HardwareEncoderType::Nvenc => "nvenc",
+        HardwareEncoderType::Amf => "amf",
+        HardwareEncoderType::Qsv => "qsv",
+        HardwareEncoderType::VaApi => "vaapi",
+        HardwareEncoderType::MediaFoundation => "mediafoundation",
+        HardwareEncoderType::VideoToolbox => "videotoolbox",
+        HardwareEncoderType::Software => "software",
+    }
+}
+
+fn hw_type_from_arg(s: &str) -> Option<HardwareEncoderType> {
+    match s {
+        "nvenc" => Some(HardwareEncoderType::Nvenc),
+        "amf" => Some(HardwareEncoderType::Amf),
+        "qsv" => Some(HardwareEncoderType::Qsv),
+        "vaapi" => Some(HardwareEncoderType::VaApi),
+        "mediafoundation" => Some(HardwareEncoderType::MediaFoundation),
+        "videotoolbox" => Some(HardwareEncoderType::VideoToolbox),
+        "software" => Some(HardwareEncoderType::Software),
+        _ => None,
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Result type for orchestrator
+// ═══════════════════════════════════════════════════════════════════════════════
+
 struct BenchmarkResult {
-    codec: VideoCodec,
-    hw_type: HardwareEncoderType,
+    codec_name: &'static str,
+    hw_name: &'static str,
     gst_element: &'static str,
-    stats: Option<EncoderStats>,
+    frames: u64,
+    avg_fps: f64,
+    realtime_mult: f64,
     file_size: u64,
+    bitrate_mbps: f64,
     error: Option<String>,
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Entry point — dispatch to orchestrator or worker
+// ═══════════════════════════════════════════════════════════════════════════════
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
+    // On Windows, attach to parent console for output
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+
+    if args.iter().any(|a| a == "--run-single") {
+        worker_main(&args);
+    } else {
+        orchestrator_main(&args);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Orchestrator — discovers encoders, spawns worker subprocesses, collects results
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn orchestrator_main(args: &[String]) {
     let verbose = args.iter().any(|a| a == "--verbose");
     let duration_secs = args
         .iter()
@@ -60,22 +148,12 @@ fn main() {
         .and_then(|i| args.get(i + 1))
         .cloned();
 
-    // Init logging
+    // Init logging (suppress for orchestrator unless verbose)
     let log_level = if verbose { "debug" } else { "warn" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
-    // On Windows, attach to parent console for output
-    #[cfg(windows)]
-    unsafe {
-        use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
-        AttachConsole(ATTACH_PARENT_PROCESS);
-    }
-
     println!("\n=== Sacho Encoder Benchmark ===\n");
-    println!(
-        "  Resolution: {}x{} @ {:.0} fps",
-        WIDTH, HEIGHT, FPS
-    );
+    println!("  Resolution: {}x{} @ {:.0} fps", WIDTH, HEIGHT, FPS);
     println!("  Duration:   {}s per encoder", duration_secs);
     println!(
         "  Preset:     {} (level {})",
@@ -87,7 +165,7 @@ fn main() {
     }
     println!();
 
-    // Init GStreamer
+    // Init GStreamer for encoder discovery
     gstreamer_init::init_gstreamer_env();
 
     // Discover available encoders
@@ -121,7 +199,7 @@ fn main() {
 
     println!("\n  Running {} benchmarks...\n", encoders.len());
 
-    // Run benchmarks
+    let self_exe = std::env::current_exe().expect("Failed to get current executable path");
     let mut results: Vec<BenchmarkResult> = Vec::new();
 
     for (i, &(codec, hw_type, element)) in encoders.iter().enumerate() {
@@ -134,7 +212,14 @@ fn main() {
             element,
         );
 
-        let result = run_benchmark(codec, hw_type, element, duration_secs, verbose);
+        let result = run_in_subprocess(
+            &self_exe,
+            codec,
+            hw_type,
+            element,
+            duration_secs,
+            verbose,
+        );
 
         match &result.error {
             Some(err) => {
@@ -146,103 +231,167 @@ fn main() {
                 );
             }
             None => {
-                if let Some(ref stats) = result.stats {
-                    let realtime_mult = if stats.encoding_duration.as_secs_f64() > 0.0 {
-                        stats.content_duration.as_secs_f64()
-                            / stats.encoding_duration.as_secs_f64()
-                    } else {
-                        0.0
-                    };
-                    let bitrate_mbps = if stats.content_duration.as_secs_f64() > 0.0 {
-                        (result.file_size as f64 * 8.0)
-                            / stats.content_duration.as_secs_f64()
-                            / 1_000_000.0
-                    } else {
-                        0.0
-                    };
-                    println!(
-                        "  [{}/{}] {} frames, {:.1} fps, {:.2}x realtime, {:.1} MB, {:.1} Mbps\n",
-                        i + 1,
-                        encoders.len(),
-                        stats.frames_encoded,
-                        stats.average_fps,
-                        realtime_mult,
-                        result.file_size as f64 / 1_048_576.0,
-                        bitrate_mbps,
-                    );
-                }
+                println!(
+                    "  [{}/{}] {} frames, {:.1} fps, {:.2}x realtime, {:.1} MB, {:.1} Mbps\n",
+                    i + 1,
+                    encoders.len(),
+                    result.frames,
+                    result.avg_fps,
+                    result.realtime_mult,
+                    result.file_size as f64 / 1_048_576.0,
+                    result.bitrate_mbps,
+                );
             }
         }
 
         results.push(result);
     }
 
-    // Print summary table
     print_summary(&results);
 }
 
-/// Generate a single NV12 frame with gradient pattern and per-frame variation.
-///
-/// NV12 layout: W*H bytes of Y plane, then W*H/2 bytes of interleaved UV plane.
-/// The gradient provides spatial correlation (realistic for encoders), and
-/// frame_index adds temporal variation so successive frames differ.
-fn generate_nv12_frame(width: u32, height: u32, frame_index: u32) -> Vec<u8> {
-    let w = width as usize;
-    let h = height as usize;
-    let y_size = w * h;
-    let uv_size = w * h / 2;
-    let mut data = vec![0u8; y_size + uv_size];
-
-    // Y plane: horizontal gradient + vertical gradient + temporal variation
-    let phase = (frame_index as f64 * 0.05).sin() * 30.0;
-    for row in 0..h {
-        for col in 0..w {
-            let horiz = (col as f64 / w as f64 * 200.0) as f64;
-            let vert = (row as f64 / h as f64 * 55.0) as f64;
-            let val = (horiz + vert + phase).clamp(0.0, 255.0) as u8;
-            data[row * w + col] = val;
-        }
-    }
-
-    // UV plane: slower-moving color gradient
-    let uv_phase = (frame_index as f64 * 0.02).cos() * 20.0;
-    let uv_h = h / 2;
-    let uv_offset = y_size;
-    for row in 0..uv_h {
-        for col in (0..w).step_by(2) {
-            let u = (128.0 + (col as f64 / w as f64 * 40.0) + uv_phase).clamp(0.0, 255.0) as u8;
-            let v = (128.0 + (row as f64 / uv_h as f64 * 40.0) - uv_phase).clamp(0.0, 255.0) as u8;
-            data[uv_offset + row * w + col] = u;
-            data[uv_offset + row * w + col + 1] = v;
-        }
-    }
-
-    data
-}
-
-/// Run a single encoder benchmark
-fn run_benchmark(
+/// Spawn a worker subprocess for a single encoder benchmark
+fn run_in_subprocess(
+    self_exe: &std::path::Path,
     codec: VideoCodec,
     hw_type: HardwareEncoderType,
-    gst_element: &'static str,
+    element: &'static str,
     duration_secs: u64,
     verbose: bool,
 ) -> BenchmarkResult {
+    let mut cmd = Command::new(self_exe);
+    cmd.args([
+        "--run-single",
+        codec_to_arg(codec),
+        hw_type_to_arg(hw_type),
+        element,
+        "--duration",
+        &duration_secs.to_string(),
+    ]);
+    if verbose {
+        cmd.arg("--verbose");
+    }
+
+    let make_error = |msg: String| BenchmarkResult {
+        codec_name: codec.display_name(),
+        hw_name: hw_type.display_name(),
+        gst_element: element,
+        frames: 0,
+        avg_fps: 0.0,
+        realtime_mult: 0.0,
+        file_size: 0,
+        bitrate_mbps: 0.0,
+        error: Some(msg),
+    };
+
+    let output = match cmd.output() {
+        Ok(o) => o,
+        Err(e) => return make_error(format!("Failed to spawn worker: {}", e)),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // In verbose mode, print worker output (excluding result markers)
+    if verbose {
+        for line in stdout.lines() {
+            if !line.starts_with(RESULT_OK) && !line.starts_with(RESULT_ERR) {
+                println!("    {}", line);
+            }
+        }
+    }
+
+    // Check for crash (non-zero exit without our error marker)
+    if !output.status.success() {
+        // Check if worker reported an error before crashing
+        if let Some(err_line) = stdout.lines().find(|l| l.starts_with(RESULT_ERR)) {
+            return make_error(err_line[RESULT_ERR.len()..].to_string());
+        }
+        let code = output
+            .status
+            .code()
+            .map(|c| format!("exit code {:#x}", c))
+            .unwrap_or_else(|| "killed by signal".to_string());
+        return make_error(format!("Encoder crashed ({})", code));
+    }
+
+    // Parse BENCH_OK line
+    if let Some(ok_line) = stdout.lines().find(|l| l.starts_with(RESULT_OK)) {
+        let fields: Vec<&str> = ok_line[RESULT_OK.len()..].split(',').collect();
+        if fields.len() == 6 {
+            let frames = fields[0].parse::<u64>().unwrap_or(0);
+            let avg_fps = fields[1].parse::<f64>().unwrap_or(0.0);
+            let realtime_mult = fields[2].parse::<f64>().unwrap_or(0.0);
+            let file_size = fields[3].parse::<u64>().unwrap_or(0);
+            let bitrate_mbps = fields[4].parse::<f64>().unwrap_or(0.0);
+            let _enc_duration_ms = fields[5].parse::<u64>().unwrap_or(0);
+            return BenchmarkResult {
+                codec_name: codec.display_name(),
+                hw_name: hw_type.display_name(),
+                gst_element: element,
+                frames,
+                avg_fps,
+                realtime_mult,
+                file_size,
+                bitrate_mbps,
+                error: None,
+            };
+        }
+    }
+
+    // Check for explicit error
+    if let Some(err_line) = stdout.lines().find(|l| l.starts_with(RESULT_ERR)) {
+        return make_error(err_line[RESULT_ERR.len()..].to_string());
+    }
+
+    make_error("Worker produced no result".to_string())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Worker — runs a single encoder benchmark in an isolated process
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn worker_main(args: &[String]) {
+    let run_single_pos = args.iter().position(|a| a == "--run-single").unwrap();
+    let codec_str = args.get(run_single_pos + 1).expect("missing codec arg");
+    let hw_str = args.get(run_single_pos + 2).expect("missing hw_type arg");
+    let _element_str = args.get(run_single_pos + 3).expect("missing element arg");
+
+    let verbose = args.iter().any(|a| a == "--verbose");
+    let duration_secs = args
+        .iter()
+        .position(|a| a == "--duration")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_DURATION_SECS);
+
+    let codec = codec_from_arg(codec_str).unwrap_or_else(|| {
+        println!("{}Unknown codec: {}", RESULT_ERR, codec_str);
+        std::process::exit(1);
+    });
+    let hw_type = hw_type_from_arg(hw_str).unwrap_or_else(|| {
+        println!("{}Unknown hw_type: {}", RESULT_ERR, hw_str);
+        std::process::exit(1);
+    });
+
+    // Init logging
+    let log_level = if verbose { "debug" } else { "warn" };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    // Init GStreamer
+    gstreamer_init::init_gstreamer_env();
+
+    // Run the benchmark
     let temp_dir = match tempfile::tempdir() {
         Ok(d) => d,
         Err(e) => {
-            return BenchmarkResult {
-                codec,
-                hw_type,
-                gst_element,
-                stats: None,
-                file_size: 0,
-                error: Some(format!("Failed to create temp dir: {}", e)),
-            };
+            println!("{}Failed to create temp dir: {}", RESULT_ERR, e);
+            std::process::exit(1);
         }
     };
 
-    let output_path = temp_dir.path().join(format!("bench.{}", codec.container().extension()));
+    let output_path = temp_dir
+        .path()
+        .join(format!("bench.{}", codec.container().extension()));
 
     let config = EncoderConfig {
         target_codec: codec,
@@ -250,7 +399,6 @@ fn run_benchmark(
         ..Default::default()
     };
 
-    // Create encoder
     let encoder = match AsyncVideoEncoder::new_with_encoder(
         output_path.clone(),
         WIDTH,
@@ -262,14 +410,8 @@ fn run_benchmark(
     ) {
         Ok(e) => e,
         Err(e) => {
-            return BenchmarkResult {
-                codec,
-                hw_type,
-                gst_element,
-                stats: None,
-                file_size: 0,
-                error: Some(format!("Encoder creation failed: {}", e)),
-            };
+            println!("{}Encoder creation failed: {}", RESULT_ERR, e);
+            std::process::exit(1);
         }
     };
 
@@ -293,29 +435,26 @@ fn run_benchmark(
         };
 
         if let Err(e) = encoder.send_frame(frame) {
-            return BenchmarkResult {
-                codec,
-                hw_type,
-                gst_element,
-                stats: None,
-                file_size: 0,
-                error: Some(format!("send_frame failed at frame {}: {}", frame_index, e)),
-            };
+            println!(
+                "{}send_frame failed at frame {}: {}",
+                RESULT_ERR, frame_index, e
+            );
+            std::process::exit(1);
         }
 
         frame_index += 1;
 
         if verbose && frame_index % 100 == 0 {
             let now = Instant::now();
-            let elapsed = if deadline > now {
+            let remaining = if deadline > now {
                 deadline - now
             } else {
                 Duration::ZERO
             };
-            println!(
+            eprintln!(
                 "    {} frames sent, {:.0}s remaining",
                 frame_index,
-                elapsed.as_secs_f64()
+                remaining.as_secs_f64()
             );
         }
     }
@@ -324,14 +463,8 @@ fn run_benchmark(
     let stats = match encoder.finish() {
         Ok(s) => s,
         Err(e) => {
-            return BenchmarkResult {
-                codec,
-                hw_type,
-                gst_element,
-                stats: None,
-                file_size: 0,
-                error: Some(format!("Encoder finish failed: {}", e)),
-            };
+            println!("{}Encoder finish failed: {}", RESULT_ERR, e);
+            std::process::exit(1);
         }
     };
 
@@ -340,17 +473,79 @@ fn run_benchmark(
         .map(|m| m.len())
         .unwrap_or(0);
 
-    BenchmarkResult {
-        codec,
-        hw_type,
-        gst_element,
-        stats: Some(stats),
+    let realtime_mult = if stats.encoding_duration.as_secs_f64() > 0.0 {
+        stats.content_duration.as_secs_f64() / stats.encoding_duration.as_secs_f64()
+    } else {
+        0.0
+    };
+    let bitrate_mbps = if stats.content_duration.as_secs_f64() > 0.0 {
+        (file_size as f64 * 8.0) / stats.content_duration.as_secs_f64() / 1_000_000.0
+    } else {
+        0.0
+    };
+
+    // Output structured result for orchestrator to parse
+    println!(
+        "{}{},{:.2},{:.4},{},{:.2},{}",
+        RESULT_OK,
+        stats.frames_encoded,
+        stats.average_fps,
+        realtime_mult,
         file_size,
-        error: None,
-    }
+        bitrate_mbps,
+        stats.encoding_duration.as_millis(),
+    );
 }
 
-/// Print a summary table of all benchmark results
+// ═══════════════════════════════════════════════════════════════════════════════
+// Frame generation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Generate a single NV12 frame with gradient pattern and per-frame variation.
+///
+/// NV12 layout: W*H bytes of Y plane, then W*H/2 bytes of interleaved UV plane.
+/// The gradient provides spatial correlation (realistic for encoders), and
+/// frame_index adds temporal variation so successive frames differ.
+fn generate_nv12_frame(width: u32, height: u32, frame_index: u32) -> Vec<u8> {
+    let w = width as usize;
+    let h = height as usize;
+    let y_size = w * h;
+    let uv_size = w * h / 2;
+    let mut data = vec![0u8; y_size + uv_size];
+
+    // Y plane: horizontal gradient + vertical gradient + temporal variation
+    let phase = (frame_index as f64 * 0.05).sin() * 30.0;
+    for row in 0..h {
+        for col in 0..w {
+            let horiz = col as f64 / w as f64 * 200.0;
+            let vert = row as f64 / h as f64 * 55.0;
+            let val = (horiz + vert + phase).clamp(0.0, 255.0) as u8;
+            data[row * w + col] = val;
+        }
+    }
+
+    // UV plane: slower-moving color gradient
+    let uv_phase = (frame_index as f64 * 0.02).cos() * 20.0;
+    let uv_h = h / 2;
+    let uv_offset = y_size;
+    for row in 0..uv_h {
+        for col in (0..w).step_by(2) {
+            let u =
+                (128.0 + (col as f64 / w as f64 * 40.0) + uv_phase).clamp(0.0, 255.0) as u8;
+            let v =
+                (128.0 + (row as f64 / uv_h as f64 * 40.0) - uv_phase).clamp(0.0, 255.0) as u8;
+            data[uv_offset + row * w + col] = u;
+            data[uv_offset + row * w + col + 1] = v;
+        }
+    }
+
+    data
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Summary table
+// ═══════════════════════════════════════════════════════════════════════════════
+
 fn print_summary(results: &[BenchmarkResult]) {
     println!("\n  ╔══════════╤════════════════════════════╤══════════════════╤════════╤═══════════╤═══════════╤════════════╤═══════════╗");
     println!(
@@ -359,8 +554,8 @@ fn print_summary(results: &[BenchmarkResult]) {
     );
     println!("  ╠══════════╪════════════════════════════╪══════════════════╪════════╪═══════════╪═══════════╪════════════╪═══════════╣");
 
-    for result in results {
-        if let Some(ref err) = result.error {
+    for r in results {
+        if let Some(ref err) = r.error {
             let err_short = if err.len() > 40 {
                 format!("{}...", &err[..37])
             } else {
@@ -368,36 +563,23 @@ fn print_summary(results: &[BenchmarkResult]) {
             };
             println!(
                 "  ║ {:<8} │ {:<26} │ {:<16} │ {:>43} ║",
-                result.codec.display_name(),
-                result.hw_type.display_name(),
-                result.gst_element,
+                r.codec_name,
+                r.hw_name,
+                r.gst_element,
                 format!("FAILED: {}", err_short),
             );
-        } else if let Some(ref stats) = result.stats {
-            let realtime_mult = if stats.encoding_duration.as_secs_f64() > 0.0 {
-                stats.content_duration.as_secs_f64() / stats.encoding_duration.as_secs_f64()
-            } else {
-                0.0
-            };
-            let bitrate_mbps = if stats.content_duration.as_secs_f64() > 0.0 {
-                (result.file_size as f64 * 8.0)
-                    / stats.content_duration.as_secs_f64()
-                    / 1_000_000.0
-            } else {
-                0.0
-            };
-            let size_str = format_size(result.file_size);
-
+        } else {
+            let size_str = format_size(r.file_size);
             println!(
                 "  ║ {:<8} │ {:<26} │ {:<16} │ {:>6} │ {:>7.1}   │ {:>6.2}x   │ {:>10} │ {:>6.1} Mb ║",
-                result.codec.display_name(),
-                result.hw_type.display_name(),
-                result.gst_element,
-                stats.frames_encoded,
-                stats.average_fps,
-                realtime_mult,
+                r.codec_name,
+                r.hw_name,
+                r.gst_element,
+                r.frames,
+                r.avg_fps,
+                r.realtime_mult,
                 size_str,
-                bitrate_mbps,
+                r.bitrate_mbps,
             );
         }
     }
@@ -406,7 +588,6 @@ fn print_summary(results: &[BenchmarkResult]) {
     println!();
 }
 
-/// Format a file size in human-readable form
 fn format_size(bytes: u64) -> String {
     if bytes >= 1_073_741_824 {
         format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)

@@ -15,7 +15,8 @@
       "Bash(cargo build:*)",
       "Bash(wc:*)",
       "Bash(gst-inspect-1.0.exe:*)",
-      "WebFetch(domain:gstreamer.freedesktop.org)"
+      "WebFetch(domain:gstreamer.freedesktop.org)",
+      "Bash(\"C:/Program Files/gstreamer/1.0/msvc_x86_64/bin/gst-inspect-1.0.exe\" qsvav1enc)"
     ]
   }
 }

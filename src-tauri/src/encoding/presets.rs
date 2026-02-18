@@ -207,36 +207,26 @@ fn apply_vaapi_av1(encoder: &gst::Element, level: u8) {
     encoder.set_property("bitrate", bitrate_kbps);
 }
 
-/// Software AV1 via libaom (av1enc)
+/// Software AV1 via SVT-AV1 (svtav1enc)
 ///
 /// Properties used:
-/// - `cpu-used`: 0 (slowest) to 10 (fastest); 6+ needed for real-time
-/// - `threads`: thread count for parallel encoding
-/// - `row-mt`: row-based multi-threading
-/// - `target-bitrate`: kbps
-/// - `keyframe-max-dist`: keyframe interval
-/// - `end-usage`: rate control mode (always CBR for low latency)
+/// - `preset`: 0 (best quality) to 13 (fastest); 8+ needed for real-time
+/// - `target-bitrate`: kbps (enables CBR mode)
+/// - `intra-period-length`: keyframe interval (-2 = auto, -1 = no updates)
 fn apply_software_av1(encoder: &gst::Element, level: u8, keyframe_interval: u32) {
-    let num_cpus = std::thread::available_parallelism()
-        .map(|p| p.get() as u32)
-        .unwrap_or(4);
-
-    let (cpu_used, threads, bitrate_kbps) = match level {
-        1 => (10u32, num_cpus.min(2), 1_500u32),
-        2 => (10, num_cpus.min(4), 2_000),
-        3 => (9, (num_cpus / 2).max(2), 3_000),
-        4 => (8, num_cpus, 4_000),
-        _ => (6, num_cpus, 5_000),
+    let (preset, bitrate_kbps) = match level {
+        1 => (12u32, 1_500u32),
+        2 => (11, 2_000),
+        3 => (10, 3_000),
+        4 => (8, 4_000),
+        _ => (6, 5_000),
     };
 
-    encoder.set_property("cpu-used", cpu_used);
-    encoder.set_property("threads", threads);
-    encoder.set_property("row-mt", true);
+    encoder.set_property("preset", preset);
     encoder.set_property("target-bitrate", bitrate_kbps);
-    encoder.set_property_from_str("end-usage", "cbr");
 
     if keyframe_interval > 0 {
-        encoder.set_property("keyframe-max-dist", keyframe_interval);
+        encoder.set_property("intra-period-length", keyframe_interval as i32);
     }
 }
 
