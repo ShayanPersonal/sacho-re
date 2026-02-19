@@ -16,6 +16,24 @@ use serde::{Deserialize, Serialize};
 // ============================================================================
 
 #[tauri::command]
+pub async fn refresh_devices(
+    device_manager: State<'_, RwLock<DeviceManager>>
+) -> Result<(), String> {
+    let (audio, midi, video) = tokio::task::spawn_blocking(|| {
+        let audio = crate::devices::enumerate_audio_devices();
+        let midi = crate::devices::enumerate_midi_devices();
+        let video = crate::devices::enumerate_video_devices();
+        (audio, midi, video)
+    }).await.map_err(|e| e.to_string())?;
+
+    let mut dm = device_manager.write();
+    dm.audio_devices = audio;
+    dm.midi_devices = midi;
+    dm.video_devices = video;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn get_audio_devices(
     device_manager: State<'_, RwLock<DeviceManager>>
 ) -> Vec<AudioDevice> {

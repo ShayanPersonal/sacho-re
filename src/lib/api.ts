@@ -407,6 +407,10 @@ export interface ClusterInfo {
 // Device Commands
 // ============================================================================
 
+export async function refreshAllDevices(): Promise<void> {
+  return invoke("refresh_devices");
+}
+
 export async function getAudioDevices(): Promise<AudioDevice[]> {
   return invoke("get_audio_devices");
 }

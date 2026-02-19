@@ -3,7 +3,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { listen } from '@tauri-apps/api/event';
 import type { AudioDevice, MidiDevice, VideoDevice, VideoDeviceConfig, VideoFpsWarning, AudioTriggerLevel, Config } from '$lib/api';
-import { getAudioDevices, getMidiDevices, getVideoDevices, getConfig, updateConfig, updateAudioTriggerThresholds } from '$lib/api';
+import { refreshAllDevices, getAudioDevices, getMidiDevices, getVideoDevices, getConfig, updateConfig, updateAudioTriggerThresholds } from '$lib/api';
 import { settings } from './settings';
 
 // Save status for device changes: 'idle' | 'saving' | 'saved' | 'error'
@@ -107,7 +107,7 @@ export const videoDeviceCount = derived(
 );
 
 // Actions
-export async function refreshDevices() {
+async function loadDevices() {
   const [audioResult, midiResult, videoResult] = await Promise.allSettled([
     getAudioDevices(),
     getMidiDevices(),
@@ -131,6 +131,15 @@ export async function refreshDevices() {
   } else {
     console.error('Failed to refresh video devices:', videoResult.reason);
   }
+}
+
+export async function refreshDevices() {
+  try {
+    await refreshAllDevices();
+  } catch (e) {
+    console.error('Failed to re-enumerate devices:', e);
+  }
+  await loadDevices();
 }
 
 export async function loadConfig() {
@@ -367,7 +376,7 @@ export function setVideoDeviceConfig(deviceId: string, deviceConfig: VideoDevice
 
 // Initialize
 async function initialize() {
-  await refreshDevices();
+  await loadDevices();
   await loadConfig();
   // Clean up stale device IDs after both devices and config are loaded
   await cleanupStaleDeviceIds();

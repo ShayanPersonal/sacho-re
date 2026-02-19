@@ -154,6 +154,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::refresh_devices,
             commands::get_audio_devices,
             commands::get_midi_devices,
             commands::get_video_devices,
