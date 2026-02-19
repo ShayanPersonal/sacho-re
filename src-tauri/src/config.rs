@@ -70,9 +70,17 @@ pub struct Config {
     #[serde(default)]
     pub sound_recording_stop: bool,
 
-    /// Volume for recording start/stop sounds (0.0-1.0)
+    /// Volume for recording start sound (0.0-1.0)
     #[serde(default = "default_sound_volume")]
-    pub sound_volume: f64,
+    pub sound_volume_start: f64,
+
+    /// Volume for recording stop sound (0.0-1.0)
+    #[serde(default = "default_sound_volume")]
+    pub sound_volume_stop: f64,
+
+    /// Legacy: single volume for both sounds (migrated to per-sound volumes on load)
+    #[serde(default, skip_serializing)]
+    sound_volume: Option<f64>,
 
     /// Path to custom start sound file (relative to app config dir, inside sounds/)
     #[serde(default)]
@@ -338,7 +346,9 @@ impl Default for Config {
             notify_recording_stop: true,
             sound_recording_start: false,
             sound_recording_stop: false,
-            sound_volume: 0.5,
+            sound_volume_start: 0.5,
+            sound_volume_stop: 0.5,
+            sound_volume: None,
             custom_sound_start: None,
             custom_sound_stop: None,
             selected_audio_devices: Vec::new(),
@@ -377,10 +387,23 @@ impl Config {
             clamped.push(format!("pre_roll_secs: {} -> {}", old, self.pre_roll_secs));
         }
 
-        if self.sound_volume < 0.0 || self.sound_volume > 1.0 {
-            let old = self.sound_volume;
-            self.sound_volume = self.sound_volume.clamp(0.0, 1.0);
-            clamped.push(format!("sound_volume: {} -> {}", old, self.sound_volume));
+        // Migrate legacy single sound_volume to per-sound volumes
+        if let Some(legacy_vol) = self.sound_volume.take() {
+            let vol = legacy_vol.clamp(0.0, 1.0);
+            self.sound_volume_start = vol;
+            self.sound_volume_stop = vol;
+        }
+
+        if self.sound_volume_start < 0.0 || self.sound_volume_start > 1.0 {
+            let old = self.sound_volume_start;
+            self.sound_volume_start = self.sound_volume_start.clamp(0.0, 1.0);
+            clamped.push(format!("sound_volume_start: {} -> {}", old, self.sound_volume_start));
+        }
+
+        if self.sound_volume_stop < 0.0 || self.sound_volume_stop > 1.0 {
+            let old = self.sound_volume_stop;
+            self.sound_volume_stop = self.sound_volume_stop.clamp(0.0, 1.0);
+            clamped.push(format!("sound_volume_stop: {} -> {}", old, self.sound_volume_stop));
         }
 
         for (key, value) in self.audio_trigger_thresholds.iter_mut() {

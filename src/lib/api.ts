@@ -338,7 +338,8 @@ export interface Config {
   notify_recording_stop: boolean;
   sound_recording_start: boolean;
   sound_recording_stop: boolean;
-  sound_volume: number;
+  sound_volume_start: number;
+  sound_volume_stop: number;
   custom_sound_start: string | null;
   custom_sound_stop: string | null;
   selected_audio_devices: string[];

@@ -678,7 +678,7 @@
                     </label>
                 </div>
                 <div class="setting-row">
-                    <div class="checkbox-row-with-customize">
+                    <div class="sound-setting">
                         <label class="checkbox-row">
                             <input
                                 type="checkbox"
@@ -699,31 +699,69 @@
                             >
                         </label>
                         {#if localSettings.sound_recording_start}
-                            <button
-                                class="customize-btn"
-                                onclick={() => browseCustomSound("start")}
-                                >Customize</button
-                            >
-                            {#if localSettings.custom_sound_start}
-                                <span
-                                    class="custom-sound-name"
-                                    title={localSettings.custom_sound_start}
-                                    >{customSoundFilename(
-                                        localSettings.custom_sound_start,
-                                    )}</span
+                            <div class="sound-controls">
+                                <input
+                                    type="range"
+                                    class="sound-volume-slider"
+                                    min="0"
+                                    max="1"
+                                    step="0.05"
+                                    bind:value={localSettings.sound_volume_start}
+                                    oninput={autoSaveDebounced}
+                                />
+                                <span class="volume-value"
+                                    >{Math.round(
+                                        localSettings.sound_volume_start * 100,
+                                    )}%</span
                                 >
                                 <button
-                                    class="custom-sound-clear"
-                                    onclick={() => resetCustomSound("start")}
-                                    title="Reset to default sound"
-                                    >&times;</button
+                                    class="preview-btn"
+                                    onclick={() =>
+                                        localSettings &&
+                                        playStartSound(
+                                            localSettings.sound_volume_start,
+                                            localSettings.custom_sound_start,
+                                        )}
+                                    title="Preview start sound"
+                                    ><svg
+                                        class="preview-icon"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        ><polygon
+                                            points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"
+                                        /><path
+                                            d="M15.54 8.46a5 5 0 0 1 0 7.07"
+                                        /></svg
+                                    ></button
                                 >
-                            {/if}
+                                <button
+                                    class="customize-btn"
+                                    onclick={() => browseCustomSound("start")}
+                                    >Customize</button
+                                >
+                                {#if localSettings.custom_sound_start}
+                                    <span
+                                        class="custom-sound-name"
+                                        title={localSettings.custom_sound_start}
+                                        >{customSoundFilename(
+                                            localSettings.custom_sound_start,
+                                        )}</span
+                                    >
+                                    <button
+                                        class="custom-sound-clear"
+                                        onclick={() => resetCustomSound("start")}
+                                        title="Reset to default sound"
+                                        >&times;</button
+                                    >
+                                {/if}
+                            </div>
                         {/if}
                     </div>
                 </div>
                 <div class="setting-row">
-                    <div class="checkbox-row-with-customize">
+                    <div class="sound-setting">
                         <label class="checkbox-row">
                             <input
                                 type="checkbox"
@@ -744,97 +782,67 @@
                             >
                         </label>
                         {#if localSettings.sound_recording_stop}
-                            <button
-                                class="customize-btn"
-                                onclick={() => browseCustomSound("stop")}
-                                >Customize</button
-                            >
-                            {#if localSettings.custom_sound_stop}
-                                <span
-                                    class="custom-sound-name"
-                                    title={localSettings.custom_sound_stop}
-                                    >{customSoundFilename(
-                                        localSettings.custom_sound_stop,
-                                    )}</span
+                            <div class="sound-controls">
+                                <input
+                                    type="range"
+                                    class="sound-volume-slider"
+                                    min="0"
+                                    max="1"
+                                    step="0.05"
+                                    bind:value={localSettings.sound_volume_stop}
+                                    oninput={autoSaveDebounced}
+                                />
+                                <span class="volume-value"
+                                    >{Math.round(
+                                        localSettings.sound_volume_stop * 100,
+                                    )}%</span
                                 >
                                 <button
-                                    class="custom-sound-clear"
-                                    onclick={() => resetCustomSound("stop")}
-                                    title="Reset to default sound"
-                                    >&times;</button
+                                    class="preview-btn"
+                                    onclick={() =>
+                                        localSettings &&
+                                        playStopSound(
+                                            localSettings.sound_volume_stop,
+                                            localSettings.custom_sound_stop,
+                                        )}
+                                    title="Preview stop sound"
+                                    ><svg
+                                        class="preview-icon"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        ><polygon
+                                            points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"
+                                        /><path
+                                            d="M15.54 8.46a5 5 0 0 1 0 7.07"
+                                        /></svg
+                                    ></button
                                 >
-                            {/if}
+                                <button
+                                    class="customize-btn"
+                                    onclick={() => browseCustomSound("stop")}
+                                    >Customize</button
+                                >
+                                {#if localSettings.custom_sound_stop}
+                                    <span
+                                        class="custom-sound-name"
+                                        title={localSettings.custom_sound_stop}
+                                        >{customSoundFilename(
+                                            localSettings.custom_sound_stop,
+                                        )}</span
+                                    >
+                                    <button
+                                        class="custom-sound-clear"
+                                        onclick={() => resetCustomSound("stop")}
+                                        title="Reset to default sound"
+                                        >&times;</button
+                                    >
+                                {/if}
+                            </div>
                         {/if}
                     </div>
                 </div>
-                {#if localSettings.sound_recording_start || localSettings.sound_recording_stop}
-                    <div class="setting-row">
-                        <label>
-                            <span class="setting-label">Sound Volume</span>
-                        </label>
-                        <div class="volume-slider-row">
-                            <input
-                                type="range"
-                                min="0"
-                                max="1"
-                                step="0.05"
-                                bind:value={localSettings.sound_volume}
-                                oninput={autoSaveDebounced}
-                            />
-                            <span class="volume-value"
-                                >{Math.round(
-                                    localSettings.sound_volume * 100,
-                                )}%</span
-                            >
-                            <button
-                                class="preview-btn"
-                                disabled={!localSettings.sound_recording_start}
-                                onclick={() =>
-                                    localSettings &&
-                                    playStartSound(
-                                        localSettings.sound_volume,
-                                        localSettings.custom_sound_start,
-                                    )}
-                                title="Preview start sound"
-                                ><svg
-                                    class="preview-icon"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    ><polygon
-                                        points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"
-                                    /><path
-                                        d="M15.54 8.46a5 5 0 0 1 0 7.07"
-                                    /></svg
-                                > Start</button
-                            >
-                            <button
-                                class="preview-btn"
-                                disabled={!localSettings.sound_recording_stop}
-                                onclick={() =>
-                                    localSettings &&
-                                    playStopSound(
-                                        localSettings.sound_volume,
-                                        localSettings.custom_sound_stop,
-                                    )}
-                                title="Preview stop sound"
-                                ><svg
-                                    class="preview-icon"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    ><polygon
-                                        points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"
-                                    /><path
-                                        d="M15.54 8.46a5 5 0 0 1 0 7.07"
-                                    /></svg
-                                > Stop</button
-                            >
-                        </div>
-                    </div>
-                {/if}
             </section>
         </div>
     {:else}
@@ -1255,14 +1263,21 @@
         height: 16px;
     }
 
-    .volume-slider-row {
+    .sound-setting {
         display: flex;
         align-items: center;
-        gap: 0.75rem;
+        gap: 0.5rem;
     }
 
-    .volume-slider-row input[type="range"] {
-        flex: 1;
+    .sound-controls {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-left: auto;
+    }
+
+    .sound-volume-slider {
+        width: 5rem;
         height: 4px;
         accent-color: #c9a962;
         cursor: pointer;
@@ -1305,16 +1320,6 @@
         width: 11px;
         height: 11px;
         vertical-align: -1px;
-    }
-
-    .checkbox-row-with-customize {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-
-    .checkbox-row-with-customize > .checkbox-row {
-        min-width: 240px;
     }
 
     .custom-sound-name {
@@ -1383,7 +1388,7 @@
         border-color: rgba(0, 0, 0, 0.2);
     }
 
-    :global(body.light-mode) .volume-slider-row input[type="range"] {
+    :global(body.light-mode) .sound-volume-slider {
         accent-color: #a08030;
     }
 
