@@ -742,13 +742,6 @@
                                     >Customize</button
                                 >
                                 {#if localSettings.custom_sound_start}
-                                    <span
-                                        class="custom-sound-name"
-                                        title={localSettings.custom_sound_start}
-                                        >{customSoundFilename(
-                                            localSettings.custom_sound_start,
-                                        )}</span
-                                    >
                                     <button
                                         class="custom-sound-clear"
                                         onclick={() => resetCustomSound("start")}
@@ -825,13 +818,6 @@
                                     >Customize</button
                                 >
                                 {#if localSettings.custom_sound_stop}
-                                    <span
-                                        class="custom-sound-name"
-                                        title={localSettings.custom_sound_stop}
-                                        >{customSoundFilename(
-                                            localSettings.custom_sound_stop,
-                                        )}</span
-                                    >
                                     <button
                                         class="custom-sound-clear"
                                         onclick={() => resetCustomSound("stop")}
@@ -1325,7 +1311,7 @@
     .custom-sound-name {
         font-size: 0.6875rem;
         color: #c9a962;
-        max-width: 120px;
+        max-width: 72px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;

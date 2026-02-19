@@ -73,7 +73,7 @@ async function playCustomFile(
   }
 }
 
-/** Play a short ascending chime (C5->E5->G5) for recording start.
+/** Play a double C5 note for recording start.
  *  When called as a preview (from Settings), toggles playback on repeat press. */
 export async function playStartSound(
   volume: number,
@@ -91,20 +91,17 @@ export async function playStartSound(
     const played = await playCustomFile(customPath, volume);
     if (played) return;
   }
-  // Fall back to Tone.js synth
   const s = ensureSynth();
   s.volume.value = volumeToDb(volume);
   const now = Tone.now();
-  s.triggerAttackRelease("C5", "16n", now);
-  s.triggerAttackRelease("E5", "16n", now + 0.1);
-  s.triggerAttackRelease("G5", "16n", now + 0.2);
-  // Tone.js chime is ~0.4s total; clear playing state after it finishes
+  s.triggerAttackRelease("G5", "16n", now);
+  s.triggerAttackRelease("G5", "16n", now + 0.125);
   setTimeout(() => {
     if (playingType === "start") playingType = null;
-  }, 500);
+  }, 400);
 }
 
-/** Play the same chime reversed (G5->E5->C5) for recording stop.
+/** Play a single C5 note for recording stop.
  *  When called as a preview (from Settings), toggles playback on repeat press. */
 export async function playStopSound(
   volume: number,
@@ -122,16 +119,13 @@ export async function playStopSound(
     const played = await playCustomFile(customPath, volume);
     if (played) return;
   }
-  // Fall back to Tone.js synth
   const s = ensureSynth();
   s.volume.value = volumeToDb(volume);
   const now = Tone.now();
   s.triggerAttackRelease("G5", "16n", now);
-  s.triggerAttackRelease("E5", "16n", now + 0.1);
-  s.triggerAttackRelease("C5", "16n", now + 0.2);
   setTimeout(() => {
     if (playingType === "stop") playingType = null;
-  }, 500);
+  }, 300);
 }
 
 /** Preview a custom sound file by its relative path in the config dir */
