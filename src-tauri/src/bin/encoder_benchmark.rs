@@ -7,12 +7,15 @@
 //! (e.g. buggy driver), the benchmark reports the failure and continues.
 //!
 //! Usage:
-//!   cargo run --bin encoder_benchmark [-- [OPTIONS]]
+//!   cargo run --bin encoder_benchmark --features tempfile [-- [OPTIONS]]
 //!
 //! Options:
 //!   --codec <filter>    Only benchmark encoders whose codec name contains <filter>
-//!   --duration <secs>   Override benchmark duration per encoder (default: 15s)
+//!   --duration <secs>   Duration per benchmark run (default: 15s)
+//!   --preset <1-5>      Use a specific preset level (default: 3 = Balanced)
+//!   --all-presets        Test every encoder at all preset levels (1-5)
 //!   --verbose           Extra debug output
+//!   --help              Show this help message
 
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -21,7 +24,7 @@ use sacho_lib::encoding::{
     available_encoders_for_codec, AsyncVideoEncoder, EncoderConfig, HardwareEncoderType,
     RawVideoFrame, VideoCodec,
 };
-use sacho_lib::encoding::presets::{preset_label, DEFAULT_PRESET};
+use sacho_lib::encoding::presets::{preset_label, DEFAULT_PRESET, MAX_PRESET, MIN_PRESET};
 use sacho_lib::gstreamer_init;
 
 /// Codecs that have encode pipelines in the app
@@ -101,12 +104,53 @@ struct BenchmarkResult {
     codec_name: &'static str,
     hw_name: &'static str,
     gst_element: &'static str,
+    preset: u8,
     frames: u64,
     avg_fps: f64,
     realtime_mult: f64,
     file_size: u64,
     bitrate_mbps: f64,
     error: Option<String>,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Help
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn print_help() {
+    println!(
+        "\n\
+Sacho Encoder Benchmark
+
+Benchmarks all available video encoders using the app's actual encoding
+infrastructure (same codecs, presets, pipeline construction, hardware detection).
+
+USAGE:
+    cargo run --bin encoder_benchmark --features tempfile [-- [OPTIONS]]
+
+OPTIONS:
+    --codec <filter>    Only benchmark encoders whose codec name contains <filter>
+    --duration <secs>   Duration per benchmark run (default: {DEFAULT_DURATION_SECS}s)
+    --preset <1-5>      Use a specific preset level (default: {DEFAULT_PRESET} = {default_label})
+    --all-presets       Test every encoder at all preset levels ({MIN_PRESET}-{MAX_PRESET})
+    --verbose           Extra debug output
+    --help              Show this help message
+
+PRESET LEVELS:
+    1  Lightest   — Minimal CPU/GPU load, lowest quality
+    2  Light      — Low resource usage, acceptable quality
+    3  Balanced   — Moderate resources, good quality (default)
+    4  Quality    — Higher resource usage, very good quality
+    5  Maximum    — Highest quality feasible in real-time
+
+EXAMPLES:
+    cargo run --bin encoder_benchmark --features tempfile
+    cargo run --bin encoder_benchmark --features tempfile -- --preset 5
+    cargo run --bin encoder_benchmark --features tempfile -- --all-presets --duration 10
+    cargo run --bin encoder_benchmark --features tempfile -- --codec h264 --preset 1
+",
+        default_label = preset_label(DEFAULT_PRESET),
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -131,22 +175,39 @@ fn main() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Argument parsing helpers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn parse_arg_value<T: std::str::FromStr>(args: &[String], flag: &str) -> Option<T> {
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse::<T>().ok())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Orchestrator — discovers encoders, spawns worker subprocesses, collects results
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn orchestrator_main(args: &[String]) {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_help();
+        std::process::exit(0);
+    }
+
     let verbose = args.iter().any(|a| a == "--verbose");
-    let duration_secs = args
-        .iter()
-        .position(|a| a == "--duration")
-        .and_then(|i| args.get(i + 1))
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(DEFAULT_DURATION_SECS);
-    let codec_filter = args
-        .iter()
-        .position(|a| a == "--codec")
-        .and_then(|i| args.get(i + 1))
-        .cloned();
+    let all_presets = args.iter().any(|a| a == "--all-presets");
+    let duration_secs = parse_arg_value::<u64>(args, "--duration").unwrap_or(DEFAULT_DURATION_SECS);
+    let codec_filter = parse_arg_value::<String>(args, "--codec");
+
+    let preset_levels: Vec<u8> = if all_presets {
+        (MIN_PRESET..=MAX_PRESET).collect()
+    } else {
+        let level = parse_arg_value::<u8>(args, "--preset")
+            .unwrap_or(DEFAULT_PRESET)
+            .clamp(MIN_PRESET, MAX_PRESET);
+        vec![level]
+    };
 
     // Init logging (suppress for orchestrator unless verbose)
     let log_level = if verbose { "debug" } else { "warn" };
@@ -155,11 +216,15 @@ fn orchestrator_main(args: &[String]) {
     println!("\n=== Sacho Encoder Benchmark ===\n");
     println!("  Resolution: {}x{} @ {:.0} fps", WIDTH, HEIGHT, FPS);
     println!("  Duration:   {}s per encoder", duration_secs);
-    println!(
-        "  Preset:     {} (level {})",
-        preset_label(DEFAULT_PRESET),
-        DEFAULT_PRESET
-    );
+    if all_presets {
+        println!("  Presets:    all ({}-{})", MIN_PRESET, MAX_PRESET);
+    } else {
+        println!(
+            "  Preset:     {} (level {})",
+            preset_label(preset_levels[0]),
+            preset_levels[0],
+        );
+    }
     if let Some(ref filter) = codec_filter {
         println!("  Filter:     codec contains '{}'", filter);
     }
@@ -197,57 +262,67 @@ fn orchestrator_main(args: &[String]) {
         std::process::exit(0);
     }
 
-    println!("\n  Running {} benchmarks...\n", encoders.len());
+    let total_runs = encoders.len() * preset_levels.len();
+    println!("\n  Running {} benchmarks...\n", total_runs);
 
     let self_exe = std::env::current_exe().expect("Failed to get current executable path");
     let mut results: Vec<BenchmarkResult> = Vec::new();
+    let mut run_idx = 0;
 
-    for (i, &(codec, hw_type, element)) in encoders.iter().enumerate() {
-        println!(
-            "  [{}/{}] {} / {} ({})...",
-            i + 1,
-            encoders.len(),
-            codec.display_name(),
-            hw_type.display_name(),
-            element,
-        );
+    for &(codec, hw_type, element) in &encoders {
+        for &preset in &preset_levels {
+            run_idx += 1;
+            let preset_info = if all_presets {
+                format!(" [preset {}]", preset)
+            } else {
+                String::new()
+            };
+            println!(
+                "  [{}/{}] {} / {} ({}){}...",
+                run_idx,
+                total_runs,
+                codec.display_name(),
+                hw_type.display_name(),
+                element,
+                preset_info,
+            );
 
-        let result = run_in_subprocess(
-            &self_exe,
-            codec,
-            hw_type,
-            element,
-            duration_secs,
-            verbose,
-        );
+            let result = run_in_subprocess(
+                &self_exe,
+                codec,
+                hw_type,
+                element,
+                duration_secs,
+                preset,
+                verbose,
+            );
 
-        match &result.error {
-            Some(err) => {
-                println!(
-                    "  [{}/{}] FAILED: {}\n",
-                    i + 1,
-                    encoders.len(),
-                    err,
-                );
+            match &result.error {
+                Some(err) => {
+                    println!(
+                        "  [{}/{}] FAILED: {}\n",
+                        run_idx, total_runs, err,
+                    );
+                }
+                None => {
+                    println!(
+                        "  [{}/{}] {} frames, {:.1} fps, {:.2}x realtime, {:.1} MB, {:.1} Mbps\n",
+                        run_idx,
+                        total_runs,
+                        result.frames,
+                        result.avg_fps,
+                        result.realtime_mult,
+                        result.file_size as f64 / 1_048_576.0,
+                        result.bitrate_mbps,
+                    );
+                }
             }
-            None => {
-                println!(
-                    "  [{}/{}] {} frames, {:.1} fps, {:.2}x realtime, {:.1} MB, {:.1} Mbps\n",
-                    i + 1,
-                    encoders.len(),
-                    result.frames,
-                    result.avg_fps,
-                    result.realtime_mult,
-                    result.file_size as f64 / 1_048_576.0,
-                    result.bitrate_mbps,
-                );
-            }
+
+            results.push(result);
         }
-
-        results.push(result);
     }
 
-    print_summary(&results);
+    print_summary(&results, all_presets || preset_levels[0] != DEFAULT_PRESET);
 }
 
 /// Spawn a worker subprocess for a single encoder benchmark
@@ -257,6 +332,7 @@ fn run_in_subprocess(
     hw_type: HardwareEncoderType,
     element: &'static str,
     duration_secs: u64,
+    preset: u8,
     verbose: bool,
 ) -> BenchmarkResult {
     let mut cmd = Command::new(self_exe);
@@ -267,6 +343,8 @@ fn run_in_subprocess(
         element,
         "--duration",
         &duration_secs.to_string(),
+        "--preset",
+        &preset.to_string(),
     ]);
     if verbose {
         cmd.arg("--verbose");
@@ -276,6 +354,7 @@ fn run_in_subprocess(
         codec_name: codec.display_name(),
         hw_name: hw_type.display_name(),
         gst_element: element,
+        preset,
         frames: 0,
         avg_fps: 0.0,
         realtime_mult: 0.0,
@@ -328,6 +407,7 @@ fn run_in_subprocess(
                 codec_name: codec.display_name(),
                 hw_name: hw_type.display_name(),
                 gst_element: element,
+                preset,
                 frames,
                 avg_fps,
                 realtime_mult,
@@ -357,12 +437,10 @@ fn worker_main(args: &[String]) {
     let _element_str = args.get(run_single_pos + 3).expect("missing element arg");
 
     let verbose = args.iter().any(|a| a == "--verbose");
-    let duration_secs = args
-        .iter()
-        .position(|a| a == "--duration")
-        .and_then(|i| args.get(i + 1))
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(DEFAULT_DURATION_SECS);
+    let duration_secs = parse_arg_value::<u64>(args, "--duration").unwrap_or(DEFAULT_DURATION_SECS);
+    let preset = parse_arg_value::<u8>(args, "--preset")
+        .unwrap_or(DEFAULT_PRESET)
+        .clamp(MIN_PRESET, MAX_PRESET);
 
     let codec = codec_from_arg(codec_str).unwrap_or_else(|| {
         println!("{}Unknown codec: {}", RESULT_ERR, codec_str);
@@ -395,7 +473,7 @@ fn worker_main(args: &[String]) {
 
     let config = EncoderConfig {
         target_codec: codec,
-        preset_level: DEFAULT_PRESET,
+        preset_level: preset,
         ..Default::default()
     };
 
@@ -546,45 +624,89 @@ fn generate_nv12_frame(width: u32, height: u32, frame_index: u32) -> Vec<u8> {
 // Summary table
 // ═══════════════════════════════════════════════════════════════════════════════
 
-fn print_summary(results: &[BenchmarkResult]) {
-    println!("\n  ╔══════════╤════════════════════════════╤══════════════════╤════════╤═══════════╤═══════════╤════════════╤═══════════╗");
-    println!(
-        "  ║ {:<8} │ {:<26} │ {:<16} │ {:>6} │ {:>9} │ {:>9} │ {:>10} │ {:>9} ║",
-        "Codec", "Encoder", "GStreamer", "Frames", "FPS", "Realtime", "Size", "Bitrate"
-    );
-    println!("  ╠══════════╪════════════════════════════╪══════════════════╪════════╪═══════════╪═══════════╪════════════╪═══════════╣");
+fn print_summary(results: &[BenchmarkResult], show_preset: bool) {
+    if show_preset {
+        println!("\n  ╔══════════╤════════════════════════════╤══════════════════╤════════════╤════════╤═══════════╤═══════════╤════════════╤═══════════╗");
+        println!(
+            "  ║ {:<8} │ {:<26} │ {:<16} │ {:<10} │ {:>6} │ {:>9} │ {:>9} │ {:>10} │ {:>9} ║",
+            "Codec", "Encoder", "GStreamer", "Preset", "Frames", "FPS", "Realtime", "Size", "Bitrate"
+        );
+        println!("  ╠══════════╪════════════════════════════╪══════════════════╪════════════╪════════╪═══════════╪═══════════╪════════════╪═══════════╣");
 
-    for r in results {
-        if let Some(ref err) = r.error {
-            let err_short = if err.len() > 40 {
-                format!("{}...", &err[..37])
+        for r in results {
+            let preset_str = format!("{} ({})", preset_label(r.preset), r.preset);
+            if let Some(ref err) = r.error {
+                let err_short = if err.len() > 40 {
+                    format!("{}...", &err[..37])
+                } else {
+                    err.clone()
+                };
+                println!(
+                    "  ║ {:<8} │ {:<26} │ {:<16} │ {:<10} │ {:>54} ║",
+                    r.codec_name,
+                    r.hw_name,
+                    r.gst_element,
+                    preset_str,
+                    format!("FAILED: {}", err_short),
+                );
             } else {
-                err.clone()
-            };
-            println!(
-                "  ║ {:<8} │ {:<26} │ {:<16} │ {:>43} ║",
-                r.codec_name,
-                r.hw_name,
-                r.gst_element,
-                format!("FAILED: {}", err_short),
-            );
-        } else {
-            let size_str = format_size(r.file_size);
-            println!(
-                "  ║ {:<8} │ {:<26} │ {:<16} │ {:>6} │ {:>7.1}   │ {:>6.2}x   │ {:>10} │ {:>6.1} Mb ║",
-                r.codec_name,
-                r.hw_name,
-                r.gst_element,
-                r.frames,
-                r.avg_fps,
-                r.realtime_mult,
-                size_str,
-                r.bitrate_mbps,
-            );
+                let size_str = format_size(r.file_size);
+                println!(
+                    "  ║ {:<8} │ {:<26} │ {:<16} │ {:<10} │ {:>6} │ {:>7.1}   │ {:>6.2}x   │ {:>10} │ {:>6.1} Mb ║",
+                    r.codec_name,
+                    r.hw_name,
+                    r.gst_element,
+                    preset_str,
+                    r.frames,
+                    r.avg_fps,
+                    r.realtime_mult,
+                    size_str,
+                    r.bitrate_mbps,
+                );
+            }
         }
-    }
 
-    println!("  ╚══════════╧════════════════════════════╧══════════════════╧════════╧═══════════╧═══════════╧════════════╧═══════════╝");
+        println!("  ╚══════════╧════════════════════════════╧══════════════════╧════════════╧════════╧═══════════╧═══════════╧════════════╧═══════════╝");
+    } else {
+        println!("\n  ╔══════════╤════════════════════════════╤══════════════════╤════════╤═══════════╤═══════════╤════════════╤═══════════╗");
+        println!(
+            "  ║ {:<8} │ {:<26} │ {:<16} │ {:>6} │ {:>9} │ {:>9} │ {:>10} │ {:>9} ║",
+            "Codec", "Encoder", "GStreamer", "Frames", "FPS", "Realtime", "Size", "Bitrate"
+        );
+        println!("  ╠══════════╪════════════════════════════╪══════════════════╪════════╪═══════════╪═══════════╪════════════╪═══════════╣");
+
+        for r in results {
+            if let Some(ref err) = r.error {
+                let err_short = if err.len() > 40 {
+                    format!("{}...", &err[..37])
+                } else {
+                    err.clone()
+                };
+                println!(
+                    "  ║ {:<8} │ {:<26} │ {:<16} │ {:>43} ║",
+                    r.codec_name,
+                    r.hw_name,
+                    r.gst_element,
+                    format!("FAILED: {}", err_short),
+                );
+            } else {
+                let size_str = format_size(r.file_size);
+                println!(
+                    "  ║ {:<8} │ {:<26} │ {:<16} │ {:>6} │ {:>7.1}   │ {:>6.2}x   │ {:>10} │ {:>6.1} Mb ║",
+                    r.codec_name,
+                    r.hw_name,
+                    r.gst_element,
+                    r.frames,
+                    r.avg_fps,
+                    r.realtime_mult,
+                    size_str,
+                    r.bitrate_mbps,
+                );
+            }
+        }
+
+        println!("  ╚══════════╧════════════════════════════╧══════════════════╧════════╧═══════════╧═══════════╧════════════╧═══════════╝");
+    }
     println!();
 }
 
