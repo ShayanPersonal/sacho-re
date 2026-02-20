@@ -613,6 +613,28 @@ export async function updateAudioTriggerThresholds(
   await invoke("update_audio_trigger_thresholds", { thresholds });
 }
 
+// ============================================================================
+// Device Health Commands
+// ============================================================================
+
+export interface DisconnectedDeviceInfo {
+  id: string;
+  name: string;
+  device_type: string;
+}
+
+export async function getDisconnectedDevices(): Promise<
+  DisconnectedDeviceInfo[]
+> {
+  return invoke("get_disconnected_devices");
+}
+
+export async function restartDevicePipelines(
+  deviceTypes: string[],
+): Promise<void> {
+  await invoke("restart_device_pipelines", { deviceTypes });
+}
+
 /** Copy a custom sound file into the app config dir. Returns the relative path. */
 export async function setCustomSound(
   sourcePath: string,

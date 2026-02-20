@@ -2,8 +2,8 @@
 
 import { writable, derived, get } from 'svelte/store';
 import { listen } from '@tauri-apps/api/event';
-import type { AudioDevice, MidiDevice, VideoDevice, VideoDeviceConfig, VideoFpsWarning, AudioTriggerLevel, Config } from '$lib/api';
-import { refreshAllDevices, getAudioDevices, getMidiDevices, getVideoDevices, getConfig, updateConfig, updateAudioTriggerThresholds } from '$lib/api';
+import type { AudioDevice, MidiDevice, VideoDevice, VideoDeviceConfig, VideoFpsWarning, AudioTriggerLevel, Config, DisconnectedDeviceInfo } from '$lib/api';
+import { refreshAllDevices, getAudioDevices, getMidiDevices, getVideoDevices, getConfig, updateConfig, updateAudioTriggerThresholds, getDisconnectedDevices, restartDevicePipelines } from '$lib/api';
 import { settings } from './settings';
 
 // Save status for device changes: 'idle' | 'saving' | 'saved' | 'error'
@@ -73,6 +73,26 @@ listen<string>('recording-state-changed', (event) => {
   if (event.payload === 'initializing') {
     videoFpsWarnings.set([]);
     audioTriggerLevels.set({});
+  }
+});
+
+// Disconnected device IDs (from health checker)
+export const disconnectedDevices = writable<Set<string>>(new Set());
+
+// Listen for device health change events from backend
+listen<{ disconnected_devices: DisconnectedDeviceInfo[] }>('device-health-changed', (event) => {
+  const ids = new Set(event.payload.disconnected_devices.map(d => d.id));
+  disconnectedDevices.set(ids);
+});
+
+// Listen for device reconnection — trigger pipeline restart via frontend round-trip
+listen<{ device_types: string[] }>('_device-needs-restart', async (event) => {
+  try {
+    await restartDevicePipelines(event.payload.device_types);
+    // Refresh device lists after restart so UI is up to date
+    await refreshDevices();
+  } catch (e) {
+    console.error('Failed to restart device pipelines:', e);
   }
 });
 
@@ -173,15 +193,18 @@ export async function cleanupStaleDeviceIds() {
   const midiIds = new Set(currentMidi.map(d => d.id));
   const videoIds = new Set(currentVideo.map(d => d.id));
   
-  // Filter out IDs that don't match any existing device
-  const cleanedAudio = currentConfig.selected_audio_devices.filter(id => audioIds.has(id));
-  const cleanedMidi = currentConfig.selected_midi_devices.filter(id => midiIds.has(id));
-  const cleanedTriggers = currentConfig.trigger_midi_devices.filter(id => midiIds.has(id));
-  const cleanedAudioTriggers = (currentConfig.trigger_audio_devices ?? []).filter(id => audioIds.has(id));
-  const cleanedVideo = currentConfig.selected_video_devices.filter(id => videoIds.has(id));
+  // Preserve IDs that are temporarily disconnected (health checker knows about them)
+  const currentDisconnected = get(disconnectedDevices);
+
+  // Filter out IDs that don't match any existing device AND aren't disconnected
+  const cleanedAudio = currentConfig.selected_audio_devices.filter(id => audioIds.has(id) || currentDisconnected.has(id));
+  const cleanedMidi = currentConfig.selected_midi_devices.filter(id => midiIds.has(id) || currentDisconnected.has(id));
+  const cleanedTriggers = currentConfig.trigger_midi_devices.filter(id => midiIds.has(id) || currentDisconnected.has(id));
+  const cleanedAudioTriggers = (currentConfig.trigger_audio_devices ?? []).filter(id => audioIds.has(id) || currentDisconnected.has(id));
+  const cleanedVideo = currentConfig.selected_video_devices.filter(id => videoIds.has(id) || currentDisconnected.has(id));
   const cleanedConfigs: Record<string, VideoDeviceConfig> = {};
   for (const [id, cfg] of Object.entries(currentConfig.video_device_configs)) {
-    if (videoIds.has(id)) {
+    if (videoIds.has(id) || currentDisconnected.has(id)) {
       cleanedConfigs[id] = cfg;
     }
   }
@@ -378,6 +401,13 @@ export function setVideoDeviceConfig(deviceId: string, deviceConfig: VideoDevice
 async function initialize() {
   await loadDevices();
   await loadConfig();
+  // Populate disconnected devices before cleanup (so cleanup preserves them)
+  try {
+    const disconnected = await getDisconnectedDevices();
+    disconnectedDevices.set(new Set(disconnected.map(d => d.id)));
+  } catch (e) {
+    console.error('Failed to load disconnected devices:', e);
+  }
   // Clean up stale device IDs after both devices and config are loaded
   await cleanupStaleDeviceIds();
 }

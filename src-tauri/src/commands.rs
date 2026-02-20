@@ -721,6 +721,71 @@ pub fn update_config(
         result.map_err(|e| format!("Failed to reinitialize devices: {}", e))?;
     }
 
+    // After any config change, immediately check device health to detect
+    // if newly-activated devices are disconnected (gives instant UI feedback)
+    {
+        let disconnected_ids = crate::devices::health::check_active_device_health(&app);
+        let health = app.state::<RwLock<crate::devices::health::DeviceHealthState>>();
+        let dm = app.state::<RwLock<DeviceManager>>();
+        let dm_read = dm.read();
+        let config_read = config.read();
+
+        let mut health_write = health.write();
+        // Rebuild disconnected map from scratch based on current check
+        health_write.disconnected.clear();
+        for id in &disconnected_ids {
+            // Resolve device info
+            if let Some(device) = dm_read.midi_devices.iter().find(|d| &d.id == id) {
+                health_write.disconnected.insert(
+                    id.clone(),
+                    crate::devices::health::DisconnectedDeviceInfo {
+                        id: id.clone(),
+                        name: device.name.clone(),
+                        device_type: "midi".to_string(),
+                    },
+                );
+            } else if config_read.selected_audio_devices.contains(id)
+                || config_read.trigger_audio_devices.contains(id)
+            {
+                health_write.disconnected.insert(
+                    id.clone(),
+                    crate::devices::health::DisconnectedDeviceInfo {
+                        id: id.clone(),
+                        name: id.clone(),
+                        device_type: "audio".to_string(),
+                    },
+                );
+            } else if let Some(device) = dm_read.video_devices.iter().find(|d| &d.id == id) {
+                health_write.disconnected.insert(
+                    id.clone(),
+                    crate::devices::health::DisconnectedDeviceInfo {
+                        id: id.clone(),
+                        name: device.name.clone(),
+                        device_type: "video".to_string(),
+                    },
+                );
+            }
+        }
+
+        let all_disconnected: Vec<crate::devices::health::DisconnectedDeviceInfo> =
+            health_write.disconnected.values().cloned().collect();
+        drop(health_write);
+        drop(config_read);
+        drop(dm_read);
+
+        // Emit health event so frontend updates immediately
+        #[derive(serde::Serialize, Clone)]
+        struct HealthPayload {
+            disconnected_devices: Vec<crate::devices::health::DisconnectedDeviceInfo>,
+        }
+        let _ = app.emit(
+            "device-health-changed",
+            HealthPayload {
+                disconnected_devices: all_disconnected,
+            },
+        );
+    }
+
     Ok(())
 }
 
@@ -759,6 +824,46 @@ pub fn restart_midi_monitor(
 ) -> Result<(), String> {
     let mut monitor = monitor.lock();
     monitor.start().map_err(|e| e.to_string())
+}
+
+// ============================================================================
+// Device Health Commands
+// ============================================================================
+
+#[tauri::command]
+pub fn get_disconnected_devices(
+    health: State<'_, RwLock<crate::devices::health::DeviceHealthState>>,
+) -> Vec<crate::devices::health::DisconnectedDeviceInfo> {
+    health.read().disconnected.values().cloned().collect()
+}
+
+#[tauri::command]
+pub fn restart_device_pipelines(
+    device_types: Vec<String>,
+    monitor: State<'_, Arc<Mutex<MidiMonitor>>>,
+) -> Result<(), String> {
+    let mut monitor = monitor.lock();
+    for dtype in &device_types {
+        match dtype.as_str() {
+            "midi" => {
+                if let Err(e) = monitor.restart_midi() {
+                    println!("[Health] Failed to restart MIDI: {}", e);
+                }
+            }
+            "audio" => {
+                if let Err(e) = monitor.restart_audio() {
+                    println!("[Health] Failed to restart audio: {}", e);
+                }
+            }
+            "video" => {
+                if let Err(e) = monitor.restart_video() {
+                    println!("[Health] Failed to restart video: {}", e);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 // ============================================================================

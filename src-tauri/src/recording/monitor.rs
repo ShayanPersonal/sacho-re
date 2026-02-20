@@ -1177,6 +1177,9 @@ pub struct MidiMonitor {
     video_poller_stop: Arc<AtomicBool>,
     idle_checker_stop: Arc<AtomicBool>,
     audio_poller_stop: Arc<AtomicBool>,
+    /// Handle for the device health checker background thread
+    health_checker_handle: Option<std::thread::JoinHandle<()>>,
+    health_checker_stop: Arc<AtomicBool>,
 }
 
 impl MidiMonitor {
@@ -1204,6 +1207,8 @@ impl MidiMonitor {
             video_poller_stop: Arc::new(AtomicBool::new(false)),
             idle_checker_stop: Arc::new(AtomicBool::new(false)),
             audio_poller_stop: Arc::new(AtomicBool::new(false)),
+            health_checker_handle: None,
+            health_checker_stop: Arc::new(AtomicBool::new(false)),
         }
     }
     
@@ -1256,6 +1261,9 @@ impl MidiMonitor {
             if has_audio_triggers {
                 self.start_audio_level_poller();
             }
+
+            // Always start health checker when any device is active
+            self.start_health_checker();
 
             println!("[Sacho] Monitoring active ({} MIDI, {} audio, {} video)",
                 midi_count, audio_count, video_count);
@@ -1694,6 +1702,7 @@ impl MidiMonitor {
 
     /// Stop monitoring (all pipelines)
     pub fn stop(&mut self) {
+        self.stop_health_checker();
         self.stop_idle_checker();
         self.stop_midi();
         self.stop_audio();
@@ -1746,6 +1755,27 @@ impl MidiMonitor {
     fn stop_idle_checker(&mut self) {
         self.idle_checker_stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.idle_checker_handle.take() {
+            let _ = handle.join();
+        }
+    }
+
+    /// Start the device health checker background thread
+    fn start_health_checker(&mut self) {
+        self.stop_health_checker();
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        self.health_checker_stop = stop_flag.clone();
+        let app = self.app_handle.clone();
+        let capture_state = self.capture_state.clone();
+        let video_manager = self.video_manager.clone();
+        self.health_checker_handle = Some(std::thread::spawn(move || {
+            crate::devices::health::health_check_loop(app, capture_state, video_manager, stop_flag);
+        }));
+    }
+
+    /// Stop the device health checker background thread
+    fn stop_health_checker(&mut self) {
+        self.health_checker_stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.health_checker_handle.take() {
             let _ = handle.join();
         }
     }

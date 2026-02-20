@@ -1,6 +1,7 @@
 // Device discovery and enumeration
 
 pub mod enumeration;
+pub mod health;
 
 pub use enumeration::*;
 

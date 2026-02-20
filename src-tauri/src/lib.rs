@@ -129,6 +129,9 @@ pub fn run() {
             };
             app.manage(session_db);
             
+            // Initialize device health state (before MIDI monitor so it's available)
+            app.manage(RwLock::new(devices::health::DeviceHealthState::new()));
+
             // Initialize and start MIDI monitor
             let mut midi_monitor = recording::MidiMonitor::new(app_handle.clone());
             if let Err(e) = midi_monitor.start() {
@@ -189,6 +192,8 @@ pub fn run() {
             commands::set_all_users_autostart,
             commands::simulate_crash,
             commands::get_app_stats,
+            commands::get_disconnected_devices,
+            commands::restart_device_pipelines,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sacho");

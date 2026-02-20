@@ -18,6 +18,7 @@
         videoDeviceCount,
         refreshDevices,
         deviceSaveStatus,
+        disconnectedDevices,
         toggleAudioDevice,
         toggleMidiDevice,
         toggleMidiTrigger,
@@ -316,8 +317,12 @@
                     </div>
                     <div class="device-list">
                         {#each filterDevices($midiDevices) as device}
-                            <div class="device-row midi-row">
-                                <span class="device-name">{device.name}</span>
+                            {@const isDisconnected = $disconnectedDevices.has(device.id)}
+                            <div class="device-row midi-row" class:disconnected={isDisconnected}>
+                                <span class="device-name">
+                                    {#if isDisconnected}<span class="disconnect-warning" title="Device disconnected">⚠</span>{/if}
+                                    {device.name}
+                                </span>
                                 <label class="checkbox-cell">
                                     <input
                                         type="checkbox"
@@ -400,6 +405,7 @@
                             {@const isTrigger = $triggerAudioDevices.has(
                                 device.id,
                             )}
+                            {@const isDisconnected = $disconnectedDevices.has(device.id)}
                             {@const levels = $audioTriggerLevels[device.id]}
                             {@const threshold =
                                 draggingThreshold[device.id] ??
@@ -408,11 +414,13 @@
                             <div
                                 class="device-row audio-device-row"
                                 class:has-meter={isTrigger}
+                                class:disconnected={isDisconnected}
                             >
                                 <div class="device-info">
-                                    <span class="device-name"
-                                        >{device.name}</span
-                                    >
+                                    <span class="device-name">
+                                        {#if isDisconnected}<span class="disconnect-warning" title="Device disconnected">⚠</span>{/if}
+                                        {device.name}
+                                    </span>
                                     <div class="device-meta">
                                         <span class="meta-tag"
                                             >{device.channels}ch</span
@@ -595,14 +603,17 @@
                                 device.supported_codecs,
                             )}
                             {@const isSupported = availableCodecs.length > 0}
+                            {@const isDisconnected = $disconnectedDevices.has(device.id)}
                             <div
                                 class="device-row video-row"
                                 class:device-unsupported={!isSupported}
+                                class:disconnected={isDisconnected}
                             >
                                 <div class="device-info">
-                                    <span class="device-name"
-                                        >{device.name}</span
-                                    >
+                                    <span class="device-name">
+                                        {#if isDisconnected}<span class="disconnect-warning" title="Device disconnected">⚠</span>{/if}
+                                        {device.name}
+                                    </span>
                                     <div class="device-meta">
                                         <span class="meta-tag config-summary"
                                             >{getConfigSummary(device)}</span
@@ -932,6 +943,20 @@
 
     .device-unsupported .device-name {
         color: #5a5a5a;
+    }
+
+    .device-row.disconnected {
+        opacity: 0.5;
+    }
+
+    .device-row.disconnected .device-name {
+        color: #888;
+    }
+
+    .disconnect-warning {
+        color: #d9a028;
+        margin-right: 0.375rem;
+        font-size: 0.875rem;
     }
 
     .midi-header {
@@ -1370,6 +1395,14 @@
 
     :global(body.light-mode) .device-name {
         color: #3a3a3a;
+    }
+
+    :global(body.light-mode) .device-row.disconnected .device-name {
+        color: #999;
+    }
+
+    :global(body.light-mode) .disconnect-warning {
+        color: #a07820;
     }
 
     :global(body.light-mode) .meta-tag {

@@ -169,6 +169,11 @@ impl MidiPrerollBuffer {
     pub fn clear(&mut self) {
         self.events.clear();
     }
+
+    /// Remove all buffered events from a specific device (on disconnect)
+    pub fn remove_events_for_device(&mut self, device_name: &str) {
+        self.events.retain(|e| e.device_name != device_name);
+    }
 }
 
 // ============================================================================

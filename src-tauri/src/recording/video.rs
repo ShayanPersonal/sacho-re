@@ -164,6 +164,12 @@ impl VideoPrerollBuffer {
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
+
+    /// Clear all buffered frames
+    pub fn clear(&mut self) {
+        self.frames.clear();
+        self.current_bytes = 0;
+    }
 }
 
 /// Represents a single video capture pipeline for one device
@@ -563,6 +569,12 @@ impl PrerollEncoderOutput {
         let first = self.buffer.front().unwrap();
         let last = self.buffer.back().unwrap();
         last.wall_time.duration_since(first.wall_time)
+    }
+
+    /// Clear all buffered encoded frames
+    fn clear(&mut self) {
+        self.buffer.clear();
+        self.current_bytes = 0;
     }
 }
 
@@ -974,13 +986,16 @@ impl VideoCapturePipeline {
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
-                    if !needs_frames_clone.load(Ordering::Relaxed) {
-                        // Discard: no pre-roll needed and not recording
-                        let _ = sink.pull_sample();
-                        return Ok(gst::FlowSuccess::Ok);
-                    }
+                    // Always pull sample and count frames (for health check monitoring)
                     match sink.pull_sample() {
                         Ok(sample) => {
+                            frame_counter_clone.fetch_add(1, Ordering::Relaxed);
+
+                            if !needs_frames_clone.load(Ordering::Relaxed) {
+                                // Discard: no pre-roll needed and not recording
+                                return Ok(gst::FlowSuccess::Ok);
+                            }
+
                             if let Some(buffer) = sample.buffer() {
                                 let pts = buffer.pts().map(|t| t.nseconds()).unwrap_or(0);
                                 let duration = buffer
@@ -993,7 +1008,6 @@ impl VideoCapturePipeline {
 
                                 if let Ok(map) = buffer.map_readable() {
                                     let data = map.as_slice().to_vec();
-                                    frame_counter_clone.fetch_add(1, Ordering::Relaxed);
 
                                     let frame = BufferedFrame {
                                         data,
@@ -1288,13 +1302,16 @@ impl VideoCapturePipeline {
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
-                    if !needs_frames_clone.load(Ordering::Relaxed) {
-                        // Discard: no pre-roll needed and not recording
-                        let _ = sink.pull_sample();
-                        return Ok(gst::FlowSuccess::Ok);
-                    }
+                    // Always pull sample and count frames (for health check monitoring)
                     match sink.pull_sample() {
                         Ok(sample) => {
+                            frame_counter_clone.fetch_add(1, Ordering::Relaxed);
+
+                            if !needs_frames_clone.load(Ordering::Relaxed) {
+                                // Discard: no pre-roll needed and not recording
+                                return Ok(gst::FlowSuccess::Ok);
+                            }
+
                             if let Some(buffer) = sample.buffer() {
                                 let pts = buffer.pts().map(|t| t.nseconds()).unwrap_or(0);
                                 let duration = buffer
@@ -1310,7 +1327,6 @@ impl VideoCapturePipeline {
 
                                 if let Ok(map) = buffer.map_readable() {
                                     let data = map.as_slice().to_vec();
-                                    frame_counter_clone.fetch_add(1, Ordering::Relaxed);
 
                                     let frame = BufferedFrame {
                                         data,
@@ -2427,6 +2443,24 @@ impl VideoCaptureManager {
     /// Get number of active pipelines
     pub fn pipeline_count(&self) -> usize {
         self.pipelines.len()
+    }
+
+    /// Get frame counts for all active pipelines (for health check monitoring)
+    pub fn get_frame_counts(&self) -> HashMap<String, u64> {
+        self.pipelines
+            .iter()
+            .map(|(id, p)| (id.clone(), p.frame_counter.load(Ordering::Relaxed)))
+            .collect()
+    }
+
+    /// Clear pre-roll buffers for a specific device (on disconnect)
+    pub fn clear_preroll_for_device(&mut self, device_id: &str) {
+        if let Some(pipeline) = self.pipelines.get_mut(device_id) {
+            pipeline.preroll_buffer.lock().clear();
+            if let Some(ref output) = pipeline.preroll_encoder_output {
+                output.lock().clear();
+            }
+        }
     }
 }
 
