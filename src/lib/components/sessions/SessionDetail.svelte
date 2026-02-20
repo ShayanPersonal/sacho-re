@@ -304,87 +304,6 @@
     // Whether the current video file has embedded audio (combined MKV)
     let videoHasAudio = $derived(currentVideoFile?.has_audio ?? false);
 
-    // Load MIDI data for current file
-    async function loadMidi() {
-        // Clean up previous
-        if (synth) {
-            synth.dispose();
-            synth = null;
-        }
-        midiData = null;
-        midiNotes = [];
-
-        if (!currentMidiFile) return;
-
-        try {
-            console.log("[MIDI] Loading file:", currentMidiFile.filename);
-            const midiBytes = await readSessionFile(
-                session.path,
-                currentMidiFile.filename,
-            );
-            console.log("[MIDI] File size:", midiBytes.length, "bytes");
-            console.log(
-                "[MIDI] First 20 bytes:",
-                Array.from(midiBytes.slice(0, 20)),
-            );
-
-            midiData = new Midi(midiBytes);
-            console.log(
-                "[MIDI] Parsed - tracks:",
-                midiData.tracks.length,
-                "duration:",
-                midiData.duration,
-            );
-
-            // Create synth - use a more piano-like sound
-            synth = new Tone.PolySynth(Tone.Synth, {
-                oscillator: {
-                    type: "fmsine",
-                    modulationType: "sine",
-                    modulationIndex: 2,
-                    harmonicity: 3,
-                },
-                envelope: {
-                    attack: 0.005,
-                    decay: 0.3,
-                    sustain: 0.2,
-                    release: 1.2,
-                },
-            }).toDestination();
-            synth.volume.value = -8;
-
-            // Extract notes
-            if (midiData.tracks.length > 0) {
-                midiNotes = midiData.tracks
-                    .flatMap((track) => {
-                        console.log(
-                            "[MIDI] Track notes:",
-                            track.notes.length,
-                            "name:",
-                            track.name,
-                        );
-                        return track.notes.map((note) => ({
-                            time: note.time,
-                            note: note.name,
-                            duration: note.duration,
-                            velocity: note.velocity,
-                        }));
-                    })
-                    .sort((a, b) => a.time - b.time);
-                console.log("[MIDI] Total notes extracted:", midiNotes.length);
-                if (midiNotes.length > 0) {
-                    console.log("[MIDI] First note:", midiNotes[0]);
-                    console.log(
-                        "[MIDI] Last note:",
-                        midiNotes[midiNotes.length - 1],
-                    );
-                }
-            }
-        } catch (e) {
-            console.error("[MIDI] Failed to load:", e);
-        }
-    }
-
     // Calculate max duration from all sources (including MIDI)
     $effect(() => {
         let maxDuration = session.duration_secs;
@@ -446,10 +365,102 @@
     });
 
     // Load MIDI when current MIDI file changes (handles index changes within a session)
+    // Effect cleanup cancels stale async loads when session/file changes mid-flight
     $effect(() => {
-        if (currentMidiFile) {
-            loadMidi();
+        const midiFile = currentMidiFile;
+        const sessionPath = session.path;
+
+        // Clean up previous
+        if (synth) {
+            synth.dispose();
+            synth = null;
         }
+        midiData = null;
+        midiNotes = [];
+
+        if (!midiFile) return;
+
+        let cancelled = false;
+
+        (async () => {
+            try {
+                console.log("[MIDI] Loading file:", midiFile.filename);
+                const midiBytes = await readSessionFile(
+                    sessionPath,
+                    midiFile.filename,
+                );
+                if (cancelled) return;
+
+                console.log("[MIDI] File size:", midiBytes.length, "bytes");
+                console.log(
+                    "[MIDI] First 20 bytes:",
+                    Array.from(midiBytes.slice(0, 20)),
+                );
+
+                midiData = new Midi(midiBytes);
+                console.log(
+                    "[MIDI] Parsed - tracks:",
+                    midiData.tracks.length,
+                    "duration:",
+                    midiData.duration,
+                );
+
+                // Create synth - use a more piano-like sound
+                synth = new Tone.PolySynth(Tone.Synth, {
+                    oscillator: {
+                        type: "fmsine",
+                        modulationType: "sine",
+                        modulationIndex: 2,
+                        harmonicity: 3,
+                    },
+                    envelope: {
+                        attack: 0.005,
+                        decay: 0.3,
+                        sustain: 0.2,
+                        release: 1.2,
+                    },
+                }).toDestination();
+                synth.volume.value = -8;
+
+                // Extract notes
+                if (midiData.tracks.length > 0) {
+                    midiNotes = midiData.tracks
+                        .flatMap((track) => {
+                            console.log(
+                                "[MIDI] Track notes:",
+                                track.notes.length,
+                                "name:",
+                                track.name,
+                            );
+                            return track.notes.map((note) => ({
+                                time: note.time,
+                                note: note.name,
+                                duration: note.duration,
+                                velocity: note.velocity,
+                            }));
+                        })
+                        .sort((a, b) => a.time - b.time);
+                    console.log(
+                        "[MIDI] Total notes extracted:",
+                        midiNotes.length,
+                    );
+                    if (midiNotes.length > 0) {
+                        console.log("[MIDI] First note:", midiNotes[0]);
+                        console.log(
+                            "[MIDI] Last note:",
+                            midiNotes[midiNotes.length - 1],
+                        );
+                    }
+                }
+            } catch (e) {
+                if (cancelled) return;
+                console.error("[MIDI] Failed to load:", e);
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
     });
 
     // Sync playback time from video, audio, or fallback timer
@@ -664,7 +675,6 @@
     }
 
     onMount(() => {
-        loadMidi();
         animationFrame = requestAnimationFrame(tick);
     });
 
