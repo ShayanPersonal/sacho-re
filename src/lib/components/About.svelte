@@ -203,11 +203,6 @@
                     >. FFmpeg is a trademark of Fabrice Bellard, originator of
                     the FFmpeg project.
                 </p>
-                <p class="notice-text notice-muted">
-                    This software does not include H.264 encoders or decoders.
-                    When available, it delegates to platform-native tools such
-                    as Windows Media Foundation and Apple VideoToolbox.
-                </p>
             </div>
         </div>
     </div>
