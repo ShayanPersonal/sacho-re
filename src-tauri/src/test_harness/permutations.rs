@@ -70,6 +70,18 @@ pub fn build_test_matrix(devices: &TestDeviceConfig) -> Vec<TestCase> {
                 &devices.settings,
             ));
 
+            // Vorbis format
+            tests.push(make_midi_audio(
+                "midi_audio_vorbis_2s_5s",
+                &midi_name, &midi_id,
+                &audio_id,
+                2, 5,
+                3,
+                AudioFormat::Vorbis,
+                vec![60, 64, 67],
+                &devices.settings,
+            ));
+
             // double_trigger: note during recording
             tests.push(make_midi_audio(
                 "double_trigger",
@@ -153,6 +165,18 @@ pub fn build_test_matrix(devices: &TestDeviceConfig) -> Vec<TestCase> {
                     2, 5,
                     3,
                     AudioFormat::Flac,
+                    vec![60, 64, 67],
+                    &devices.settings,
+                ));
+
+                // Vorbis + video
+                tests.push(make_full(
+                    &format!("full_{}_vorbis_2s_5s", vlabel),
+                    &midi_name, &midi_id,
+                    &audio_id, &vdev_id,
+                    2, 5,
+                    3,
+                    AudioFormat::Vorbis,
                     vec![60, 64, 67],
                     &devices.settings,
                 ));

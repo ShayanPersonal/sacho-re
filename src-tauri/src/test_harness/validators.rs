@@ -348,6 +348,59 @@ fn read_vlq(data: &[u8], start: usize) -> (u32, usize) {
     (value, bytes)
 }
 
+// ── OGG validation ──────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub struct OggValidation {
+    pub channels: u16,
+    pub sample_rate: u32,
+    pub duration_secs: f64,
+}
+
+/// Validate an OGG/Vorbis file using GStreamer's Discoverer.
+pub fn validate_ogg(path: &Path) -> Result<OggValidation, String> {
+    // Check OggS magic header
+    let data = std::fs::read(path)
+        .map_err(|e| format!("Failed to read OGG file: {}", e))?;
+
+    if data.len() < 4 {
+        return Err("OGG file too small".into());
+    }
+    if &data[0..4] != b"OggS" {
+        return Err("Missing OggS header".into());
+    }
+
+    let uri = format!("file:///{}", path.display().to_string().replace('\\', "/"));
+
+    let discoverer = gstreamer_pbutils::Discoverer::new(gstreamer::ClockTime::from_seconds(10))
+        .map_err(|e| format!("Failed to create Discoverer: {}", e))?;
+
+    let info = discoverer.discover_uri(&uri)
+        .map_err(|e| format!("Discoverer failed for {}: {}", uri, e))?;
+
+    let duration_secs = info.duration()
+        .map(|d| d.nseconds() as f64 / 1_000_000_000.0)
+        .unwrap_or(0.0);
+
+    let mut channels: u16 = 0;
+    let mut sample_rate: u32 = 0;
+
+    for stream in info.audio_streams() {
+        channels = stream.channels() as u16;
+        sample_rate = stream.sample_rate();
+    }
+
+    if channels == 0 {
+        return Err("No audio stream found in OGG".into());
+    }
+
+    Ok(OggValidation {
+        channels,
+        sample_rate,
+        duration_secs,
+    })
+}
+
 // ── MKV validation (via GStreamer Discoverer) ─────────────────────────
 
 #[derive(Debug)]

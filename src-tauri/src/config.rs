@@ -40,6 +40,14 @@ pub struct Config {
     #[serde(default)]
     pub flac_sample_rate: AudioSampleRate,
 
+    /// Vorbis bitrate
+    #[serde(default)]
+    pub vorbis_bitrate: VorbisBitrate,
+
+    /// Vorbis sample rate
+    #[serde(default)]
+    pub vorbis_sample_rate: AudioSampleRate,
+
     /// Whether to use dark color scheme (default is light)
     #[serde(default)]
     pub dark_mode: bool,
@@ -151,6 +159,7 @@ pub struct Config {
 pub enum AudioFormat {
     Wav,
     Flac,
+    Vorbis,
 }
 
 /// Audio bit depth for recorded files
@@ -168,6 +177,36 @@ pub enum AudioBitDepth {
 impl Default for AudioBitDepth {
     fn default() -> Self {
         Self::Int24
+    }
+}
+
+/// Vorbis bitrate for encoded audio
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum VorbisBitrate {
+    Kbps160,
+    Kbps192,
+    Kbps256,
+    Kbps320,
+}
+
+impl Default for VorbisBitrate {
+    fn default() -> Self {
+        Self::Kbps256
+    }
+}
+
+impl VorbisBitrate {
+    /// Map user-facing bitrate to vorbisenc quality level.
+    /// vorbisenc quality (-0.1 to 1.0) is preferred over its bitrate property
+    /// which caps at 250001 bps and uses the "not recommended" managed bitrate engine.
+    pub fn quality(&self) -> f32 {
+        match self {
+            Self::Kbps160 => 0.5,
+            Self::Kbps192 => 0.6,
+            Self::Kbps256 => 0.8,
+            Self::Kbps320 => 0.9,
+        }
     }
 }
 
@@ -350,6 +389,8 @@ impl Default for Config {
             wav_sample_rate: AudioSampleRate::default(),
             flac_bit_depth: AudioBitDepth::default(),
             flac_sample_rate: AudioSampleRate::default(),
+            vorbis_bitrate: VorbisBitrate::default(),
+            vorbis_sample_rate: AudioSampleRate::default(),
             dark_mode: false,
             auto_start: true,
             start_minimized: true,

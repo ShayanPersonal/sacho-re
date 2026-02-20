@@ -452,6 +452,7 @@
                         <option value="flac"
                             >FLAC (lossless, smaller files)</option
                         >
+                        <option value="vorbis">OGG (lossy)</option>
                     </select>
                     <button
                         class="advanced-toggle"
@@ -473,74 +474,121 @@
                     </button>
                     {#if showAudioAdvanced}
                         <div class="advanced-audio-section">
-                            <div class="advanced-audio-field">
-                                <div class="advanced-field-header">
-                                    <span class="setting-label"
-                                        >Bit Depth ({localSettings.audio_format.toUpperCase()})</span
-                                    >
-                                    <span class="advanced-field-value">
-                                        {#if localSettings.audio_format === "wav"}
-                                            {localSettings.wav_bit_depth ===
-                                            "int16"
-                                                ? "16-bit"
-                                                : localSettings.wav_bit_depth ===
-                                                    "int24"
-                                                  ? "24-bit"
-                                                  : "32-bit float"}
-                                        {:else}
-                                            {localSettings.flac_bit_depth ===
-                                            "int16"
-                                                ? "16-bit"
-                                                : localSettings.flac_bit_depth ===
-                                                    "int24"
-                                                  ? "24-bit"
-                                                  : "32-bit"}
-                                        {/if}
-                                    </span>
-                                </div>
-                                {#if localSettings.audio_format === "wav"}
-                                    <select
-                                        bind:value={localSettings.wav_bit_depth}
-                                        onchange={autoSave}
-                                    >
-                                        <option value="int16">16-bit</option>
-                                        <option value="int24"
-                                            >24-bit (default)</option
+                            {#if localSettings.audio_format === "vorbis"}
+                                <div class="advanced-audio-field">
+                                    <div class="advanced-field-header">
+                                        <span class="setting-label"
+                                            >Bitrate</span
                                         >
-                                        <option value="float32"
-                                            >32-bit float</option
-                                        >
-                                    </select>
-                                {:else}
+                                        <span class="advanced-field-value">
+                                            {localSettings.vorbis_bitrate ===
+                                            "kbps160"
+                                                ? "160 kbps"
+                                                : localSettings.vorbis_bitrate ===
+                                                    "kbps192"
+                                                  ? "192 kbps"
+                                                  : localSettings.vorbis_bitrate ===
+                                                      "kbps256"
+                                                    ? "256 kbps"
+                                                    : "320 kbps"}
+                                        </span>
+                                    </div>
                                     <select
                                         bind:value={
-                                            localSettings.flac_bit_depth
+                                            localSettings.vorbis_bitrate
                                         }
                                         onchange={autoSave}
                                     >
-                                        <option value="int16">16-bit</option>
-                                        <option value="int24"
-                                            >24-bit (default)</option
+                                        <option value="kbps160">160 kbps</option
                                         >
-                                        <option value="float32"
-                                            >32-bit (limited compatibility)</option
+                                        <option value="kbps192">192 kbps</option
+                                        >
+                                        <option value="kbps256">256 kbps</option
+                                        >
+                                        <option value="kbps320">320 kbps</option
                                         >
                                     </select>
-                                {/if}
-                                <p class="advanced-field-description">
-                                    {#if (localSettings.audio_format === "wav" ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === "int16"}
-                                        {localSettings.audio_format === "flac"
-                                            ? "Smallest files. Not optimal if you need to boost the volume of quiet sections."
-                                            : "Smaller files. Not optimal if you need to boost the volume of quiet sections."}
-                                    {:else if (localSettings.audio_format === "wav" ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === "int24"}
-                                        Studio quality. Wide compatibility.
+                                    <p class="advanced-field-description">
+                                        Lower bitrates result in smaller files
+                                        but more quality loss.
+                                    </p>
+                                </div>
+                            {:else}
+                                <div class="advanced-audio-field">
+                                    <div class="advanced-field-header">
+                                        <span class="setting-label"
+                                            >Bit Depth ({localSettings.audio_format.toUpperCase()})</span
+                                        >
+                                        <span class="advanced-field-value">
+                                            {#if localSettings.audio_format === "wav"}
+                                                {localSettings.wav_bit_depth ===
+                                                "int16"
+                                                    ? "16-bit"
+                                                    : localSettings.wav_bit_depth ===
+                                                        "int24"
+                                                      ? "24-bit"
+                                                      : "32-bit float"}
+                                            {:else}
+                                                {localSettings.flac_bit_depth ===
+                                                "int16"
+                                                    ? "16-bit"
+                                                    : localSettings.flac_bit_depth ===
+                                                        "int24"
+                                                      ? "24-bit"
+                                                      : "32-bit"}
+                                            {/if}
+                                        </span>
+                                    </div>
+                                    {#if localSettings.audio_format === "wav"}
+                                        <select
+                                            bind:value={
+                                                localSettings.wav_bit_depth
+                                            }
+                                            onchange={autoSave}
+                                        >
+                                            <option value="int16">16-bit</option
+                                            >
+                                            <option value="int24"
+                                                >24-bit (default)</option
+                                            >
+                                            <option value="float32"
+                                                >32-bit float</option
+                                            >
+                                        </select>
                                     {:else}
-                                        {localSettings.audio_format === "flac"
-                                            ? " Many programs do not support 32-bit FLAC recordings. Use at your own risk."
-                                            : "Good if the audio source is also 32-bit float. Otherwise just uses more disk space."}
+                                        <select
+                                            bind:value={
+                                                localSettings.flac_bit_depth
+                                            }
+                                            onchange={autoSave}
+                                        >
+                                            <option value="int16">16-bit</option
+                                            >
+                                            <option value="int24"
+                                                >24-bit (default)</option
+                                            >
+                                            <option value="float32"
+                                                >32-bit (limited compatibility)</option
+                                            >
+                                        </select>
                                     {/if}
-                                </p>
-                            </div>
+                                    <p class="advanced-field-description">
+                                        {#if (localSettings.audio_format === "wav" ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === "int16"}
+                                            {localSettings.audio_format ===
+                                            "flac"
+                                                ? "Smallest files. Not optimal if you need to boost the volume of quiet sections."
+                                                : "Smaller files. Not optimal if you need to boost the volume of quiet sections."}
+                                        {:else if (localSettings.audio_format === "wav" ? localSettings.wav_bit_depth : localSettings.flac_bit_depth) === "int24"}
+                                            Studio quality. Wide compatibility.
+                                        {:else}
+                                            {localSettings.audio_format ===
+                                            "flac"
+                                                ? " Many programs do not support 32-bit FLAC recordings. Use at your own risk."
+                                                : "Good if the audio source is also 32-bit float. Otherwise just uses more disk space."}
+                                        {/if}
+                                    </p>
+                                </div>
+                            {/if}
                             <!--<div class="advanced-audio-divider"></div>
             <div class="advanced-audio-field">
               <div class="advanced-field-header">
@@ -861,7 +909,7 @@
                                 }}
                             />
                             <span class="setting-label"
-                                >Play warning sound if device disconnects</span
+                                >Play warning sound if a device disconnects</span
                             >
                         </label>
                         {#if localSettings.sound_device_disconnect}
