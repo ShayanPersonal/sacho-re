@@ -83,8 +83,8 @@ ringbuf = "0.4"
 
 # Base64 encoding for video frame transfer
 base64 = "0.22"
-# Temp directories for integration tests
-tempfile = "3"
+# Temp directories for integration tests and encoder benchmark
+tempfile = { version = "3", optional = true }
 
 sysinfo = { version = "0.38.1", default-features = false, features = ["disk", "system"] }
 
@@ -100,10 +100,13 @@ windows-sys = { version = "0.59", features = [
 [[bin]]
 name = "integration_tests"
 path = "src/bin/integration_tests.rs"
+required-features = ["test-harness"]
 
 [[bin]]
 name = "encoder_benchmark"
 path = "src/bin/encoder_benchmark.rs"
+required-features = ["tempfile"]
 
 [features]
 default = []
+test-harness = ["tempfile"]
