@@ -73,7 +73,7 @@ async function playCustomFile(
   }
 }
 
-/** Play a double C5 note for recording start.
+/** Play a single G5 note for recording start.
  *  When called as a preview (from Settings), toggles playback on repeat press. */
 export async function playStartSound(
   volume: number,
@@ -95,13 +95,12 @@ export async function playStartSound(
   s.volume.value = volumeToDb(volume);
   const now = Tone.now();
   s.triggerAttackRelease("G5", "16n", now);
-  s.triggerAttackRelease("G5", "16n", now + 0.125);
   setTimeout(() => {
     if (playingType === "start") playingType = null;
-  }, 400);
+  }, 300);
 }
 
-/** Play a single C5 note for recording stop.
+/** Play a double G5 note for recording stop.
  *  When called as a preview (from Settings), toggles playback on repeat press. */
 export async function playStopSound(
   volume: number,
@@ -123,9 +122,10 @@ export async function playStopSound(
   s.volume.value = volumeToDb(volume);
   const now = Tone.now();
   s.triggerAttackRelease("G5", "16n", now);
+  s.triggerAttackRelease("G5", "16n", now + 0.125);
   setTimeout(() => {
     if (playingType === "stop") playingType = null;
-  }, 300);
+  }, 400);
 }
 
 /** Play three long D4 notes as a disconnect warning.
