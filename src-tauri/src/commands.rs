@@ -1628,7 +1628,8 @@ pub fn set_custom_sound(
         match sound_type.as_str() {
             "start" => cfg.custom_sound_start = Some(relative_path.clone()),
             "stop" => cfg.custom_sound_stop = Some(relative_path.clone()),
-            _ => return Err("Invalid sound_type: must be 'start' or 'stop'".to_string()),
+            "disconnect" => cfg.custom_sound_disconnect = Some(relative_path.clone()),
+            _ => return Err("Invalid sound_type: must be 'start', 'stop', or 'disconnect'".to_string()),
         }
         cfg.save(&app).map_err(|e| e.to_string())?;
     }
@@ -1650,7 +1651,8 @@ pub fn clear_custom_sound(
         let path_opt = match sound_type.as_str() {
             "start" => cfg.custom_sound_start.take(),
             "stop" => cfg.custom_sound_stop.take(),
-            _ => return Err("Invalid sound_type: must be 'start' or 'stop'".to_string()),
+            "disconnect" => cfg.custom_sound_disconnect.take(),
+            _ => return Err("Invalid sound_type: must be 'start', 'stop', or 'disconnect'".to_string()),
         };
 
         // Delete the file if it exists

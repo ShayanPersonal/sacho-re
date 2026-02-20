@@ -90,6 +90,18 @@ pub struct Config {
     #[serde(default)]
     pub custom_sound_stop: Option<String>,
 
+    /// Whether to play a warning sound when a device is disconnected
+    #[serde(default)]
+    pub sound_device_disconnect: bool,
+
+    /// Volume for device disconnect warning sound (0.0-1.0)
+    #[serde(default = "default_sound_volume")]
+    pub sound_volume_disconnect: f64,
+
+    /// Path to custom disconnect warning sound file
+    #[serde(default)]
+    pub custom_sound_disconnect: Option<String>,
+
     /// Selected audio device IDs
     pub selected_audio_devices: Vec<String>,
 
@@ -351,6 +363,9 @@ impl Default for Config {
             sound_volume: None,
             custom_sound_start: None,
             custom_sound_stop: None,
+            sound_device_disconnect: false,
+            sound_volume_disconnect: 0.5,
+            custom_sound_disconnect: None,
             selected_audio_devices: Vec::new(),
             selected_midi_devices: Vec::new(),
             trigger_midi_devices: Vec::new(),
@@ -404,6 +419,12 @@ impl Config {
             let old = self.sound_volume_stop;
             self.sound_volume_stop = self.sound_volume_stop.clamp(0.0, 1.0);
             clamped.push(format!("sound_volume_stop: {} -> {}", old, self.sound_volume_stop));
+        }
+
+        if self.sound_volume_disconnect < 0.0 || self.sound_volume_disconnect > 1.0 {
+            let old = self.sound_volume_disconnect;
+            self.sound_volume_disconnect = self.sound_volume_disconnect.clamp(0.0, 1.0);
+            clamped.push(format!("sound_volume_disconnect: {} -> {}", old, self.sound_volume_disconnect));
         }
 
         for (key, value) in self.audio_trigger_thresholds.iter_mut() {

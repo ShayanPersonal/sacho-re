@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import type { AudioDevice, MidiDevice, VideoDevice, VideoDeviceConfig, VideoFpsWarning, AudioTriggerLevel, Config, DisconnectedDeviceInfo } from '$lib/api';
 import { refreshAllDevices, getAudioDevices, getMidiDevices, getVideoDevices, getConfig, updateConfig, updateAudioTriggerThresholds, getDisconnectedDevices, restartDevicePipelines } from '$lib/api';
 import { settings } from './settings';
+import { playDisconnectWarningSound } from '$lib/sounds';
 
 // Save status for device changes: 'idle' | 'saving' | 'saved' | 'error'
 export const deviceSaveStatus = writable<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -83,6 +84,29 @@ export const disconnectedDevices = writable<Set<string>>(new Set());
 listen<{ disconnected_devices: DisconnectedDeviceInfo[] }>('device-health-changed', (event) => {
   const ids = new Set(event.payload.disconnected_devices.map(d => d.id));
   disconnectedDevices.set(ids);
+});
+
+// Repeating warning sound when devices are disconnected
+let disconnectWarningInterval: ReturnType<typeof setInterval> | null = null;
+
+disconnectedDevices.subscribe((ids) => {
+  if (ids.size > 0) {
+    // Start repeating sound if not already running
+    if (!disconnectWarningInterval) {
+      disconnectWarningInterval = setInterval(() => {
+        const cfg = get(settings);
+        if (cfg?.sound_device_disconnect) {
+          playDisconnectWarningSound(cfg.sound_volume_disconnect, cfg.custom_sound_disconnect);
+        }
+      }, 3000);
+    }
+  } else {
+    // All devices reconnected — stop the warning
+    if (disconnectWarningInterval) {
+      clearInterval(disconnectWarningInterval);
+      disconnectWarningInterval = null;
+    }
+  }
 });
 
 // Listen for device reconnection — trigger pipeline restart via frontend round-trip

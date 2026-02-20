@@ -17,6 +17,7 @@
     import {
         playStartSound,
         playStopSound,
+        playDisconnectWarningSound,
         previewCustomSound,
     } from "$lib/sounds";
     import { setCustomSound, clearCustomSound } from "$lib/api";
@@ -185,12 +186,14 @@
         if (!relativePath) return "";
         const parts = relativePath.split("/");
         const name = parts[parts.length - 1];
-        // Strip the "start_" or "stop_" prefix added by the backend
-        const prefixMatch = name.match(/^(?:start|stop)_(.+)$/);
+        // Strip the "start_", "stop_", or "disconnect_" prefix added by the backend
+        const prefixMatch = name.match(/^(?:start|stop|disconnect)_(.+)$/);
         return prefixMatch ? prefixMatch[1] : name;
     }
 
-    async function browseCustomSound(soundType: "start" | "stop") {
+    async function browseCustomSound(
+        soundType: "start" | "stop" | "disconnect",
+    ) {
         if (!localSettings) return;
 
         const selected = await open({
@@ -209,8 +212,10 @@
                 const relativePath = await setCustomSound(selected, soundType);
                 if (soundType === "start") {
                     localSettings.custom_sound_start = relativePath;
-                } else {
+                } else if (soundType === "stop") {
                     localSettings.custom_sound_stop = relativePath;
+                } else {
+                    localSettings.custom_sound_disconnect = relativePath;
                 }
                 autoSave();
             } catch (e) {
@@ -219,15 +224,19 @@
         }
     }
 
-    async function resetCustomSound(soundType: "start" | "stop") {
+    async function resetCustomSound(
+        soundType: "start" | "stop" | "disconnect",
+    ) {
         if (!localSettings) return;
 
         try {
             await clearCustomSound(soundType);
             if (soundType === "start") {
                 localSettings.custom_sound_start = null;
-            } else {
+            } else if (soundType === "stop") {
                 localSettings.custom_sound_stop = null;
+            } else {
+                localSettings.custom_sound_disconnect = null;
             }
             autoSave();
         } catch (e) {
@@ -706,7 +715,9 @@
                                     min="0"
                                     max="1"
                                     step="0.05"
-                                    bind:value={localSettings.sound_volume_start}
+                                    bind:value={
+                                        localSettings.sound_volume_start
+                                    }
                                     oninput={autoSaveDebounced}
                                 />
                                 <span class="volume-value"
@@ -744,7 +755,8 @@
                                 {#if localSettings.custom_sound_start}
                                     <button
                                         class="custom-sound-clear"
-                                        onclick={() => resetCustomSound("start")}
+                                        onclick={() =>
+                                            resetCustomSound("start")}
                                         title="Reset to default sound"
                                         >&times;</button
                                     >
@@ -821,6 +833,89 @@
                                     <button
                                         class="custom-sound-clear"
                                         onclick={() => resetCustomSound("stop")}
+                                        title="Reset to default sound"
+                                        >&times;</button
+                                    >
+                                {/if}
+                            </div>
+                        {/if}
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div class="sound-setting">
+                        <label class="checkbox-row">
+                            <input
+                                type="checkbox"
+                                bind:checked={
+                                    localSettings.sound_device_disconnect
+                                }
+                                onchange={() => {
+                                    if (!localSettings) return;
+                                    if (
+                                        !localSettings.sound_device_disconnect
+                                    ) {
+                                        resetCustomSound("disconnect");
+                                    } else {
+                                        autoSave();
+                                    }
+                                }}
+                            />
+                            <span class="setting-label"
+                                >Play warning sound if device disconnects</span
+                            >
+                        </label>
+                        {#if localSettings.sound_device_disconnect}
+                            <div class="sound-controls">
+                                <input
+                                    type="range"
+                                    class="sound-volume-slider"
+                                    min="0"
+                                    max="1"
+                                    step="0.05"
+                                    bind:value={
+                                        localSettings.sound_volume_disconnect
+                                    }
+                                    oninput={autoSaveDebounced}
+                                />
+                                <span class="volume-value"
+                                    >{Math.round(
+                                        localSettings.sound_volume_disconnect *
+                                            100,
+                                    )}%</span
+                                >
+                                <button
+                                    class="preview-btn"
+                                    onclick={() =>
+                                        localSettings &&
+                                        playDisconnectWarningSound(
+                                            localSettings.sound_volume_disconnect,
+                                            localSettings.custom_sound_disconnect,
+                                        )}
+                                    title="Preview disconnect warning sound"
+                                    ><svg
+                                        class="preview-icon"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        ><polygon
+                                            points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"
+                                        /><path
+                                            d="M15.54 8.46a5 5 0 0 1 0 7.07"
+                                        /></svg
+                                    ></button
+                                >
+                                <button
+                                    class="customize-btn"
+                                    onclick={() =>
+                                        browseCustomSound("disconnect")}
+                                    >Customize</button
+                                >
+                                {#if localSettings.custom_sound_disconnect}
+                                    <button
+                                        class="custom-sound-clear"
+                                        onclick={() =>
+                                            resetCustomSound("disconnect")}
                                         title="Reset to default sound"
                                         >&times;</button
                                     >

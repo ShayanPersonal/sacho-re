@@ -9,7 +9,7 @@ let cachedConfigDir: string | null = null;
 
 // Playback tracking for preview toggle
 let currentAudio: HTMLAudioElement | null = null;
-let playingType: "start" | "stop" | null = null;
+let playingType: "start" | "stop" | "disconnect" | null = null;
 
 async function getConfigDir(): Promise<string> {
   if (!cachedConfigDir) {
@@ -126,6 +126,35 @@ export async function playStopSound(
   setTimeout(() => {
     if (playingType === "stop") playingType = null;
   }, 300);
+}
+
+/** Play three long D4 notes as a disconnect warning.
+ *  Lower and more attention-getting than the G5 used for start/stop. */
+export async function playDisconnectWarningSound(
+  volume: number,
+  customPath?: string | null,
+): Promise<void> {
+  // Toggle: if already playing disconnect sound, stop it
+  if (playingType === "disconnect") {
+    stopPlayback();
+    return;
+  }
+  stopPlayback();
+  playingType = "disconnect";
+
+  if (customPath) {
+    const played = await playCustomFile(customPath, volume);
+    if (played) return;
+  }
+  const s = ensureSynth();
+  s.volume.value = volumeToDb(volume);
+  const now = Tone.now();
+  s.triggerAttackRelease("D4", 0.3, now);
+  s.triggerAttackRelease("D4", 0.3, now + 0.5);
+  s.triggerAttackRelease("D4", 0.3, now + 1.0);
+  setTimeout(() => {
+    if (playingType === "disconnect") playingType = null;
+  }, 1500);
 }
 
 /** Preview a custom sound file by its relative path in the config dir */

@@ -342,6 +342,9 @@ export interface Config {
   sound_volume_stop: number;
   custom_sound_start: string | null;
   custom_sound_stop: string | null;
+  sound_device_disconnect: boolean;
+  sound_volume_disconnect: number;
+  custom_sound_disconnect: string | null;
   selected_audio_devices: string[];
   selected_midi_devices: string[];
   trigger_midi_devices: string[];
@@ -638,14 +641,14 @@ export async function restartDevicePipelines(
 /** Copy a custom sound file into the app config dir. Returns the relative path. */
 export async function setCustomSound(
   sourcePath: string,
-  soundType: "start" | "stop",
+  soundType: "start" | "stop" | "disconnect",
 ): Promise<string> {
   return invoke("set_custom_sound", { sourcePath, soundType });
 }
 
 /** Clear a custom sound: delete the copied file and remove from config. */
 export async function clearCustomSound(
-  soundType: "start" | "stop",
+  soundType: "start" | "stop" | "disconnect",
 ): Promise<void> {
   return invoke("clear_custom_sound", { soundType });
 }
