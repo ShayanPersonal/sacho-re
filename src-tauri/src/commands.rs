@@ -198,8 +198,6 @@ pub fn get_session_detail(
                 monitor::wav_file_needs_repair(&audio_path)
             } else if audio_file.filename.ends_with(".flac") {
                 monitor::flac_file_needs_repair(&audio_path)
-            } else if audio_file.filename.ends_with(".ogg") {
-                monitor::ogg_file_needs_repair(&audio_path)
             } else {
                 false
             };
@@ -221,7 +219,7 @@ pub fn get_session_detail(
             let has_media = entries.flatten().any(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
                 name.ends_with(".mid") || name.ends_with(".wav") || name.ends_with(".flac")
-                    || name.ends_with(".ogg") || name.ends_with(".mkv")
+                    || name.ends_with(".mkv")
             });
             if has_media { has_corrupt_files = true; }
         }
@@ -405,55 +403,6 @@ pub fn repair_session(
                 let device_name = fname.trim_start_matches("recording")
                     .trim_start_matches('_')
                     .trim_end_matches(".flac")
-                    .to_string();
-                audio_files.push(crate::session::AudioFileInfo {
-                    filename: fname,
-                    device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
-                    channels: 0,
-                    sample_rate: 0,
-                    duration_secs: 0.0,
-                    size_bytes: size,
-                });
-            }
-        } else if fname.ends_with(".ogg") {
-            // Check if OGG needs repair
-            let needs_repair = crate::recording::monitor::ogg_file_needs_repair(&path);
-
-            if needs_repair {
-                match crate::recording::monitor::repair_ogg_file(&path) {
-                    Ok((channels, sample_rate, duration_secs, size_bytes)) => {
-                        let device_name = metadata.audio_files.iter()
-                            .find(|f| f.filename == fname)
-                            .map(|f| f.device_name.clone())
-                            .unwrap_or_else(|| {
-                                fname.trim_start_matches("recording")
-                                    .trim_start_matches('_')
-                                    .trim_end_matches(".ogg")
-                                    .to_string()
-                            });
-                        audio_files.push(crate::session::AudioFileInfo {
-                            filename: fname,
-                            device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
-                            channels,
-                            sample_rate,
-                            duration_secs,
-                            size_bytes,
-                        });
-                    }
-                    Err(e) => {
-                        println!("[Sacho] Failed to repair OGG {}: {}", fname, e);
-                        if let Some(existing) = metadata.audio_files.iter().find(|f| f.filename == fname) {
-                            audio_files.push(existing.clone());
-                        }
-                    }
-                }
-            } else if let Some(existing) = metadata.audio_files.iter().find(|f| f.filename == fname) {
-                audio_files.push(existing.clone());
-            } else {
-                let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                let device_name = fname.trim_start_matches("recording")
-                    .trim_start_matches('_')
-                    .trim_end_matches(".ogg")
                     .to_string();
                 audio_files.push(crate::session::AudioFileInfo {
                     filename: fname,

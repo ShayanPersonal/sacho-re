@@ -48,7 +48,6 @@ impl AudioStreamWriter {
         audio_format: &crate::config::AudioFormat,
         bit_depth: &crate::config::AudioBitDepth,
         sample_rate_setting: &crate::config::AudioSampleRate,
-        vorbis_quality: Option<f32>,
     ) -> anyhow::Result<Self> {
         use gstreamer as gst;
         use gstreamer::prelude::*;
@@ -71,7 +70,6 @@ impl AudioStreamWriter {
             (crate::config::AudioFormat::Flac, crate::config::AudioBitDepth::Int16) => gst_audio::AudioFormat::S16le,
             (crate::config::AudioFormat::Flac, crate::config::AudioBitDepth::Int24) => gst_audio::AudioFormat::S2432le,
             (crate::config::AudioFormat::Flac, crate::config::AudioBitDepth::Float32) => gst_audio::AudioFormat::S32le,
-            (crate::config::AudioFormat::Vorbis, _) => gst_audio::AudioFormat::F32le,
         };
         
         // Target caps for the capsfilter (format + rate + channel-mask)
@@ -104,61 +102,35 @@ impl AudioStreamWriter {
             .build()
             .map_err(|_| anyhow::anyhow!("Failed to create capsfilter element"))?;
         
-        // Encoder: flacenc, wavenc, or vorbisenc
+        // Encoder: flacenc or wavenc
         let encoder_name = match audio_format {
             crate::config::AudioFormat::Flac => "flacenc",
             crate::config::AudioFormat::Wav => "wavenc",
-            crate::config::AudioFormat::Vorbis => "vorbisenc",
         };
         let encoder = gst::ElementFactory::make(encoder_name)
             .name("encoder")
             .build()
             .map_err(|_| anyhow::anyhow!("Failed to create {} element", encoder_name))?;
-
+        
         // For 32-bit FLAC, disable the Subset restriction (Subset limits to 24-bit max)
         if matches!(audio_format, crate::config::AudioFormat::Flac)
             && matches!(bit_depth, crate::config::AudioBitDepth::Float32)
         {
             encoder.set_property("streamable-subset", false);
         }
-
-        // For Vorbis, set the quality level (preferred over bitrate property)
-        if matches!(audio_format, crate::config::AudioFormat::Vorbis) {
-            if let Some(quality) = vorbis_quality {
-                encoder.set_property("quality", quality);
-            }
-        }
-
-        // Vorbis needs oggmux between encoder and filesink
-        let oggmux = if matches!(audio_format, crate::config::AudioFormat::Vorbis) {
-            Some(gst::ElementFactory::make("oggmux")
-                .name("muxer")
-                .build()
-                .map_err(|_| anyhow::anyhow!("Failed to create oggmux element"))?)
-        } else {
-            None
-        };
-
+        
         let filesink = gst::ElementFactory::make("filesink")
             .name("sink")
             .property("location", file_path.to_str().unwrap_or("output"))
             .build()
             .map_err(|_| anyhow::anyhow!("Failed to create filesink element"))?;
-
+        
         // Assemble and link
-        if let Some(ref muxer) = oggmux {
-            // Vorbis: appsrc → audioconvert → audioresample → capsfilter → vorbisenc → oggmux → filesink
-            pipeline.add_many([appsrc.upcast_ref(), &audioconvert, &audioresample, &capsfilter, &encoder, muxer, &filesink])
-                .map_err(|e| anyhow::anyhow!("Failed to add elements to pipeline: {}", e))?;
-            gst::Element::link_many([appsrc.upcast_ref(), &audioconvert, &audioresample, &capsfilter, &encoder, muxer, &filesink])
-                .map_err(|e| anyhow::anyhow!("Failed to link pipeline elements: {}", e))?;
-        } else {
-            // WAV/FLAC: appsrc → audioconvert → audioresample → capsfilter → encoder → filesink
-            pipeline.add_many([appsrc.upcast_ref(), &audioconvert, &audioresample, &capsfilter, &encoder, &filesink])
-                .map_err(|e| anyhow::anyhow!("Failed to add elements to pipeline: {}", e))?;
-            gst::Element::link_many([appsrc.upcast_ref(), &audioconvert, &audioresample, &capsfilter, &encoder, &filesink])
-                .map_err(|e| anyhow::anyhow!("Failed to link pipeline elements: {}", e))?;
-        }
+        pipeline.add_many([appsrc.upcast_ref(), &audioconvert, &audioresample, &capsfilter, &encoder, &filesink])
+            .map_err(|e| anyhow::anyhow!("Failed to add elements to pipeline: {}", e))?;
+        
+        gst::Element::link_many([appsrc.upcast_ref(), &audioconvert, &audioresample, &capsfilter, &encoder, &filesink])
+            .map_err(|e| anyhow::anyhow!("Failed to link pipeline elements: {}", e))?;
         
         // Start the pipeline
         pipeline.set_state(gst::State::Playing)
@@ -740,61 +712,6 @@ pub fn repair_flac_file(file_path: &PathBuf) -> anyhow::Result<(u16, u32, f64, u
     Ok((channels, sample_rate, duration_secs, file_size))
 }
 
-/// Check if an OGG file needs repair.
-/// OGG pages are self-describing, so truncated files are still partially valid.
-/// We check for the OggS magic header and a reasonable file size.
-pub fn ogg_file_needs_repair(file_path: &PathBuf) -> bool {
-    use std::io::Read;
-
-    let Ok(mut file) = std::fs::File::open(file_path) else { return false; };
-    let Ok(meta) = file.metadata() else { return false; };
-    let file_size = meta.len();
-
-    // Too small to be a valid OGG file
-    if file_size < 28 { return true; }
-
-    // Check OggS magic header
-    let mut header = [0u8; 4];
-    if file.read_exact(&mut header).is_err() { return false; }
-    if &header != b"OggS" { return true; }
-
-    // If we have the header and reasonable size, it's probably fine
-    // (OGG pages are self-describing so truncation is handled gracefully)
-    file_size < 4096
-}
-
-/// Repair an OGG file by using GStreamer Discoverer to extract metadata.
-/// Returns (channels, sample_rate, duration_secs, size_bytes).
-pub fn repair_ogg_file(file_path: &PathBuf) -> anyhow::Result<(u16, u32, f64, u64)> {
-    use gstreamer as gst;
-
-    let file_size = std::fs::metadata(file_path)?.len();
-    let uri = format!("file:///{}", file_path.display().to_string().replace('\\', "/"));
-
-    let discoverer = gstreamer_pbutils::Discoverer::new(gst::ClockTime::from_seconds(10))
-        .map_err(|e| anyhow::anyhow!("Failed to create Discoverer: {}", e))?;
-
-    let info = discoverer.discover_uri(&uri)
-        .map_err(|e| anyhow::anyhow!("Discoverer failed for OGG {}: {}", uri, e))?;
-
-    let duration_secs = info.duration()
-        .map(|d| d.nseconds() as f64 / 1_000_000_000.0)
-        .unwrap_or(0.0);
-
-    let mut channels: u16 = 0;
-    let mut sample_rate: u32 = 0;
-
-    for stream in info.audio_streams() {
-        channels = stream.channels() as u16;
-        sample_rate = stream.sample_rate();
-    }
-
-    println!("[Sacho] Repaired OGG file: {} ({}Hz, {}ch, {:.1}s)",
-        file_path.display(), sample_rate, channels, duration_secs);
-
-    Ok((channels, sample_rate, duration_secs, file_size))
-}
-
 /// Check if a Matroska file is unfinalized (missing duration or has zero segment size).
 pub fn video_file_needs_repair(file_path: &PathBuf) -> bool {
     use std::io::Read;
@@ -957,103 +874,52 @@ pub fn combine_audio_video_mkv(
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to create audio filesrc: {}", e))?;
     
-    let is_vorbis = matches!(audio_format, crate::config::AudioFormat::Vorbis);
-
+    let audio_parser_name = match audio_format {
+        crate::config::AudioFormat::Flac => "flacparse",
+        crate::config::AudioFormat::Wav => "wavparse",
+    };
+    let audio_parser = gst::ElementFactory::make(audio_parser_name)
+        .name("aparser")
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create {}: {}", audio_parser_name, e))?;
+    
     let audio_queue = gst::ElementFactory::make("queue")
         .name("aqueue")
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to create audio queue: {}", e))?;
-
+    
     // ── Muxer and sink ──
     let mux = gst::ElementFactory::make("matroskamux")
         .name("mux")
         .property("writing-app", "Sacho")
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to create matroskamux: {}", e))?;
-
+    
     let filesink = gst::ElementFactory::make("filesink")
         .property("location", temp_path.to_string_lossy().to_string())
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to create filesink: {}", e))?;
-
-    if is_vorbis {
-        // Vorbis/OGG: filesrc → oggdemux [pad-added→] vorbisparse → queue → mux
-        let ogg_demux = gst::ElementFactory::make("oggdemux")
-            .name("ademux")
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to create oggdemux: {}", e))?;
-
-        let vorbis_parse = gst::ElementFactory::make("vorbisparse")
-            .name("aparser")
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to create vorbisparse: {}", e))?;
-
-        pipeline.add_many([
-            &video_filesrc, &demux, &video_queue,
-            &audio_filesrc, &ogg_demux, &vorbis_parse, &audio_queue,
-            &mux, &filesink,
-        ]).map_err(|e| anyhow::anyhow!("Failed to add elements: {}", e))?;
-
-        // Static links
-        video_filesrc.link(&demux)
-            .map_err(|e| anyhow::anyhow!("Failed to link video filesrc -> demux: {}", e))?;
-        video_queue.link(&mux)
-            .map_err(|e| anyhow::anyhow!("Failed to link video queue -> mux: {}", e))?;
-        audio_filesrc.link(&ogg_demux)
-            .map_err(|e| anyhow::anyhow!("Failed to link audio filesrc -> oggdemux: {}", e))?;
-        // vorbisparse → queue → mux (static)
-        vorbis_parse.link(&audio_queue)
-            .map_err(|e| anyhow::anyhow!("Failed to link vorbisparse -> queue: {}", e))?;
-        audio_queue.link(&mux)
-            .map_err(|e| anyhow::anyhow!("Failed to link audio queue -> mux: {}", e))?;
-        mux.link(&filesink)
-            .map_err(|e| anyhow::anyhow!("Failed to link mux -> filesink: {}", e))?;
-
-        // Handle dynamic pads from oggdemux
-        let vparse_weak = vorbis_parse.downgrade();
-        ogg_demux.connect_pad_added(move |_demux, src_pad| {
-            if let Some(parser) = vparse_weak.upgrade() {
-                if let Some(sink_pad) = parser.static_pad("sink") {
-                    if !sink_pad.is_linked() {
-                        if let Err(e) = src_pad.link(&sink_pad) {
-                            println!("[Sacho] Warning: Failed to link oggdemux pad: {:?}", e);
-                        }
-                    }
-                }
-            }
-        });
-    } else {
-        // WAV/FLAC: filesrc → parser → queue → mux
-        let audio_parser_name = match audio_format {
-            crate::config::AudioFormat::Flac => "flacparse",
-            crate::config::AudioFormat::Wav => "wavparse",
-            crate::config::AudioFormat::Vorbis => unreachable!(),
-        };
-        let audio_parser = gst::ElementFactory::make(audio_parser_name)
-            .name("aparser")
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to create {}: {}", audio_parser_name, e))?;
-
-        pipeline.add_many([
-            &video_filesrc, &demux, &video_queue,
-            &audio_filesrc, &audio_parser, &audio_queue,
-            &mux, &filesink,
-        ]).map_err(|e| anyhow::anyhow!("Failed to add elements: {}", e))?;
-
-        // Static links
-        video_filesrc.link(&demux)
-            .map_err(|e| anyhow::anyhow!("Failed to link video filesrc -> demux: {}", e))?;
-        video_queue.link(&mux)
-            .map_err(|e| anyhow::anyhow!("Failed to link video queue -> mux: {}", e))?;
-        audio_filesrc.link(&audio_parser)
-            .map_err(|e| anyhow::anyhow!("Failed to link audio filesrc -> parser: {}", e))?;
-        audio_parser.link(&audio_queue)
-            .map_err(|e| anyhow::anyhow!("Failed to link audio parser -> queue: {}", e))?;
-        audio_queue.link(&mux)
-            .map_err(|e| anyhow::anyhow!("Failed to link audio queue -> mux: {}", e))?;
-        mux.link(&filesink)
-            .map_err(|e| anyhow::anyhow!("Failed to link mux -> filesink: {}", e))?;
-    }
+    
+    // Add all elements to the pipeline
+    pipeline.add_many([
+        &video_filesrc, &demux, &video_queue,
+        &audio_filesrc, &audio_parser, &audio_queue,
+        &mux, &filesink,
+    ]).map_err(|e| anyhow::anyhow!("Failed to add elements: {}", e))?;
+    
+    // Static links
+    video_filesrc.link(&demux)
+        .map_err(|e| anyhow::anyhow!("Failed to link video filesrc -> demux: {}", e))?;
+    video_queue.link(&mux)
+        .map_err(|e| anyhow::anyhow!("Failed to link video queue -> mux: {}", e))?;
+    audio_filesrc.link(&audio_parser)
+        .map_err(|e| anyhow::anyhow!("Failed to link audio filesrc -> parser: {}", e))?;
+    audio_parser.link(&audio_queue)
+        .map_err(|e| anyhow::anyhow!("Failed to link audio parser -> queue: {}", e))?;
+    audio_queue.link(&mux)
+        .map_err(|e| anyhow::anyhow!("Failed to link audio queue -> mux: {}", e))?;
+    mux.link(&filesink)
+        .map_err(|e| anyhow::anyhow!("Failed to link mux -> filesink: {}", e))?;
     
     // Handle dynamic pads from matroskademux (video stream)
     let vqueue_weak = video_queue.downgrade();
@@ -2276,19 +2142,11 @@ fn start_recording(
         let (bit_depth, sample_rate_setting) = match audio_format {
             crate::config::AudioFormat::Wav => (config_read.wav_bit_depth.clone(), config_read.wav_sample_rate.clone()),
             crate::config::AudioFormat::Flac => (config_read.flac_bit_depth.clone(), config_read.flac_sample_rate.clone()),
-            crate::config::AudioFormat::Vorbis => (crate::config::AudioBitDepth::default(), config_read.vorbis_sample_rate.clone()),
         };
-
-        let vorbis_quality = if matches!(audio_format, crate::config::AudioFormat::Vorbis) {
-            Some(config_read.vorbis_bitrate.quality())
-        } else {
-            None
-        };
-
+        
         let extension = match audio_format {
             crate::config::AudioFormat::Wav => "wav",
             crate::config::AudioFormat::Flac => "flac",
-            crate::config::AudioFormat::Vorbis => "ogg",
         };
         
         let num_audio_devices = state.audio_prerolls.len();
@@ -2317,7 +2175,7 @@ fn start_recording(
             
             match AudioStreamWriter::new(
                 &session_path, &filename, &dev_name, channels, native_rate,
-                &audio_format, &bit_depth, &sample_rate_setting, vorbis_quality,
+                &audio_format, &bit_depth, &sample_rate_setting,
             ) {
                 Ok(mut writer) => {
                     // Push drained pre-roll samples into the streaming writer

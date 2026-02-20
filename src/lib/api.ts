@@ -321,19 +321,16 @@ export type AudioSampleRate =
   | "rate88200"
   | "rate96000"
   | "rate192000";
-export type VorbisBitrate = "kbps160" | "kbps192" | "kbps256" | "kbps320";
 
 export interface Config {
   storage_path: string;
   idle_timeout_secs: number;
   pre_roll_secs: number;
-  audio_format: "wav" | "flac" | "vorbis";
+  audio_format: "wav" | "flac";
   wav_bit_depth: AudioBitDepth;
   wav_sample_rate: AudioSampleRate;
   flac_bit_depth: AudioBitDepth;
   flac_sample_rate: AudioSampleRate;
-  vorbis_bitrate: VorbisBitrate;
-  vorbis_sample_rate: AudioSampleRate;
   dark_mode: boolean;
   auto_start: boolean;
   start_minimized: boolean;

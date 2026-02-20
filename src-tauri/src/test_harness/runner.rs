@@ -254,7 +254,6 @@ pub fn run_test(case: &TestCase, keep_sessions: bool) -> TestResult {
         if case.expected.has_audio {
             let expected_ext = match &case.expected.audio_format {
                 Some(AudioFormat::Flac) => "flac",
-                Some(AudioFormat::Vorbis) => "ogg",
                 _ => "wav",
             };
 
@@ -289,25 +288,6 @@ pub fn run_test(case: &TestCase, keep_sessions: bool) -> TestResult {
                             Err(e) => {
                                 errors.push(format!(
                                     "WAV validation failed for {}: {}",
-                                    entry.file_name().to_string_lossy(),
-                                    e
-                                ));
-                            }
-                        }
-                    } else if expected_ext == "ogg" {
-                        match validators::validate_ogg(&path) {
-                            Ok(v) => {
-                                validate_duration(
-                                    &mut errors,
-                                    &format!("OGG {}", entry.file_name().to_string_lossy()),
-                                    v.duration_secs,
-                                    case.expected.duration_secs,
-                                    case.expected.duration_tolerance,
-                                );
-                            }
-                            Err(e) => {
-                                errors.push(format!(
-                                    "OGG validation failed for {}: {}",
                                     entry.file_name().to_string_lossy(),
                                     e
                                 ));
