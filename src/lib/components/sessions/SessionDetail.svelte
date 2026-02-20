@@ -53,7 +53,7 @@
 
     // MIDI synth and data
     let synth: Tone.PolySynth | null = null;
-    let midiData: Midi | null = null;
+    let midiData: Midi | null = $state(null);
     let midiNotes: Array<{
         time: number;
         note: string;
