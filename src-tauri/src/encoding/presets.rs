@@ -37,6 +37,42 @@ use gstreamer::prelude::*;
 use super::encoder::HardwareEncoderType;
 use super::VideoCodec;
 
+/// Try to set a u32 property on an element, clamping to the element's valid range.
+///
+/// Some MFTs expose a property but accept only a subset of values (e.g., a
+/// bframes property that allows 0–2 but not 3). This helper reads the
+/// `ParamSpecUInt` bounds and clamps accordingly, preventing a panic from
+/// `set_property` when the value is out of range.
+///
+/// Returns `true` if the property was found and set, `false` if missing.
+fn try_set_u32_clamped(element: &gst::Element, name: &str, value: u32) -> bool {
+    let Some(pspec) = element.find_property(name) else {
+        return false;
+    };
+    if let Some(uint_spec) = pspec.downcast_ref::<gst::glib::ParamSpecUInt>() {
+        let clamped = value.clamp(uint_spec.minimum(), uint_spec.maximum());
+        if clamped != value {
+            let element_name = element
+                .factory()
+                .map(|f| f.name().to_string())
+                .unwrap_or_default();
+            log::warn!(
+                "[Preset] {}={} out of range [{}, {}] for {}, using {}",
+                name,
+                value,
+                uint_spec.minimum(),
+                uint_spec.maximum(),
+                element_name,
+                clamped,
+            );
+        }
+        element.set_property(name, clamped);
+    } else {
+        element.set_property(name, value);
+    }
+    true
+}
+
 /// Minimum preset level (lightest computational load)
 pub const MIN_PRESET: u8 = 1;
 /// Maximum preset level (highest quality, most intensive)
@@ -539,19 +575,15 @@ fn apply_mf_h264(encoder: &gst::Element, level: u8, keyframe_interval: u32, scal
     encoder.set_property("bitrate", scale_bitrate_u32(bitrate_kbps, scale));
 
     // Conditionally-available properties — guard each to avoid panics
-    // on MFTs that don't expose them (e.g., NVIDIA MF lacks bframes)
-    if encoder.find_property("quality-vs-speed").is_some() {
-        encoder.set_property("quality-vs-speed", quality_vs_speed);
-    }
+    // on MFTs that don't expose them (e.g., NVIDIA MF lacks bframes).
+    // Use try_set_u32_clamped for u32 props since some MFTs accept the
+    // property name but restrict the range (e.g., bframes max=2).
+    try_set_u32_clamped(encoder, "quality-vs-speed", quality_vs_speed);
     if encoder.find_property("low-latency").is_some() {
         encoder.set_property("low-latency", low_latency);
     }
-    if encoder.find_property("bframes").is_some() {
-        encoder.set_property("bframes", bframes);
-    }
-    if encoder.find_property("ref").is_some() {
-        encoder.set_property("ref", ref_frames);
-    }
+    try_set_u32_clamped(encoder, "bframes", bframes);
+    try_set_u32_clamped(encoder, "ref", ref_frames);
     if encoder.find_property("rc-mode").is_some() {
         encoder.set_property_from_str("rc-mode", "cbr");
     }
