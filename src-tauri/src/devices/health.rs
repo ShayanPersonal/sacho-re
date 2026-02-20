@@ -11,6 +11,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::config::Config;
 use crate::devices::DeviceManager;
+use crate::notifications;
 use crate::recording::video::VideoCaptureManager;
 
 /// Info about a disconnected device, sent to the frontend
@@ -355,12 +356,14 @@ pub fn health_check_loop(
         let dm_read = dm.read();
 
         // Handle newly disconnected devices
+        let mut newly_disconnected_names: Vec<String> = Vec::new();
         for id in &newly_disconnected {
             if let Some(info) = resolve_device_info(id, &dm_read, &config_read) {
                 println!(
                     "[Health] Device disconnected: {} ({}, {})",
                     info.name, info.id, info.device_type
                 );
+                newly_disconnected_names.push(info.name.clone());
 
                 // Clear pre-roll buffers for the disconnected device
                 match info.device_type.as_str() {
@@ -384,6 +387,11 @@ pub fn health_check_loop(
 
                 health_state.write().disconnected.insert(id.clone(), info);
             }
+        }
+
+        // Send desktop notification for newly disconnected devices
+        if !newly_disconnected_names.is_empty() {
+            notifications::notify_device_disconnected(&app, &newly_disconnected_names);
         }
 
         // Handle newly reconnected devices

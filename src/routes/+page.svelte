@@ -12,6 +12,10 @@
         isStopping,
     } from "$lib/stores/recording";
     import { settings } from "$lib/stores/settings";
+    import {
+        disconnectedDeviceInfos,
+        disconnectBannerDismissed,
+    } from "$lib/stores/devices";
 
     // Devices and Settings tabs are locked while recording
     let recordingLocked = $derived($isRecording || $isStopping);
@@ -134,6 +138,36 @@
         <div class="spacer"></div>
         <RecordingIndicator />
     </nav>
+
+    {#if $disconnectedDeviceInfos.length > 0 && !$disconnectBannerDismissed}
+        <div class="disconnect-banner">
+            <svg
+                class="disconnect-banner-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+            >
+                <path
+                    d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+                />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            <span class="disconnect-banner-text">
+                {#if $disconnectedDeviceInfos.length === 1}
+                    {$disconnectedDeviceInfos[0].name} has disconnected
+                {:else}
+                    {$disconnectedDeviceInfos.length} devices have disconnected: {$disconnectedDeviceInfos.map(d => d.name).join(", ")}
+                {/if}
+            </span>
+            <button
+                class="disconnect-banner-close"
+                onclick={() => disconnectBannerDismissed.set(true)}
+                title="Dismiss"
+            >&times;</button>
+        </div>
+    {/if}
 
     <main class="content">
         {#if activeTab === "sessions"}
@@ -996,5 +1030,63 @@
 
     .app.light-mode .lock-message svg {
         color: rgba(160, 128, 48, 0.6);
+    }
+
+    /* Disconnect warning banner */
+    .disconnect-banner {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        background: rgba(200, 60, 60, 0.15);
+        border-bottom: 1px solid rgba(200, 60, 60, 0.3);
+        color: #e57373;
+        font-size: 0.8125rem;
+    }
+
+    .disconnect-banner-icon {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        stroke: #e57373;
+    }
+
+    .disconnect-banner-text {
+        flex: 1;
+        color: #e57373;
+    }
+
+    .disconnect-banner-close {
+        background: none;
+        border: none;
+        color: #e57373;
+        font-size: 1.125rem;
+        cursor: pointer;
+        padding: 0 0.25rem;
+        line-height: 1;
+        opacity: 0.7;
+        transition: opacity 0.15s ease;
+    }
+
+    .disconnect-banner-close:hover {
+        opacity: 1;
+    }
+
+    .app.light-mode .disconnect-banner {
+        background: rgba(200, 60, 60, 0.1);
+        border-bottom-color: rgba(200, 60, 60, 0.25);
+        color: #c04040;
+    }
+
+    .app.light-mode .disconnect-banner-icon {
+        stroke: #c04040;
+    }
+
+    .app.light-mode .disconnect-banner-text {
+        color: #c04040;
+    }
+
+    .app.light-mode .disconnect-banner-close {
+        color: #c04040;
     }
 </style>

@@ -80,10 +80,28 @@ listen<string>('recording-state-changed', (event) => {
 // Disconnected device IDs (from health checker)
 export const disconnectedDevices = writable<Set<string>>(new Set());
 
+// Full disconnected device info (for banner messages)
+export const disconnectedDeviceInfos = writable<DisconnectedDeviceInfo[]>([]);
+
+// Whether the user has dismissed the disconnect banner (resets when new devices disconnect)
+export const disconnectBannerDismissed = writable(false);
+
 // Listen for device health change events from backend
 listen<{ disconnected_devices: DisconnectedDeviceInfo[] }>('device-health-changed', (event) => {
-  const ids = new Set(event.payload.disconnected_devices.map(d => d.id));
-  disconnectedDevices.set(ids);
+  const newInfos = event.payload.disconnected_devices;
+  const newIds = new Set(newInfos.map(d => d.id));
+
+  // If a new device appeared in the disconnected set, un-dismiss the banner
+  const prevIds = get(disconnectedDevices);
+  for (const id of newIds) {
+    if (!prevIds.has(id)) {
+      disconnectBannerDismissed.set(false);
+      break;
+    }
+  }
+
+  disconnectedDevices.set(newIds);
+  disconnectedDeviceInfos.set(newInfos);
 });
 
 // Repeating warning sound when devices are disconnected

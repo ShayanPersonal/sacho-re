@@ -31,6 +31,21 @@ pub fn notify_recording_stopped(app: &AppHandle, duration_secs: f64, folder_name
         .show();
 }
 
+/// Send a notification when a device disconnects
+pub fn notify_device_disconnected(app: &AppHandle, device_names: &[String]) {
+    let body = if device_names.len() == 1 {
+        format!("{} has disconnected", device_names[0])
+    } else {
+        format!("{} devices have disconnected: {}", device_names.len(), device_names.join(", "))
+    };
+
+    let _ = app.notification()
+        .builder()
+        .title("Device Disconnected")
+        .body(body)
+        .show();
+}
+
 /// Send a notification for errors
 pub fn notify_error(app: &AppHandle, message: &str) {
     let _ = app.notification()
