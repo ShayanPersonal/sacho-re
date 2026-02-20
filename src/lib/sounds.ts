@@ -149,12 +149,12 @@ export async function playDisconnectWarningSound(
   const s = ensureSynth();
   s.volume.value = volumeToDb(volume);
   const now = Tone.now();
-  s.triggerAttackRelease("D4", 0.3, now);
-  s.triggerAttackRelease("D4", 0.3, now + 0.5);
-  s.triggerAttackRelease("D4", 0.3, now + 1.0);
+  s.triggerAttackRelease("D4", 0.2, now);
+  s.triggerAttackRelease("D4", 0.2, now + 0.3);
+  s.triggerAttackRelease("D4", 0.2, now + 0.6);
   setTimeout(() => {
     if (playingType === "disconnect") playingType = null;
-  }, 1500);
+  }, 1000);
 }
 
 /** Preview a custom sound file by its relative path in the config dir */
