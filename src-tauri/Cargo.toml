@@ -97,15 +97,8 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Shell",
 ] }
 
-[[bin]]
-name = "integration_tests"
-path = "src/bin/integration_tests.rs"
-required-features = ["test-harness"]
-
-[[bin]]
-name = "encoder_benchmark"
-path = "src/bin/encoder_benchmark.rs"
-required-features = ["tempfile"]
+[workspace]
+members = ["tools"]
 
 [features]
 default = []

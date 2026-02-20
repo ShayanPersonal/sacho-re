@@ -4,7 +4,7 @@
 //! runs test permutations sequentially, validates output files, and reports results.
 //!
 //! Usage:
-//!   cargo run --bin integration_tests [-- [OPTIONS]]
+//!   cargo run -p sacho-tools --bin integration_tests [-- [OPTIONS]]
 //!
 //! Options:
 //!   --filter <pattern>    Run only tests whose name contains <pattern>
@@ -45,9 +45,10 @@ fn main() {
     // Init GStreamer
     gstreamer_init::init_gstreamer_env();
 
-    // Discover hardware
+    // Discover hardware — test_devices.toml lives in the parent crate (src-tauri/)
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut device_config = discovery::load_device_config(&crate_dir);
+    let sacho_root = crate_dir.parent().expect("tools crate must be inside src-tauri/");
+    let mut device_config = discovery::load_device_config(sacho_root);
     discovery::resolve_devices(&mut device_config);
     discovery::print_inventory(&device_config);
 

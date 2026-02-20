@@ -26,11 +26,11 @@ npm run check                  # TypeScript + Svelte validation
 npm run check:watch            # Watch mode for type checking
 
 # Integration tests (from src-tauri/)
-cargo run --bin integration_tests              # Run all tests
-cargo run --bin integration_tests -- --list    # List tests without running
-cargo run --bin integration_tests -- --filter <pattern>  # Run matching tests
-cargo run --bin integration_tests -- --verbose           # Extra debug output
-cargo run --bin integration_tests -- --keep-sessions     # Preserve output files
+cargo run -p sacho-tools --bin integration_tests              # Run all tests
+cargo run -p sacho-tools --bin integration_tests -- --list    # List tests without running
+cargo run -p sacho-tools --bin integration_tests -- --filter <pattern>  # Run matching tests
+cargo run -p sacho-tools --bin integration_tests -- --verbose           # Extra debug output
+cargo run -p sacho-tools --bin integration_tests -- --keep-sessions     # Preserve output files
 ```
 
 Frontend dev server runs on `http://localhost:1420`. GStreamer must be installed on the system for development.
@@ -82,11 +82,11 @@ Async encoder on separate thread pool. Raw sources re-encoded (AV1/VP9/VP8), MJP
 - Tauri commands are snake_case in Rust, invoked as strings from TS (`invoke('get_audio_devices')`)
 - Frontend types in `api.ts` must stay in sync with Rust serde structs in `commands.rs`
 - Config stored at platform-appropriate path (e.g., `%APPDATA%\com.sacho.app\config.toml` on Windows)
-- Frontend validation via `npm run check`; backend integration tests via `cargo run --bin integration_tests` (see below)
+- Frontend validation via `npm run check`; backend integration tests via `cargo run -p sacho-tools --bin integration_tests` (see below)
 
 ## Integration Tests
 
-A standalone `[[bin]]` target that builds a real headless Tauri app, discovers hardware, runs test permutations sequentially, validates output files, and reports results. Tests exercise the full recording pipeline (MIDI trigger → pre-roll → audio/video capture → idle timeout → session save) with real hardware.
+A standalone binary in the `sacho-tools` workspace crate (`src-tauri/tools/`) that builds a real headless Tauri app, discovers hardware, runs test permutations sequentially, validates output files, and reports results. Tests exercise the full recording pipeline (MIDI trigger → pre-roll → audio/video capture → idle timeout → session save) with real hardware.
 
 ### Setup
 
@@ -107,7 +107,7 @@ A standalone `[[bin]]` target that builds a real headless Tauri app, discovers h
 
 | Path | Purpose |
 |------|---------|
-| `src-tauri/src/bin/integration_tests.rs` | Binary entry point with CLI arg parsing |
+| `src-tauri/tools/src/bin/integration_tests.rs` | Binary entry point with CLI arg parsing |
 | `src-tauri/src/test_harness/discovery.rs` | Load test_devices.toml, resolve against hardware |
 | `src-tauri/src/test_harness/app.rs` | Headless Tauri app builder |
 | `src-tauri/src/test_harness/midi_sender.rs` | MIDI output via loopback device |

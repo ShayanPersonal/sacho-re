@@ -7,7 +7,7 @@
 //! (e.g. buggy driver), the benchmark reports the failure and continues.
 //!
 //! Usage:
-//!   cargo run --bin encoder_benchmark --features tempfile [-- [OPTIONS]]
+//!   cargo run -p sacho-tools --bin encoder_benchmark [-- [OPTIONS]]
 //!
 //! Options:
 //!   --codec <filter>    Only benchmark encoders whose codec name contains <filter>
@@ -126,7 +126,7 @@ Benchmarks all available video encoders using the app's actual encoding
 infrastructure (same codecs, presets, pipeline construction, hardware detection).
 
 USAGE:
-    cargo run --bin encoder_benchmark --features tempfile [-- [OPTIONS]]
+    cargo run -p sacho-tools --bin encoder_benchmark [-- [OPTIONS]]
 
 OPTIONS:
     --codec <filter>    Only benchmark encoders whose codec name contains <filter>
@@ -144,10 +144,10 @@ PRESET LEVELS:
     5  Maximum    — Highest quality feasible in real-time
 
 EXAMPLES:
-    cargo run --bin encoder_benchmark --features tempfile
-    cargo run --bin encoder_benchmark --features tempfile -- --preset 5
-    cargo run --bin encoder_benchmark --features tempfile -- --all-presets --duration 10
-    cargo run --bin encoder_benchmark --features tempfile -- --codec h264 --preset 1
+    cargo run -p sacho-tools --bin encoder_benchmark
+    cargo run -p sacho-tools --bin encoder_benchmark -- --preset 5
+    cargo run -p sacho-tools --bin encoder_benchmark -- --all-presets --duration 10
+    cargo run -p sacho-tools --bin encoder_benchmark -- --codec h264 --preset 1
 ",
         default_label = preset_label(DEFAULT_PRESET),
     );
