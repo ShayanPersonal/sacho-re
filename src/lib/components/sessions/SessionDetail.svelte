@@ -61,6 +61,85 @@
         velocity: number;
     }> = [];
 
+    // Per-track volume in dB (-12 to +12, default 0)
+    let audioVolumes = $state<number[]>(
+        new Array(session.audio_files.length).fill(0),
+    );
+
+    // Web Audio API routing for volume boost/cut + metering
+    let audioContext: AudioContext | null = null;
+    let audioGainNode: GainNode | null = null;
+    let audioAnalyser: AnalyserNode | null = null;
+    let analyserBuffer: Float32Array | null = null;
+    let connectedAudioElement: HTMLAudioElement | null = null;
+    let audioMeterLevel = $state(0); // post-gain RMS (linear 0-1)
+
+    function dbToGain(db: number): number {
+        return Math.pow(10, db / 20);
+    }
+
+    /** Map linear RMS to 0-100% on a -60..0 dB meter scale */
+    function rmsToMeterPercent(rms: number): number {
+        if (rms <= 0) return 0;
+        const db = 20 * Math.log10(rms);
+        return Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
+    }
+
+    function connectAudioRouting(el: HTMLAudioElement) {
+        if (!audioContext) {
+            audioContext = new AudioContext();
+            audioGainNode = audioContext.createGain();
+            audioAnalyser = audioContext.createAnalyser();
+            audioAnalyser.fftSize = 2048; // ~46ms at 44.1kHz
+            analyserBuffer = new Float32Array(audioAnalyser.fftSize);
+            audioGainNode.connect(audioAnalyser);
+            audioAnalyser.connect(audioContext.destination);
+        }
+        try {
+            const source = audioContext.createMediaElementSource(el);
+            source.connect(audioGainNode!);
+            connectedAudioElement = el;
+            // Apply current volume
+            audioGainNode!.gain.value = dbToGain(audioVolumes[audioIndex] ?? 0);
+        } catch (e) {
+            // Element may already be connected (shouldn't happen with {#key})
+            console.warn("Audio routing error:", e);
+        }
+    }
+
+    function updateAudioMeter() {
+        if (!audioAnalyser || !analyserBuffer) {
+            audioMeterLevel = 0;
+            return;
+        }
+        audioAnalyser.getFloatTimeDomainData(analyserBuffer);
+        let sum = 0;
+        for (let i = 0; i < analyserBuffer.length; i++) {
+            sum += analyserBuffer[i] * analyserBuffer[i];
+        }
+        audioMeterLevel = Math.sqrt(sum / analyserBuffer.length);
+    }
+
+    // Connect new audio elements when they appear (recreated by {#key})
+    $effect(() => {
+        if (audioElement && audioElement !== connectedAudioElement) {
+            connectAudioRouting(audioElement);
+        }
+    });
+
+    // Sync gain node when volume or track changes
+    $effect(() => {
+        if (audioGainNode) {
+            const db = audioVolumes[audioIndex] ?? 0;
+            audioGainNode.gain.value = dbToGain(db);
+        }
+    });
+
+    function setAudioVolume(index: number, db: number) {
+        // Snap to 0 when within ±0.5 dB
+        audioVolumes[index] = Math.abs(db) < 0.5 ? 0 : db;
+    }
+
     // Notes editing state
     let notesValue = $state(session.notes);
     let saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -348,6 +427,11 @@
         playStartTime = 0;
         playStartOffset = 0;
 
+        // Reset per-track volumes
+        audioVolumes = new Array(session.audio_files.length).fill(0);
+        // Disconnect previous audio routing (new elements will reconnect via $effect)
+        connectedAudioElement = null;
+
         // Clean up MIDI state from previous session
         if (synth) {
             synth.dispose();
@@ -449,6 +533,11 @@
             await Tone.start();
         } catch (e) {
             console.error("Tone.js start failed:", e);
+        }
+
+        // Resume Web Audio context (created outside user gesture, starts suspended)
+        if (audioContext && audioContext.state === "suspended") {
+            await audioContext.resume();
         }
 
         lastMidiTime = currentTime;
@@ -567,6 +656,9 @@
         updateTime();
         if (isPlaying) {
             playMidiNotes();
+            updateAudioMeter();
+        } else if (audioMeterLevel > 0) {
+            audioMeterLevel = 0;
         }
         animationFrame = requestAnimationFrame(tick);
     }
@@ -581,6 +673,14 @@
         synth?.dispose();
         pause();
         if (saveTimeout) clearTimeout(saveTimeout);
+        if (audioContext) {
+            audioContext.close();
+            audioContext = null;
+            audioGainNode = null;
+            audioAnalyser = null;
+            analyserBuffer = null;
+            connectedAudioElement = null;
+        }
     });
 </script>
 
@@ -776,6 +876,30 @@
                                 {currentAudioFile?.device_name ?? "Unknown"}
                             {/if}
                         </span>
+                        {#if session.audio_files.length > 0}
+                            <div class="volume-control">
+                                <div class="volume-slider-wrapper">
+                                    <div class="meter-track">
+                                        <div
+                                            class="meter-fill"
+                                            style="width: {rmsToMeterPercent(audioMeterLevel)}%"
+                                        ></div>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        class="volume-slider"
+                                        min="-12"
+                                        max="12"
+                                        step="0.1"
+                                        value={audioVolumes[audioIndex] ?? 0}
+                                        oninput={(e) => setAudioVolume(audioIndex, parseFloat((e.target as HTMLInputElement).value))}
+                                        ondblclick={() => setAudioVolume(audioIndex, 0)}
+                                        title="Track volume (double-click to reset)"
+                                    />
+                                </div>
+                                <span class="volume-label">{(audioVolumes[audioIndex] ?? 0) > 0 ? '+' : ''}{(audioVolumes[audioIndex] ?? 0).toFixed(1)} dB</span>
+                            </div>
+                        {/if}
                         {#if session.audio_files.length > 1}
                             <button
                                 class="switch-btn"
@@ -794,6 +918,7 @@
                                 src={audioSrc}
                                 onended={handleEnded}
                                 muted={audioMuted}
+                                crossorigin="anonymous"
                                 preload="metadata"
                             ></audio>
                         {/key}
@@ -1251,6 +1376,85 @@
         text-overflow: ellipsis;
     }
 
+    .volume-control {
+        display: flex;
+        align-items: center;
+        gap: 0.375rem;
+        flex-shrink: 0;
+    }
+
+    .volume-slider-wrapper {
+        position: relative;
+        width: 64px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+    }
+
+    .volume-slider-wrapper .meter-track {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 6px;
+        background: rgba(255, 255, 255, 0.06);
+        border-radius: 3px;
+        overflow: hidden;
+        pointer-events: none;
+    }
+
+    .volume-slider-wrapper .meter-fill {
+        height: 100%;
+        background: rgba(80, 180, 80, 0.5);
+        border-radius: 3px;
+        transition: width 0.05s linear;
+    }
+
+    .volume-slider {
+        position: relative;
+        width: 100%;
+        height: 16px;
+        -webkit-appearance: none;
+        appearance: none;
+        background: transparent;
+        cursor: pointer;
+        z-index: 1;
+    }
+
+    .volume-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #8a8a8a;
+        cursor: pointer;
+    }
+
+    .volume-slider::-moz-range-thumb {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #8a8a8a;
+        cursor: pointer;
+        border: none;
+    }
+
+    .volume-slider:hover::-webkit-slider-thumb {
+        background: #e4e4e7;
+    }
+
+    .volume-slider:hover::-moz-range-thumb {
+        background: #e4e4e7;
+    }
+
+    .volume-label {
+        font-family: "DM Mono", "SF Mono", Menlo, monospace;
+        font-size: 0.625rem;
+        color: #5a5a5a;
+        width: 52px;
+        text-align: right;
+        flex-shrink: 0;
+    }
+
     .switch-btn {
         padding: 0.25rem 0.5rem;
         background: rgba(255, 255, 255, 0.06);
@@ -1536,6 +1740,30 @@
 
     :global(body.light-mode) .track-info {
         color: #5a5a5a;
+    }
+
+    :global(body.light-mode) .volume-slider-wrapper .meter-track {
+        background: rgba(0, 0, 0, 0.06);
+    }
+
+    :global(body.light-mode) .volume-slider-wrapper .meter-fill {
+        background: rgba(60, 150, 60, 0.4);
+    }
+
+    :global(body.light-mode) .volume-slider {
+        background: rgba(0, 0, 0, 0.1);
+    }
+
+    :global(body.light-mode) .volume-slider::-webkit-slider-thumb {
+        background: #6a6a6a;
+    }
+
+    :global(body.light-mode) .volume-slider::-moz-range-thumb {
+        background: #6a6a6a;
+    }
+
+    :global(body.light-mode) .volume-label {
+        color: #7a7a7a;
     }
 
     :global(body.light-mode) .switch-btn {
