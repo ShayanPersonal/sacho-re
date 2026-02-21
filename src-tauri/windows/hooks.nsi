@@ -16,28 +16,18 @@
     ; Copy GStreamer DLLs from the bundled resources to the application directory
     ; These DLLs must be in the same directory as the exe for Windows to find them at startup
     DetailPrint "Copying GStreamer runtime libraries..."
-    
-    ; Create manifest file to track installed DLLs for clean uninstallation
-    FileOpen $0 "$INSTDIR\installed_dlls.txt" w
-    
-    ; Enumerate all DLLs in dlls and copy them
-    FindFirst $1 $2 "$INSTDIR\installers\dlls\*.dll"
+
+    FindFirst $0 $1 "$INSTDIR\installers\dlls\*.dll"
     ${IfNot} ${Errors}
         loop_copy:
-            ; Copy the DLL to install directory
-            CopyFiles /SILENT "$INSTDIR\installers\dlls\$2" "$INSTDIR"
-            ; Write the DLL name to manifest
-            FileWrite $0 "$2$\r$\n"
-            ; Find next file
-            FindNext $1 $2
+            CopyFiles /SILENT "$INSTDIR\installers\dlls\$1" "$INSTDIR"
+            FindNext $0 $1
             ${IfNot} ${Errors}
                 Goto loop_copy
             ${EndIf}
-        FindClose $1
+        FindClose $0
     ${EndIf}
-    
-    FileClose $0
-    
+
     DetailPrint "GStreamer runtime libraries installed successfully"
     
     ; Remove the installers folder after copying (no longer needed)
@@ -71,52 +61,27 @@
 ; PREUNINSTALL - Runs before uninstallation starts
 ; ============================================================================
 !macro NSIS_HOOK_PREUNINSTALL
-    ; Remove GStreamer DLLs that were copied during installation
-    ; Read from manifest file to know exactly which DLLs were installed
+    ; Remove GStreamer DLLs that were copied to $INSTDIR during installation.
+    ; Enumerate and delete all *.dll — the only DLLs in $INSTDIR are ours.
     DetailPrint "Removing GStreamer runtime libraries..."
-    
-    ${If} ${FileExists} "$INSTDIR\installed_dlls.txt"
-        FileOpen $0 "$INSTDIR\installed_dlls.txt" r
-        ${IfNot} ${Errors}
-            loop_delete:
-                FileRead $0 $1
-                ${IfNot} ${Errors}
-                    ; Trim trailing newline/carriage return
-                    StrCpy $2 $1 -2
-                    ${If} $2 != ""
-                        Delete "$INSTDIR\$2"
-                        DetailPrint "Removed: $2"
-                    ${EndIf}
-                    Goto loop_delete
-                ${EndIf}
-            FileClose $0
-        ${EndIf}
-        ; Delete the manifest file itself
-        Delete "$INSTDIR\installed_dlls.txt"
-    ${Else}
-        ; Fallback: if manifest doesn't exist, try to delete known DLLs
-        ; This handles upgrades from older versions without manifest
-        DetailPrint "Manifest not found, using fallback cleanup..."
-        Delete "$INSTDIR\gstpbutils-1.0-0.dll"
-        Delete "$INSTDIR\gstvideo-1.0-0.dll"
-        Delete "$INSTDIR\orc-0.4-0.dll"
-        Delete "$INSTDIR\gstaudio-1.0-0.dll"
-        Delete "$INSTDIR\gsttag-1.0-0.dll"
-        Delete "$INSTDIR\z-1.dll"
-        Delete "$INSTDIR\gstbase-1.0-0.dll"
-        Delete "$INSTDIR\gstreamer-1.0-0.dll"
-        Delete "$INSTDIR\gmodule-2.0-0.dll"
-        Delete "$INSTDIR\gobject-2.0-0.dll"
-        Delete "$INSTDIR\ffi-7.dll"
-        Delete "$INSTDIR\glib-2.0-0.dll"
-        Delete "$INSTDIR\pcre2-8-0.dll"
-        Delete "$INSTDIR\intl-8.dll"
-        Delete "$INSTDIR\gstapp-1.0-0.dll"
-        Delete "$INSTDIR\gio-2.0-0.dll"
+
+    FindFirst $0 $1 "$INSTDIR\*.dll"
+    ${IfNot} ${Errors}
+        loop_delete:
+            Delete "$INSTDIR\$1"
+            DetailPrint "Removed: $1"
+            FindNext $0 $1
+            ${IfNot} ${Errors}
+                Goto loop_delete
+            ${EndIf}
+        FindClose $0
     ${EndIf}
-    
+
+    ; Clean up manifest from older installs
+    Delete "$INSTDIR\installed_dlls.txt"
+
     DetailPrint "GStreamer runtime libraries removed"
-    
+
     ; ---- Autostart cleanup ----
     ; Clean up both HKCU and HKLM autostart entries.
     ; Old installs may have written both; remove either to prevent double-launch.
