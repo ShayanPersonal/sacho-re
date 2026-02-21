@@ -159,34 +159,27 @@ pub fn get_session_detail(
     session_id: String,
 ) -> Result<Option<SessionMetadata>, String> {
     let config = config.read();
-    
+
     // Session ID equals folder name, so construct path directly (O(1) instead of O(n))
     let session_path = config.storage_path.join(&session_id);
-    let metadata_path = session_path.join("metadata.json");
-    
-    if !metadata_path.exists() {
+
+    if !session_path.exists() {
         return Ok(None);
     }
-    
-    let contents = std::fs::read_to_string(&metadata_path)
+
+    // Build metadata from directory scan
+    let mut metadata = crate::session::build_session_from_directory(&session_path)
         .map_err(|e| e.to_string())?;
-    let mut metadata: SessionMetadata = serde_json::from_str(&contents)
-        .map_err(|e| e.to_string())?;
-    
+
     // Check file integrity (detect interrupted recordings)
     use crate::recording::monitor;
-    
     let mut has_corrupt_files = false;
-    
-    // Check MIDI files
-    for midi_file in &mut metadata.midi_files {
-        let midi_path = session_path.join(&midi_file.filename);
-        if midi_path.exists() && monitor::midi_file_needs_repair(&midi_path) {
-            midi_file.needs_repair = true;
-            has_corrupt_files = true;
-        }
+
+    // MIDI needs_repair is already set by build_session_from_directory
+    if metadata.midi_files.iter().any(|f| f.needs_repair) {
+        has_corrupt_files = true;
     }
-    
+
     // Check audio files
     for audio_file in &metadata.audio_files {
         let audio_path = session_path.join(&audio_file.filename);
@@ -201,7 +194,7 @@ pub fn get_session_detail(
             if needs_repair { has_corrupt_files = true; }
         }
     }
-    
+
     // Check video files
     for video_file in &metadata.video_files {
         let video_path = session_path.join(&video_file.filename);
@@ -209,20 +202,13 @@ pub fn get_session_detail(
             has_corrupt_files = true;
         }
     }
-    
-    // Detect interrupted sessions: metadata has no file entries but session dir has media files
+
+    // If no media files found, session is empty
     if metadata.midi_files.is_empty() && metadata.audio_files.is_empty() && metadata.video_files.is_empty() {
-        if let Ok(entries) = std::fs::read_dir(&session_path) {
-            let has_media = entries.flatten().any(|e| {
-                let name = e.file_name().to_string_lossy().to_string();
-                name.ends_with(".mid") || name.ends_with(".wav") || name.ends_with(".flac")
-                    || name.ends_with(".mkv")
-            });
-            if has_media { has_corrupt_files = true; }
-        }
+        return Ok(None);
     }
-    
-    // If any files are corrupt/missing, add a repair flag via a placeholder MIDI entry
+
+    // If any files are corrupt, add a repair flag via a placeholder MIDI entry
     // (the frontend checks midi_files for needs_repair to show the banner)
     if has_corrupt_files && !metadata.midi_files.iter().any(|f| f.needs_repair) {
         metadata.midi_files.push(crate::session::MidiFileInfo {
@@ -232,7 +218,7 @@ pub fn get_session_detail(
             needs_repair: true,
         });
     }
-    
+
     Ok(Some(metadata))
 }
 
@@ -244,230 +230,60 @@ pub fn repair_session(
 ) -> Result<SessionMetadata, String> {
     let config = config.read();
     let session_path = config.storage_path.join(&session_id);
-    
+
     if !session_path.exists() {
         return Err(format!("Session folder not found: {}", session_id));
     }
-    
-    // Load existing metadata (may have empty file lists from initial write)
-    let metadata_path = session_path.join("metadata.json");
-    let mut metadata: SessionMetadata = if metadata_path.exists() {
-        let contents = std::fs::read_to_string(&metadata_path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&contents).map_err(|e| e.to_string())?
-    } else {
-        return Err("No metadata.json found".to_string());
-    };
-    
-    // Scan the session directory for actual files and rebuild file lists
+
+    // Scan directory and repair files
     let entries = std::fs::read_dir(&session_path).map_err(|e| e.to_string())?;
-    
-    let mut midi_files = Vec::new();
-    let mut audio_files = Vec::new();
-    let mut video_files = Vec::new();
-    
+
     for entry in entries.flatten() {
         let path = entry.path();
-        let fname = path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        
-        if fname.ends_with(".mid") {
-            // Repair MIDI header if needed
-            let needs_repair = crate::recording::monitor::midi_file_needs_repair(&path);
-            let event_count = if needs_repair {
-                match crate::recording::monitor::repair_midi_file_on_disk(&path) {
-                    Ok(count) => count,
-                    Err(e) => {
-                        println!("[Sacho] Failed to repair MIDI {}: {}", fname, e);
-                        0
-                    }
-                }
-            } else {
-                // Try to get event count from existing metadata
-                metadata.midi_files.iter()
-                    .find(|f| f.filename == fname)
-                    .map(|f| f.event_count)
-                    .unwrap_or(0)
-            };
-            
-            // Extract device name from filename: "midi_Device_Name.mid" -> "Device Name"
-            let device_name = metadata.midi_files.iter()
-                .find(|f| f.filename == fname)
-                .map(|f| f.device_name.clone())
-                .unwrap_or_else(|| {
-                    fname.trim_start_matches("midi_")
-                        .trim_end_matches(".mid")
-                        .replace('_', " ")
-                });
+        let fname = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
 
-            midi_files.push(crate::session::MidiFileInfo {
-                filename: fname,
-                device_name,
-                event_count,
-                needs_repair: false,
-            });
-        } else if fname.ends_with(".wav") {
-            // Check if WAV needs repair
-            let needs_repair = crate::recording::monitor::wav_file_needs_repair(&path);
-            
-            if needs_repair {
-                match crate::recording::monitor::repair_wav_file(&path) {
-                    Ok((_channels, _sample_rate, duration_secs, _size_bytes)) => {
-                        let device_name = metadata.audio_files.iter()
-                            .find(|f| f.filename == fname)
-                            .map(|f| f.device_name.clone())
-                            .unwrap_or_else(|| {
-                                fname.trim_start_matches("recording")
-                                    .trim_start_matches('_')
-                                    .trim_end_matches(".wav")
-                                    .to_string()
-                            });
-                        audio_files.push(crate::session::AudioFileInfo {
-                            filename: fname,
-                            device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
-                            duration_secs,
-                        });
-                    }
-                    Err(e) => {
-                        println!("[Sacho] Failed to repair WAV {}: {}", fname, e);
-                        // Still add it with whatever info we have
-                        if let Some(existing) = metadata.audio_files.iter().find(|f| f.filename == fname) {
-                            audio_files.push(existing.clone());
-                        }
-                    }
+        if fname.ends_with(".mid") {
+            if crate::recording::monitor::midi_file_needs_repair(&path) {
+                if let Err(e) = crate::recording::monitor::repair_midi_file_on_disk(&path) {
+                    println!("[Sacho] Failed to repair MIDI {}: {}", fname, e);
                 }
-            } else if let Some(existing) = metadata.audio_files.iter().find(|f| f.filename == fname) {
-                audio_files.push(existing.clone());
-            } else {
-                let device_name = fname.trim_start_matches("recording")
-                    .trim_start_matches('_')
-                    .trim_end_matches(".wav")
-                    .to_string();
-                audio_files.push(crate::session::AudioFileInfo {
-                    filename: fname,
-                    device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
-                    duration_secs: 0.0,
-                });
+            }
+        } else if fname.ends_with(".wav") {
+            if crate::recording::monitor::wav_file_needs_repair(&path) {
+                if let Err(e) = crate::recording::monitor::repair_wav_file(&path) {
+                    println!("[Sacho] Failed to repair WAV {}: {}", fname, e);
+                }
             }
         } else if fname.ends_with(".flac") {
-            // Check if FLAC needs repair
-            let needs_repair = crate::recording::monitor::flac_file_needs_repair(&path);
-            
-            if needs_repair {
-                match crate::recording::monitor::repair_flac_file(&path) {
-                    Ok((_channels, _sample_rate, duration_secs, _size_bytes)) => {
-                        let device_name = metadata.audio_files.iter()
-                            .find(|f| f.filename == fname)
-                            .map(|f| f.device_name.clone())
-                            .unwrap_or_else(|| {
-                                fname.trim_start_matches("recording")
-                                    .trim_start_matches('_')
-                                    .trim_end_matches(".flac")
-                                    .to_string()
-                            });
-                        audio_files.push(crate::session::AudioFileInfo {
-                            filename: fname,
-                            device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
-                            duration_secs,
-                        });
-                    }
-                    Err(e) => {
-                        println!("[Sacho] Failed to repair FLAC {}: {}", fname, e);
-                        if let Some(existing) = metadata.audio_files.iter().find(|f| f.filename == fname) {
-                            audio_files.push(existing.clone());
-                        }
-                    }
+            if crate::recording::monitor::flac_file_needs_repair(&path) {
+                if let Err(e) = crate::recording::monitor::repair_flac_file(&path) {
+                    println!("[Sacho] Failed to repair FLAC {}: {}", fname, e);
                 }
-            } else if let Some(existing) = metadata.audio_files.iter().find(|f| f.filename == fname) {
-                audio_files.push(existing.clone());
-            } else {
-                let device_name = fname.trim_start_matches("recording")
-                    .trim_start_matches('_')
-                    .trim_end_matches(".flac")
-                    .to_string();
-                audio_files.push(crate::session::AudioFileInfo {
-                    filename: fname,
-                    device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
-                    duration_secs: 0.0,
-                });
             }
         } else if fname.ends_with(".mkv") {
-            // Check if video needs repair
-            let needs_repair = crate::recording::monitor::video_file_needs_repair(&path);
-            
-            if needs_repair {
-                match crate::recording::monitor::repair_video_file(&path) {
-                    Ok((duration_secs, _size_bytes)) => {
-                        let device_name = metadata.video_files.iter()
-                            .find(|f| f.filename == fname)
-                            .map(|f| f.device_name.clone())
-                            .unwrap_or_else(|| {
-                                fname.trim_start_matches("video_")
-                                    .trim_end_matches(".mkv")
-                                    .replace('_', " ")
-                            });
-                        video_files.push(crate::session::VideoFileInfo {
-                            filename: fname,
-                            device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
-                            duration_secs,
-                            has_audio: false,
-                        });
-                    }
-                    Err(e) => {
-                        println!("[Sacho] Failed to repair video {}: {}", fname, e);
-                        if let Some(existing) = metadata.video_files.iter().find(|f| f.filename == fname) {
-                            video_files.push(existing.clone());
-                        }
-                    }
+            if crate::recording::monitor::video_file_needs_repair(&path) {
+                if let Err(e) = crate::recording::monitor::repair_video_file(&path) {
+                    println!("[Sacho] Failed to repair video {}: {}", fname, e);
                 }
-            } else if let Some(existing) = metadata.video_files.iter().find(|f| f.filename == fname) {
-                video_files.push(existing.clone());
-            } else {
-                // Video file exists but wasn't in metadata - add with what we know
-                let device_name = fname.trim_start_matches("video_")
-                    .trim_end_matches(".mkv")
-                    .replace('_', " ");
-                video_files.push(crate::session::VideoFileInfo {
-                    filename: fname,
-                    device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
-                    duration_secs: 0.0,
-                    has_audio: false,
-                });
             }
         }
     }
-    
-    // Update metadata with discovered/repaired files
-    metadata.midi_files = midi_files;
-    metadata.audio_files = audio_files;
-    metadata.video_files = video_files;
-    
-    // Update duration from the longest file
-    let max_audio_dur = metadata.audio_files.iter()
-        .map(|f| f.duration_secs)
-        .fold(0.0f64, f64::max);
-    let max_video_dur = metadata.video_files.iter()
-        .map(|f| f.duration_secs)
-        .fold(0.0f64, f64::max);
-    let max_dur = max_audio_dur.max(max_video_dur);
-    if max_dur > 0.0 {
-        metadata.duration_secs = max_dur;
-    }
-    
-    // Save repaired metadata
-    if let Err(e) = crate::session::save_metadata(&metadata) {
-        return Err(format!("Failed to save repaired metadata: {}", e));
-    }
-    
+
+    // Re-scan with build_session_from_directory to get clean metadata
+    let metadata = crate::session::build_session_from_directory(&session_path)
+        .map_err(|e| e.to_string())?;
+
     // Update the database
     if let Err(e) = db.upsert_session(&metadata) {
         println!("[Sacho] Failed to update DB after repair: {}", e);
     }
-    
+
     println!("[Sacho] Repaired session {}: {} MIDI, {} audio, {} video files",
         session_id, metadata.midi_files.len(), metadata.audio_files.len(), metadata.video_files.len());
-    
+
     Ok(metadata)
 }
 
@@ -502,24 +318,21 @@ pub fn update_session_notes(
     // Update database
     db.update_notes(&session_id, &notes)
         .map_err(|e| e.to_string())?;
-    
-    // Also update the metadata.json file on disk (O(1) lookup by folder name)
+
+    // Write notes.txt to the session folder (or delete if empty)
     let config = config.read();
-    let metadata_path = config.storage_path.join(&session_id).join("metadata.json");
-    
-    if metadata_path.exists() {
-        let contents = std::fs::read_to_string(&metadata_path)
-            .map_err(|e| e.to_string())?;
-        let mut metadata: SessionMetadata = serde_json::from_str(&contents)
-            .map_err(|e| e.to_string())?;
-        
-        metadata.notes = notes;
-        let json = serde_json::to_string_pretty(&metadata)
-            .map_err(|e| e.to_string())?;
-        std::fs::write(&metadata_path, json)
+    let notes_path = config.storage_path.join(&session_id).join("notes.txt");
+
+    if notes.is_empty() {
+        // Delete notes.txt if notes are empty
+        if notes_path.exists() {
+            let _ = std::fs::remove_file(&notes_path);
+        }
+    } else {
+        std::fs::write(&notes_path, &notes)
             .map_err(|e| e.to_string())?;
     }
-    
+
     Ok(())
 }
 
@@ -998,14 +811,14 @@ pub fn rescan_sessions(
     db: State<'_, SessionDatabase>,
 ) -> Result<usize, String> {
     let storage_path = config.read().storage_path.clone();
-    
+
     if !storage_path.exists() {
         return Ok(0);
     }
-    
+
     // Collect all metadata first, then batch insert
     let mut sessions: Vec<SessionMetadata> = Vec::new();
-    
+
     // Scan all directories in storage path
     for entry in std::fs::read_dir(&storage_path).map_err(|e| e.to_string())? {
         let entry = match entry {
@@ -1013,21 +826,23 @@ pub fn rescan_sessions(
             Err(_) => continue,
         };
         let path = entry.path();
-        
+
         if !path.is_dir() {
             continue;
         }
-        
-        // Check for metadata.json
-        let metadata_path = path.join("metadata.json");
-        if !metadata_path.exists() {
-            continue;
-        }
-        
-        // Read and parse metadata
-        if let Ok(contents) = std::fs::read_to_string(&metadata_path) {
-            if let Ok(metadata) = serde_json::from_str::<SessionMetadata>(&contents) {
-                sessions.push(metadata);
+
+        // Build metadata from directory scan (skip folders with no media files)
+        match crate::session::build_session_from_directory(&path) {
+            Ok(metadata) => {
+                if !metadata.midi_files.is_empty()
+                    || !metadata.audio_files.is_empty()
+                    || !metadata.video_files.is_empty()
+                {
+                    sessions.push(metadata);
+                }
+            }
+            Err(e) => {
+                log::debug!("Skipping directory {}: {}", path.display(), e);
             }
         }
     }

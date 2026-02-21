@@ -186,13 +186,11 @@ impl TestApp {
         dirs
     }
 
-    /// Parse metadata.json from the latest (or only) session directory.
+    /// Build metadata from the latest (or only) session directory by scanning files.
     pub fn latest_metadata(&self) -> Option<SessionMetadata> {
         let dirs = self.session_dirs();
         let dir = dirs.last()?;
-        let meta_path = dir.join("metadata.json");
-        let contents = std::fs::read_to_string(&meta_path).ok()?;
-        serde_json::from_str(&contents).ok()
+        crate::session::build_session_from_directory(dir).ok()
     }
 
     /// Manually start recording (no MIDI trigger needed).

@@ -300,9 +300,6 @@
     let currentAudioFile = $derived(session.audio_files[audioIndex] ?? null);
     let currentMidiFile = $derived(session.midi_files[midiIndex] ?? null);
 
-    // Whether the current video file has embedded audio (combined MKV)
-    let videoHasAudio = $derived(currentVideoFile?.has_audio ?? false);
-
     // Calculate max duration from all sources (including MIDI)
     $effect(() => {
         let maxDuration = session.duration_secs;
@@ -609,8 +606,7 @@
     function toggleAudioMute() {
         audioMuted = !audioMuted;
         if (audioElement) audioElement.muted = audioMuted;
-        // When audio is embedded in the video, control video element's muted state
-        if (videoHasAudio && videoElement) videoElement.muted = audioMuted;
+        if (videoElement) videoElement.muted = audioMuted;
     }
 
     function toggleMidiMute() {
@@ -653,8 +649,13 @@
 
     async function openFolder() {
         try {
-            const metadataPath = buildFilePath(session.path, "metadata.json");
-            await revealItemInDir(metadataPath);
+            const firstFile =
+                session.video_files[0]?.filename ??
+                session.audio_files[0]?.filename ??
+                session.midi_files[0]?.filename;
+            if (firstFile) {
+                await revealItemInDir(buildFilePath(session.path, firstFile));
+            }
         } catch (error) {
             console.error("Failed to open folder:", error);
         }
@@ -740,7 +741,7 @@
                                 onended={handleEnded}
                                 onerror={handleVideoError}
                                 onloadeddata={resetVideoError}
-                                muted={videoHasAudio ? audioMuted : true}
+                                muted={audioMuted}
                                 playsinline
                                 preload="metadata"
                             >
@@ -840,7 +841,7 @@
 
             <!-- Track Controls -->
             <div class="track-controls">
-                {#if session.audio_files.length > 0 || videoHasAudio}
+                {#if session.audio_files.length > 0 || session.video_files.length > 0}
                     <div class="track-control">
                         <button
                             class="mute-btn"
@@ -864,11 +865,7 @@
                         </button>
                         <span class="track-label">Audio</span>
                         <span class="track-info">
-                            {#if videoHasAudio && session.audio_files.length === 0}
-                                {currentVideoFile?.device_name ?? "Embedded"}
-                            {:else}
-                                {currentAudioFile?.device_name ?? "Unknown"}
-                            {/if}
+                            {currentAudioFile?.device_name ?? currentVideoFile?.device_name ?? "Unknown"}
                         </span>
                         {#if session.audio_files.length > 0}
                             <div class="volume-control">

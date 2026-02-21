@@ -192,16 +192,13 @@ pub fn run_test(case: &TestCase, keep_sessions: bool) -> TestResult {
     } else {
         let session_dir = &session_dirs[session_dirs.len() - 1];
 
-        // Parse metadata.json
-        let meta_path = session_dir.join("metadata.json");
-        let metadata: Option<crate::session::SessionMetadata> = std::fs::read_to_string(&meta_path)
-            .ok()
-            .and_then(|c| serde_json::from_str(&c).ok());
+        // Build metadata from directory scan
+        let metadata = crate::session::build_session_from_directory(session_dir).ok();
 
         if metadata.is_none() {
             errors.push(format!(
-                "metadata.json not found or invalid at {}",
-                meta_path.display()
+                "Failed to build metadata from directory {}",
+                session_dir.display()
             ));
         }
 

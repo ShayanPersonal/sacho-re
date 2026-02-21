@@ -1106,11 +1106,7 @@ impl CaptureState {
     pub fn push_midi_event(&mut self, device_name: &str, event: TimestampedMidiEvent) {
         if !self.midi_writers.contains_key(device_name) {
             if let Some(session_path) = self.session_path.clone() {
-                let safe_name = device_name
-                    .replace(' ', "_")
-                    .replace('/', "_")
-                    .replace('\\', "_")
-                    .replace(':', "_");
+                let safe_name = crate::session::sanitize_device_name(device_name);
                 let filename = format!("midi_{}.mid", safe_name);
                 match MidiStreamWriter::new(&session_path, &filename, device_name) {
                     Ok(writer) => { self.midi_writers.insert(device_name.to_string(), writer); }
@@ -2114,11 +2110,7 @@ fn start_recording(
         state.midi_writers.clear();
         for (device_name, _event) in &preroll_events {
             if !state.midi_writers.contains_key(device_name.as_str()) {
-                let safe_name = device_name
-                    .replace(' ', "_")
-                    .replace('/', "_")
-                    .replace('\\', "_")
-                    .replace(':', "_");
+                let safe_name = crate::session::sanitize_device_name(device_name);
                 let filename = format!("midi_{}.mid", safe_name);
                 match MidiStreamWriter::new(&session_path, &filename, device_name) {
                     Ok(writer) => { state.midi_writers.insert(device_name.clone(), writer); }
@@ -2157,15 +2149,12 @@ fn start_recording(
             };
             audio_preroll_samples += preroll_samples.len();
             
-            // Build filename
-            let filename = if num_audio_devices == 1 {
-                format!("recording.{}", extension)
-            } else {
-                format!("recording_{}.{}", i + 1, extension)
-            };
-            
             // Create streaming writer using device info from preroll buffer
             let dev_name = state.audio_prerolls[i].device_name().to_string();
+
+            // Build filename with embedded device name
+            let safe_name = crate::session::sanitize_device_name(&dev_name);
+            let filename = format!("audio_{}.{}", safe_name, extension);
             let native_rate = state.audio_prerolls[i].sample_rate();
             let channels = state.audio_prerolls[i].channels();
             
@@ -2222,27 +2211,6 @@ fn start_recording(
         devices.extend(state.active_video_devices.clone());
         devices
     };
-    
-    // Write initial metadata so the session is discoverable even if the app crashes
-    let session_id = session_path.file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_string();
-    
-    let initial_metadata = SessionMetadata {
-        id: session_id,
-        timestamp: chrono::Utc::now(),
-        duration_secs: 0.0,
-        path: session_path.clone(),
-        audio_files: Vec::new(),
-        midi_files: Vec::new(),
-        video_files: Vec::new(),
-        notes: String::new(),
-    };
-    
-    if let Err(e) = crate::session::save_metadata(&initial_metadata) {
-        println!("[Sacho] Failed to write initial metadata: {}", e);
-    }
     
     // Send desktop notification
     if config_read.notify_recording_start {
@@ -2318,7 +2286,7 @@ fn stop_recording(
     crate::tray::update_tray_state(app_handle, crate::tray::TrayState::Idle);
     
     // Stop video recording and get video files
-    let mut video_files = {
+    let video_files = {
         let mut mgr = video_manager.lock();
         mgr.stop_recording()
     };
@@ -2383,9 +2351,8 @@ fn stop_recording(
                 Ok(_new_size) => {
                     // Delete the separate audio file
                     let _ = std::fs::remove_file(&audio_path);
-                    // Update metadata: video now has audio, remove separate audio entry
-                    video_files[0].has_audio = true;
-                    audio_files.clear();
+                    // Keep audio_files populated so the DB upsert sees has_audio=true.
+                    // The physical audio file is gone; directory scan won't find it.
                     println!("[Sacho] Combined audio+video into single MKV");
                 }
                 Err(e) => {
@@ -2423,10 +2390,6 @@ fn stop_recording(
         video_files,
         notes: String::new(),
     };
-    
-    if let Err(e) = crate::session::save_metadata(&metadata) {
-        println!("[Sacho] Failed to save metadata: {}", e);
-    }
     
     let db = app_handle.state::<SessionDatabase>();
     if let Err(e) = db.upsert_session(&metadata) {

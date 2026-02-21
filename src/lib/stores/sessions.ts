@@ -105,8 +105,7 @@ export function addNewSession(metadata: SessionMetadata) {
     id: metadata.id,
     timestamp: metadata.timestamp,
     duration_secs: metadata.duration_secs,
-    has_audio: (metadata.audio_files?.length ?? 0) > 0
-      || (metadata.video_files ?? []).some(v => v.has_audio),
+    has_audio: (metadata.audio_files?.length ?? 0) > 0,
     has_midi: (metadata.midi_files?.length ?? 0) > 0,
     has_video: (metadata.video_files?.length ?? 0) > 0,
     notes: '',

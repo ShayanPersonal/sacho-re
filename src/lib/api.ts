@@ -290,7 +290,6 @@ export interface VideoFileInfo {
   filename: string;
   device_name: string;
   duration_secs: number;
-  has_audio?: boolean;
 }
 
 export type AudioBitDepth = "int16" | "int24" | "float32";

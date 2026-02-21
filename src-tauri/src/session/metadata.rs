@@ -4,6 +4,21 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 
+/// Sanitize a device name for use in filenames.
+/// Replaces spaces, slashes, backslashes, and colons with underscores.
+pub fn sanitize_device_name(name: &str) -> String {
+    name.replace(' ', "_")
+        .replace('/', "_")
+        .replace('\\', "_")
+        .replace(':', "_")
+}
+
+/// Reverse sanitization: replace underscores back to spaces.
+/// Used when extracting device names from filenames.
+pub fn unsanitize_device_name(sanitized: &str) -> String {
+    sanitized.replace('_', " ")
+}
+
 /// Complete session metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMetadata {
@@ -55,9 +70,6 @@ pub struct VideoFileInfo {
     pub filename: String,
     pub device_name: String,
     pub duration_secs: f64,
-    /// Whether this MKV file contains an embedded audio track
-    #[serde(default)]
-    pub has_audio: bool,
 }
 
 /// Session summary for list display
@@ -78,8 +90,7 @@ impl From<&SessionMetadata> for SessionSummary {
             id: meta.id.clone(),
             timestamp: meta.timestamp,
             duration_secs: meta.duration_secs,
-            has_audio: !meta.audio_files.is_empty()
-                || meta.video_files.iter().any(|v| v.has_audio),
+            has_audio: !meta.audio_files.is_empty(),
             has_midi: !meta.midi_files.is_empty(),
             has_video: !meta.video_files.is_empty(),
             notes: meta.notes.clone(),

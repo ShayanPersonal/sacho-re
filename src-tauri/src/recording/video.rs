@@ -1996,7 +1996,6 @@ impl VideoCapturePipeline {
             filename,
             device_name: self.device_name.clone(),
             duration_secs: duration.as_secs_f64(),
-            has_audio: false,
         })
     }
 
@@ -2340,24 +2339,15 @@ impl VideoCaptureManager {
         }
 
         let mut max_preroll = Duration::ZERO;
-        let pipeline_count = self.pipelines.len();
 
         for (device_id, pipeline) in self.pipelines.iter_mut() {
             println!("[Video] Processing recording start for: {}", device_id);
 
-            let safe_id = device_id
-                .replace(" ", "_")
-                .replace("/", "_")
-                .replace("\\", "_")
-                .replace(":", "_");
+            let safe_name = crate::session::sanitize_device_name(&pipeline.device_name);
 
             // Use the correct file extension for the codec's container
             let extension = pipeline.codec.container().extension();
-            let filename = if pipeline_count == 1 {
-                format!("video.{}", extension)
-            } else {
-                format!("video_{}.{}", safe_id, extension)
-            };
+            let filename = format!("video_{}.{}", safe_name, extension);
 
             let output_path = session_path.join(&filename);
 
