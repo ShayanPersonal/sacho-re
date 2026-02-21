@@ -231,7 +231,6 @@ pub fn get_session_detail(
             filename: String::new(),
             device_name: String::new(),
             event_count: 0,
-            size_bytes: 0,
             needs_repair: true,
         });
     }
@@ -294,8 +293,6 @@ pub fn repair_session(
                     .unwrap_or(0)
             };
             
-            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            
             // Extract device name from filename: "midi_Device_Name.mid" -> "Device Name"
             let device_name = metadata.midi_files.iter()
                 .find(|f| f.filename == fname)
@@ -305,12 +302,11 @@ pub fn repair_session(
                         .trim_end_matches(".mid")
                         .replace('_', " ")
                 });
-            
+
             midi_files.push(crate::session::MidiFileInfo {
                 filename: fname,
                 device_name,
                 event_count,
-                size_bytes: size,
                 needs_repair: false,
             });
         } else if fname.ends_with(".wav") {
@@ -319,7 +315,7 @@ pub fn repair_session(
             
             if needs_repair {
                 match crate::recording::monitor::repair_wav_file(&path) {
-                    Ok((channels, sample_rate, duration_secs, size_bytes)) => {
+                    Ok((_channels, _sample_rate, duration_secs, _size_bytes)) => {
                         let device_name = metadata.audio_files.iter()
                             .find(|f| f.filename == fname)
                             .map(|f| f.device_name.clone())
@@ -332,10 +328,7 @@ pub fn repair_session(
                         audio_files.push(crate::session::AudioFileInfo {
                             filename: fname,
                             device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
-                            channels,
-                            sample_rate,
                             duration_secs,
-                            size_bytes,
                         });
                     }
                     Err(e) => {
@@ -349,7 +342,6 @@ pub fn repair_session(
             } else if let Some(existing) = metadata.audio_files.iter().find(|f| f.filename == fname) {
                 audio_files.push(existing.clone());
             } else {
-                let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                 let device_name = fname.trim_start_matches("recording")
                     .trim_start_matches('_')
                     .trim_end_matches(".wav")
@@ -357,10 +349,7 @@ pub fn repair_session(
                 audio_files.push(crate::session::AudioFileInfo {
                     filename: fname,
                     device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
-                    channels: 0,
-                    sample_rate: 0,
                     duration_secs: 0.0,
-                    size_bytes: size,
                 });
             }
         } else if fname.ends_with(".flac") {
@@ -369,7 +358,7 @@ pub fn repair_session(
             
             if needs_repair {
                 match crate::recording::monitor::repair_flac_file(&path) {
-                    Ok((channels, sample_rate, duration_secs, size_bytes)) => {
+                    Ok((_channels, _sample_rate, duration_secs, _size_bytes)) => {
                         let device_name = metadata.audio_files.iter()
                             .find(|f| f.filename == fname)
                             .map(|f| f.device_name.clone())
@@ -382,10 +371,7 @@ pub fn repair_session(
                         audio_files.push(crate::session::AudioFileInfo {
                             filename: fname,
                             device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
-                            channels,
-                            sample_rate,
                             duration_secs,
-                            size_bytes,
                         });
                     }
                     Err(e) => {
@@ -398,7 +384,6 @@ pub fn repair_session(
             } else if let Some(existing) = metadata.audio_files.iter().find(|f| f.filename == fname) {
                 audio_files.push(existing.clone());
             } else {
-                let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                 let device_name = fname.trim_start_matches("recording")
                     .trim_start_matches('_')
                     .trim_end_matches(".flac")
@@ -406,10 +391,7 @@ pub fn repair_session(
                 audio_files.push(crate::session::AudioFileInfo {
                     filename: fname,
                     device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
-                    channels: 0,
-                    sample_rate: 0,
                     duration_secs: 0.0,
-                    size_bytes: size,
                 });
             }
         } else if fname.ends_with(".mkv") {
@@ -418,7 +400,7 @@ pub fn repair_session(
             
             if needs_repair {
                 match crate::recording::monitor::repair_video_file(&path) {
-                    Ok((duration_secs, size_bytes)) => {
+                    Ok((duration_secs, _size_bytes)) => {
                         let device_name = metadata.video_files.iter()
                             .find(|f| f.filename == fname)
                             .map(|f| f.device_name.clone())
@@ -427,18 +409,10 @@ pub fn repair_session(
                                     .trim_end_matches(".mkv")
                                     .replace('_', " ")
                             });
-                        let (width, height, fps) = metadata.video_files.iter()
-                            .find(|f| f.filename == fname)
-                            .map(|f| (f.width, f.height, f.fps))
-                            .unwrap_or((0, 0, 0.0));
                         video_files.push(crate::session::VideoFileInfo {
                             filename: fname,
                             device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
-                            width,
-                            height,
-                            fps,
                             duration_secs,
-                            size_bytes,
                             has_audio: false,
                         });
                     }
@@ -453,18 +427,13 @@ pub fn repair_session(
                 video_files.push(existing.clone());
             } else {
                 // Video file exists but wasn't in metadata - add with what we know
-                let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                 let device_name = fname.trim_start_matches("video_")
                     .trim_end_matches(".mkv")
                     .replace('_', " ");
                 video_files.push(crate::session::VideoFileInfo {
                     filename: fname,
                     device_name: if device_name.is_empty() { "Unknown".to_string() } else { device_name },
-                    width: 0,
-                    height: 0,
-                    fps: 0.0,
                     duration_secs: 0.0,
-                    size_bytes: size,
                     has_audio: false,
                 });
             }

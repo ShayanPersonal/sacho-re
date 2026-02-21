@@ -988,16 +988,6 @@
         </div>
 
         <div class="detail-content">
-            {#if session.tags.length > 0}
-                <section class="detail-section">
-                    <h3>Tags</h3>
-                    <div class="tag-list">
-                        {#each session.tags as tag}
-                            <span class="tag">{tag}</span>
-                        {/each}
-                    </div>
-                </section>
-            {/if}
         </div>
     </div>
 
@@ -1517,20 +1507,6 @@
         margin-bottom: 0.5rem;
     }
 
-    .tag-list {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-    }
-
-    .tag {
-        padding: 0.25rem 0.625rem;
-        background: rgba(201, 169, 98, 0.12);
-        border: 1px solid rgba(201, 169, 98, 0.25);
-        border-radius: 1rem;
-        font-size: 0.75rem;
-        color: #c9a962;
-    }
 
     .notes {
         padding: 0.75rem;
@@ -1818,12 +1794,6 @@
 
     :global(body.light-mode) .detail-section h3 {
         color: #5a5a5a;
-    }
-
-    :global(body.light-mode) .tag {
-        background: rgba(160, 128, 48, 0.12);
-        border-color: rgba(160, 128, 48, 0.3);
-        color: #8a6a20;
     }
 
     :global(body.light-mode) .notes {

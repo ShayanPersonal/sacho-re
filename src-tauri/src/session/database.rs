@@ -62,19 +62,8 @@ impl SessionDatabase {
                 has_audio INTEGER NOT NULL DEFAULT 0,
                 has_midi INTEGER NOT NULL DEFAULT 0,
                 has_video INTEGER NOT NULL DEFAULT 0,
-                audio_count INTEGER NOT NULL DEFAULT 0,
-                midi_count INTEGER NOT NULL DEFAULT 0,
-                video_count INTEGER NOT NULL DEFAULT 0,
-                total_size_bytes INTEGER NOT NULL DEFAULT 0,
                 is_favorite INTEGER NOT NULL DEFAULT 0,
                 notes TEXT NOT NULL DEFAULT ''
-            );
-
-            CREATE TABLE IF NOT EXISTS session_tags (
-                session_id TEXT NOT NULL,
-                tag TEXT NOT NULL,
-                PRIMARY KEY (session_id, tag),
-                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS midi_imports (
@@ -89,8 +78,7 @@ impl SessionDatabase {
 
             CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(timestamp DESC);
             CREATE INDEX IF NOT EXISTS idx_sessions_favorite ON sessions(is_favorite);
-            CREATE INDEX IF NOT EXISTS idx_session_tags_tag ON session_tags(tag);
-            
+
             -- Full-text search for notes
             CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
                 id,
@@ -105,18 +93,13 @@ impl SessionDatabase {
     
     /// Insert or update a session
     pub fn upsert_session(&self, metadata: &SessionMetadata) -> anyhow::Result<()> {
-        let total_size: u64 = metadata.audio_files.iter().map(|f| f.size_bytes).sum::<u64>()
-            + metadata.midi_files.iter().map(|f| f.size_bytes).sum::<u64>()
-            + metadata.video_files.iter().map(|f| f.size_bytes).sum::<u64>();
-        
         let conn = self.conn.lock();
         conn.execute(
             r#"
             INSERT INTO sessions (
                 id, timestamp, duration_secs, path, has_audio, has_midi, has_video,
-                audio_count, midi_count, video_count, total_size_bytes, is_favorite,
-                notes
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                is_favorite, notes
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             ON CONFLICT(id) DO UPDATE SET
                 timestamp = excluded.timestamp,
                 duration_secs = excluded.duration_secs,
@@ -124,10 +107,6 @@ impl SessionDatabase {
                 has_audio = excluded.has_audio,
                 has_midi = excluded.has_midi,
                 has_video = excluded.has_video,
-                audio_count = excluded.audio_count,
-                midi_count = excluded.midi_count,
-                video_count = excluded.video_count,
-                total_size_bytes = excluded.total_size_bytes,
                 is_favorite = excluded.is_favorite,
                 notes = excluded.notes
             "#,
@@ -136,31 +115,14 @@ impl SessionDatabase {
                 metadata.timestamp.to_rfc3339(),
                 metadata.duration_secs,
                 metadata.path.to_string_lossy().to_string(),
-                !metadata.audio_files.is_empty(),
+                !metadata.audio_files.is_empty() || metadata.video_files.iter().any(|v| v.has_audio),
                 !metadata.midi_files.is_empty(),
                 !metadata.video_files.is_empty(),
-                metadata.audio_files.len(),
-                metadata.midi_files.len(),
-                metadata.video_files.len(),
-                total_size,
                 metadata.is_favorite,
                 metadata.notes,
             ],
         )?;
-        
-        // Update tags
-        conn.execute(
-            "DELETE FROM session_tags WHERE session_id = ?1",
-            params![metadata.id],
-        )?;
-        
-        for tag in &metadata.tags {
-            conn.execute(
-                "INSERT INTO session_tags (session_id, tag) VALUES (?1, ?2)",
-                params![metadata.id, tag],
-            )?;
-        }
-        
+
         Ok(())
     }
     
@@ -168,67 +130,39 @@ impl SessionDatabase {
     pub fn batch_upsert_sessions(&self, sessions: &[SessionMetadata]) -> anyhow::Result<usize> {
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
-        
+
         let mut count = 0;
         for metadata in sessions {
-            let total_size: u64 = metadata.audio_files.iter().map(|f| f.size_bytes).sum::<u64>()
-                + metadata.midi_files.iter().map(|f| f.size_bytes).sum::<u64>()
-                + metadata.video_files.iter().map(|f| f.size_bytes).sum::<u64>();
-            
             tx.execute(
                 r#"
                 INSERT INTO sessions (
                     id, timestamp, duration_secs, path, has_audio, has_midi, has_video,
-                    audio_count, midi_count, video_count, total_size_bytes, is_favorite,
-                    notes
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                    is_favorite, notes
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                 ON CONFLICT(id) DO UPDATE SET
                     timestamp = excluded.timestamp,
                     duration_secs = excluded.duration_secs,
                     path = excluded.path,
                     has_audio = excluded.has_audio,
                     has_midi = excluded.has_midi,
-                    has_video = excluded.has_video,
-                    audio_count = excluded.audio_count,
-                    midi_count = excluded.midi_count,
-                    video_count = excluded.video_count,
-                    total_size_bytes = excluded.total_size_bytes
+                    has_video = excluded.has_video
                 "#,
                 params![
                     metadata.id,
                     metadata.timestamp.to_rfc3339(),
                     metadata.duration_secs,
                     metadata.path.to_string_lossy().to_string(),
-                    !metadata.audio_files.is_empty(),
+                    !metadata.audio_files.is_empty() || metadata.video_files.iter().any(|v| v.has_audio),
                     !metadata.midi_files.is_empty(),
                     !metadata.video_files.is_empty(),
-                    metadata.audio_files.len(),
-                    metadata.midi_files.len(),
-                    metadata.video_files.len(),
-                    total_size,
                     metadata.is_favorite,
                     metadata.notes,
                 ],
             )?;
-            
-            // Only update tags if they exist (skip delete+insert for empty tags)
-            if !metadata.tags.is_empty() {
-                tx.execute(
-                    "DELETE FROM session_tags WHERE session_id = ?1",
-                    params![metadata.id],
-                )?;
-                
-                for tag in &metadata.tags {
-                    tx.execute(
-                        "INSERT INTO session_tags (session_id, tag) VALUES (?1, ?2)",
-                        params![metadata.id, tag],
-                    )?;
-                }
-            }
-            
+
             count += 1;
         }
-        
+
         tx.commit()?;
         Ok(count)
     }
@@ -247,11 +181,9 @@ impl SessionDatabase {
     pub fn query_sessions(&self, filter: &SessionFilter) -> anyhow::Result<Vec<SessionSummary>> {
         let mut sql = String::from(
             r#"
-            SELECT DISTINCT s.id, s.timestamp, s.duration_secs, s.has_audio, s.has_midi, s.has_video,
-                   s.audio_count, s.midi_count, s.video_count, s.total_size_bytes, s.is_favorite,
-                   s.notes
+            SELECT s.id, s.timestamp, s.duration_secs, s.has_audio, s.has_midi, s.has_video,
+                   s.is_favorite, s.notes
             FROM sessions s
-            LEFT JOIN session_tags t ON s.id = t.session_id
             WHERE 1=1
             "#
         );
@@ -329,13 +261,8 @@ impl SessionDatabase {
             has_audio: row.get(3)?,
             has_midi: row.get(4)?,
             has_video: row.get(5)?,
-            audio_count: row.get(6)?,
-            midi_count: row.get(7)?,
-            video_count: row.get(8)?,
-            total_size_bytes: row.get(9)?,
-            is_favorite: row.get(10)?,
-            tags: Vec::new(),
-            notes: row.get(11)?,
+            is_favorite: row.get(6)?,
+            notes: row.get(7)?,
         })
     }
     

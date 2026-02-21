@@ -106,15 +106,11 @@ export function addNewSession(metadata: SessionMetadata) {
     id: metadata.id,
     timestamp: metadata.timestamp,
     duration_secs: metadata.duration_secs,
-    has_audio: (metadata.audio_files?.length ?? 0) > 0,
+    has_audio: (metadata.audio_files?.length ?? 0) > 0
+      || (metadata.video_files ?? []).some(v => v.has_audio),
     has_midi: (metadata.midi_files?.length ?? 0) > 0,
     has_video: (metadata.video_files?.length ?? 0) > 0,
-    audio_count: metadata.audio_files?.length ?? 0,
-    midi_count: metadata.midi_files?.length ?? 0,
-    video_count: metadata.video_files?.length ?? 0,
-    total_size_bytes: 0, // We don't have this info from the event
     is_favorite: false,
-    tags: [],
     notes: '',
   };
   

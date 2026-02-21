@@ -1992,21 +1992,10 @@ impl VideoCapturePipeline {
             filename, duration, file_size
         );
 
-        // Report output dimensions: target for encoding, source for passthrough
-        let (out_w, out_h, out_fps) = if self.is_encoding {
-            (self.target_width, self.target_height, self.target_fps)
-        } else {
-            (self.width, self.height, self.fps)
-        };
-
         Ok(VideoFileInfo {
             filename,
             device_name: self.device_name.clone(),
-            width: out_w,
-            height: out_h,
-            fps: out_fps,
             duration_secs: duration.as_secs_f64(),
-            size_bytes: file_size,
             has_audio: false,
         })
     }

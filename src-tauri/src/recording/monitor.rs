@@ -230,10 +230,7 @@ impl AudioStreamWriter {
         Ok(AudioFileInfo {
             filename: self.filename,
             device_name: self.device_name,
-            channels: self.channels,
-            sample_rate: self.output_rate,
             duration_secs,
-            size_bytes: size,
         })
     }
 }
@@ -354,7 +351,6 @@ impl MidiStreamWriter {
             filename: self.filename,
             device_name: self.device_name,
             event_count: self.event_count,
-            size_bytes: size,
             needs_repair: false,
         })
     }
@@ -2241,7 +2237,6 @@ fn start_recording(
         audio_files: Vec::new(),
         midi_files: Vec::new(),
         video_files: Vec::new(),
-        tags: Vec::new(),
         notes: String::new(),
         is_favorite: false,
     };
@@ -2386,12 +2381,11 @@ fn stop_recording(
             let video_path = session_path.join(&video_files[0].filename);
             let audio_path = session_path.join(&audio_files[0].filename);
             match combine_audio_video_mkv(&video_path, &audio_path, &config_read.audio_format) {
-                Ok(new_size) => {
+                Ok(_new_size) => {
                     // Delete the separate audio file
                     let _ = std::fs::remove_file(&audio_path);
                     // Update metadata: video now has audio, remove separate audio entry
                     video_files[0].has_audio = true;
-                    video_files[0].size_bytes = new_size;
                     audio_files.clear();
                     println!("[Sacho] Combined audio+video into single MKV");
                 }
@@ -2428,7 +2422,6 @@ fn stop_recording(
         audio_files,
         midi_files,
         video_files,
-        tags: Vec::new(),
         notes: String::new(),
         is_favorite: false,
     };

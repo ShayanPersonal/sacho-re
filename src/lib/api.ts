@@ -259,12 +259,7 @@ export interface SessionSummary {
   has_audio: boolean;
   has_midi: boolean;
   has_video: boolean;
-  audio_count: number;
-  midi_count: number;
-  video_count: number;
-  total_size_bytes: number;
   is_favorite: boolean;
-  tags: string[];
   notes: string;
 }
 
@@ -276,7 +271,6 @@ export interface SessionMetadata {
   audio_files: AudioFileInfo[];
   midi_files: MidiFileInfo[];
   video_files: VideoFileInfo[];
-  tags: string[];
   notes: string;
   is_favorite: boolean;
 }
@@ -284,28 +278,20 @@ export interface SessionMetadata {
 export interface AudioFileInfo {
   filename: string;
   device_name: string;
-  channels: number;
-  sample_rate: number;
   duration_secs: number;
-  size_bytes: number;
 }
 
 export interface MidiFileInfo {
   filename: string;
   device_name: string;
   event_count: number;
-  size_bytes: number;
   needs_repair: boolean;
 }
 
 export interface VideoFileInfo {
   filename: string;
   device_name: string;
-  width: number;
-  height: number;
-  fps: number;
   duration_secs: number;
-  size_bytes: number;
   has_audio?: boolean;
 }
 
