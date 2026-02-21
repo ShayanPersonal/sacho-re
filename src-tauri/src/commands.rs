@@ -125,7 +125,6 @@ pub fn stop_recording(
 #[derive(Debug, Deserialize)]
 pub struct SessionFilterParams {
     pub search: Option<String>,
-    pub favorites_only: Option<bool>,
     pub has_audio: Option<bool>,
     pub has_midi: Option<bool>,
     pub has_video: Option<bool>,
@@ -141,7 +140,6 @@ pub fn get_sessions(
 ) -> Result<Vec<SessionSummary>, String> {
     let filter = SessionFilter {
         search_query: filter.search,
-        favorites_only: filter.favorites_only.unwrap_or(false),
         has_audio: filter.has_audio,
         has_midi: filter.has_midi,
         has_video: filter.has_video,
@@ -489,37 +487,6 @@ pub fn delete_session(
     let session_path = config.storage_path.join(&session_id);
     if session_path.exists() {
         std::fs::remove_dir_all(&session_path).map_err(|e| e.to_string())?;
-    }
-    
-    Ok(())
-}
-
-#[tauri::command]
-pub fn update_session_favorite(
-    db: State<'_, SessionDatabase>,
-    config: State<'_, RwLock<Config>>,
-    session_id: String,
-    is_favorite: bool,
-) -> Result<(), String> {
-    // Update database
-    db.update_favorite(&session_id, is_favorite)
-        .map_err(|e| e.to_string())?;
-    
-    // Also update the metadata.json file on disk (O(1) lookup by folder name)
-    let config = config.read();
-    let metadata_path = config.storage_path.join(&session_id).join("metadata.json");
-    
-    if metadata_path.exists() {
-        let contents = std::fs::read_to_string(&metadata_path)
-            .map_err(|e| e.to_string())?;
-        let mut metadata: SessionMetadata = serde_json::from_str(&contents)
-            .map_err(|e| e.to_string())?;
-        
-        metadata.is_favorite = is_favorite;
-        let json = serde_json::to_string_pretty(&metadata)
-            .map_err(|e| e.to_string())?;
-        std::fs::write(&metadata_path, json)
-            .map_err(|e| e.to_string())?;
     }
     
     Ok(())

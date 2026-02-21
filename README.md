@@ -20,7 +20,6 @@ Being a commercial application, when it comes to gstreamer, Sacho should only us
 - **Organized storage** - Sessions are saved with timestamps in a configurable location
 - **Session browser** - Browse, search, and filter your recordings with ease
 - **Tags & notes** - Add metadata to organize and remember your ideas
-- **Favorites** - Mark important sessions for quick access
 
 ### MIDI Similarity Map
 

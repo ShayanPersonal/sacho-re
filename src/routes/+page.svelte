@@ -710,10 +710,6 @@
         border-color: rgba(160, 128, 48, 0.25);
     }
 
-    :global(body.light-mode .favorite) {
-        color: #a08030;
-    }
-
     /* Sidebar and panels */
     :global(body.light-mode .sidebar) {
         background: rgba(255, 255, 255, 0.7);
@@ -862,19 +858,6 @@
 
     :global(body.light-mode .session-time) {
         color: #2a2a2a;
-    }
-
-    :global(body.light-mode .favorite-btn) {
-        background: rgba(0, 0, 0, 0.04);
-        border-color: rgba(0, 0, 0, 0.1);
-        color: #8a8a8a;
-    }
-
-    :global(body.light-mode .favorite-btn:hover),
-    :global(body.light-mode .favorite-btn.active) {
-        background: rgba(180, 140, 40, 0.15);
-        border-color: rgba(180, 140, 40, 0.3);
-        color: #a08030;
     }
 
     /* Time display */

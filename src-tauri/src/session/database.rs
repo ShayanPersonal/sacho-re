@@ -62,7 +62,6 @@ impl SessionDatabase {
                 has_audio INTEGER NOT NULL DEFAULT 0,
                 has_midi INTEGER NOT NULL DEFAULT 0,
                 has_video INTEGER NOT NULL DEFAULT 0,
-                is_favorite INTEGER NOT NULL DEFAULT 0,
                 notes TEXT NOT NULL DEFAULT ''
             );
 
@@ -77,8 +76,6 @@ impl SessionDatabase {
             );
 
             CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(timestamp DESC);
-            CREATE INDEX IF NOT EXISTS idx_sessions_favorite ON sessions(is_favorite);
-
             -- Full-text search for notes
             CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
                 id,
@@ -98,8 +95,8 @@ impl SessionDatabase {
             r#"
             INSERT INTO sessions (
                 id, timestamp, duration_secs, path, has_audio, has_midi, has_video,
-                is_favorite, notes
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                notes
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             ON CONFLICT(id) DO UPDATE SET
                 timestamp = excluded.timestamp,
                 duration_secs = excluded.duration_secs,
@@ -107,7 +104,6 @@ impl SessionDatabase {
                 has_audio = excluded.has_audio,
                 has_midi = excluded.has_midi,
                 has_video = excluded.has_video,
-                is_favorite = excluded.is_favorite,
                 notes = excluded.notes
             "#,
             params![
@@ -118,7 +114,6 @@ impl SessionDatabase {
                 !metadata.audio_files.is_empty() || metadata.video_files.iter().any(|v| v.has_audio),
                 !metadata.midi_files.is_empty(),
                 !metadata.video_files.is_empty(),
-                metadata.is_favorite,
                 metadata.notes,
             ],
         )?;
@@ -137,8 +132,8 @@ impl SessionDatabase {
                 r#"
                 INSERT INTO sessions (
                     id, timestamp, duration_secs, path, has_audio, has_midi, has_video,
-                    is_favorite, notes
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                    notes
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                 ON CONFLICT(id) DO UPDATE SET
                     timestamp = excluded.timestamp,
                     duration_secs = excluded.duration_secs,
@@ -155,7 +150,6 @@ impl SessionDatabase {
                     !metadata.audio_files.is_empty() || metadata.video_files.iter().any(|v| v.has_audio),
                     !metadata.midi_files.is_empty(),
                     !metadata.video_files.is_empty(),
-                    metadata.is_favorite,
                     metadata.notes,
                 ],
             )?;
@@ -182,7 +176,7 @@ impl SessionDatabase {
         let mut sql = String::from(
             r#"
             SELECT s.id, s.timestamp, s.duration_secs, s.has_audio, s.has_midi, s.has_video,
-                   s.is_favorite, s.notes
+                   s.notes
             FROM sessions s
             WHERE 1=1
             "#
@@ -193,10 +187,6 @@ impl SessionDatabase {
         
         if search_pattern.is_some() {
             sql.push_str(" AND s.notes LIKE ?1");
-        }
-        
-        if filter.favorites_only {
-            sql.push_str(" AND s.is_favorite = 1");
         }
         
         if filter.has_audio == Some(true) {
@@ -261,19 +251,8 @@ impl SessionDatabase {
             has_audio: row.get(3)?,
             has_midi: row.get(4)?,
             has_video: row.get(5)?,
-            is_favorite: row.get(6)?,
-            notes: row.get(7)?,
+            notes: row.get(6)?,
         })
-    }
-    
-    /// Update favorite status for a session
-    pub fn update_favorite(&self, session_id: &str, is_favorite: bool) -> anyhow::Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
-            "UPDATE sessions SET is_favorite = ?1 WHERE id = ?2",
-            params![is_favorite, session_id],
-        )?;
-        Ok(())
     }
     
     /// Update notes for a session
@@ -352,7 +331,6 @@ impl SessionDatabase {
 #[derive(Debug, Clone, Default)]
 pub struct SessionFilter {
     pub search_query: Option<String>,
-    pub favorites_only: bool,
     pub has_audio: Option<bool>,
     pub has_midi: Option<bool>,
     pub has_video: Option<bool>,

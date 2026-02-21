@@ -30,9 +30,6 @@ pub struct SessionMetadata {
 
     /// User notes
     pub notes: String,
-    
-    /// Whether this session is marked as favorite
-    pub is_favorite: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,7 +69,6 @@ pub struct SessionSummary {
     pub has_audio: bool,
     pub has_midi: bool,
     pub has_video: bool,
-    pub is_favorite: bool,
     pub notes: String,
 }
 
@@ -86,7 +82,6 @@ impl From<&SessionMetadata> for SessionSummary {
                 || meta.video_files.iter().any(|v| v.has_audio),
             has_midi: !meta.midi_files.is_empty(),
             has_video: !meta.video_files.is_empty(),
-            is_favorite: meta.is_favorite,
             notes: meta.notes.clone(),
         }
     }

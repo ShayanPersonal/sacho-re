@@ -8,7 +8,6 @@
         repairSession,
     } from "$lib/api";
     import {
-        toggleSessionFavorite,
         updateNotes,
         selectedSession,
     } from "$lib/stores/sessions";
@@ -704,21 +703,6 @@
                 Duration: {formatDuration(session.duration_secs)}
             </p>
         </div>
-        <button
-            class="favorite-btn"
-            class:active={session.is_favorite}
-            onclick={() =>
-                toggleSessionFavorite(session.id, !session.is_favorite)}
-            title={session.is_favorite
-                ? "Remove from favorites"
-                : "Add to favorites"}
-        >
-            {#if session.is_favorite}
-                ★
-            {:else}
-                ☆
-            {/if}
-        </button>
     </div>
 
     <div class="detail-scrollable">
@@ -1049,36 +1033,6 @@
         font-weight: 600;
         color: #fff;
         margin-bottom: 0.25rem;
-    }
-
-    .favorite-btn {
-        width: 36px;
-        height: 36px;
-        border-radius: 0.25rem;
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        color: #5a5a5a;
-        font-size: 1.25rem;
-        line-height: 1;
-        cursor: pointer;
-        transition: all 0.15s ease;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        padding: 0;
-    }
-
-    .favorite-btn:hover {
-        background: rgba(234, 179, 8, 0.1);
-        border-color: rgba(234, 179, 8, 0.2);
-        color: #eab308;
-    }
-
-    .favorite-btn.active {
-        background: rgba(234, 179, 8, 0.15);
-        border-color: rgba(234, 179, 8, 0.3);
-        color: #eab308;
     }
 
     .session-duration {
@@ -1603,24 +1557,6 @@
 
     :global(body.light-mode) .session-duration {
         color: #5a5a5a;
-    }
-
-    :global(body.light-mode) .favorite-btn {
-        background: rgba(0, 0, 0, 0.04);
-        border-color: rgba(0, 0, 0, 0.1);
-        color: #8a8a8a;
-    }
-
-    :global(body.light-mode) .favorite-btn:hover {
-        background: rgba(180, 140, 40, 0.12);
-        border-color: rgba(180, 140, 40, 0.25);
-        color: #a08030;
-    }
-
-    :global(body.light-mode) .favorite-btn.active {
-        background: rgba(180, 140, 40, 0.15);
-        border-color: rgba(180, 140, 40, 0.3);
-        color: #a08030;
     }
 
     :global(body.light-mode) .player-section {

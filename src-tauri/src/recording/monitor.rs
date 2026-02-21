@@ -2238,7 +2238,6 @@ fn start_recording(
         midi_files: Vec::new(),
         video_files: Vec::new(),
         notes: String::new(),
-        is_favorite: false,
     };
     
     if let Err(e) = crate::session::save_metadata(&initial_metadata) {
@@ -2423,7 +2422,6 @@ fn stop_recording(
         midi_files,
         video_files,
         notes: String::new(),
-        is_favorite: false,
     };
     
     if let Err(e) = crate::session::save_metadata(&metadata) {

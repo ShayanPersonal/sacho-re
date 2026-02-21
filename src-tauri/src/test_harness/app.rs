@@ -80,7 +80,6 @@ impl TestApp {
                 crate::commands::get_session_detail,
                 crate::commands::repair_session,
                 crate::commands::delete_session,
-                crate::commands::update_session_favorite,
                 crate::commands::update_session_notes,
                 crate::commands::get_config,
                 crate::commands::update_config,

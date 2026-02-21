@@ -192,7 +192,6 @@ pub fn run() {
             commands::get_session_detail,
             commands::repair_session,
             commands::delete_session,
-            commands::update_session_favorite,
             commands::update_session_notes,
             commands::get_config,
             commands::update_config,

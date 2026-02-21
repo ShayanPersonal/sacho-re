@@ -2,7 +2,7 @@
 
 import { writable, derived, get } from 'svelte/store';
 import type { SessionSummary, SessionMetadata, SessionFilter } from '$lib/api';
-import { getSessions, getSessionDetail, deleteSession as apiDeleteSession, updateSessionFavorite as apiUpdateFavorite, updateSessionNotes as apiUpdateNotes, rescanSessions as apiRescanSessions } from '$lib/api';
+import { getSessions, getSessionDetail, deleteSession as apiDeleteSession, updateSessionNotes as apiUpdateNotes, rescanSessions as apiRescanSessions } from '$lib/api';
 
 // Store for session list
 export const sessions = writable<SessionSummary[]>([]);
@@ -15,7 +15,6 @@ export const selectedSession = writable<SessionMetadata | null>(null);
 
 // Store for current filter
 export const sessionFilter = writable<SessionFilter>({
-  favorites_only: false,
   has_audio: undefined,
   has_midi: undefined,
   has_video: undefined,
@@ -110,7 +109,6 @@ export function addNewSession(metadata: SessionMetadata) {
       || (metadata.video_files ?? []).some(v => v.has_audio),
     has_midi: (metadata.midi_files?.length ?? 0) > 0,
     has_video: (metadata.video_files?.length ?? 0) > 0,
-    is_favorite: false,
     notes: '',
   };
   
@@ -156,24 +154,6 @@ export async function deleteSessionById(sessionId: string) {
 export function updateFilter(partial: Partial<SessionFilter>) {
   sessionFilter.update(f => ({ ...f, ...partial }));
   refreshSessions();
-}
-
-export async function toggleSessionFavorite(sessionId: string, isFavorite: boolean) {
-  try {
-    await apiUpdateFavorite(sessionId, isFavorite);
-    
-    // Update local state
-    sessions.update(list => list.map(s => 
-      s.id === sessionId ? { ...s, is_favorite: isFavorite } : s
-    ));
-    
-    selectedSession.update(s => 
-      s?.id === sessionId ? { ...s, is_favorite: isFavorite } : s
-    );
-  } catch (error) {
-    console.error('Failed to update favorite:', error);
-    throw error;
-  }
 }
 
 export async function updateNotes(sessionId: string, notes: string) {

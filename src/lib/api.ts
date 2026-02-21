@@ -259,7 +259,6 @@ export interface SessionSummary {
   has_audio: boolean;
   has_midi: boolean;
   has_video: boolean;
-  is_favorite: boolean;
   notes: string;
 }
 
@@ -272,7 +271,6 @@ export interface SessionMetadata {
   midi_files: MidiFileInfo[];
   video_files: VideoFileInfo[];
   notes: string;
-  is_favorite: boolean;
 }
 
 export interface AudioFileInfo {
@@ -360,7 +358,6 @@ export interface AudioTriggerLevel {
 
 export interface SessionFilter {
   search?: string;
-  favorites_only?: boolean;
   has_audio?: boolean;
   has_midi?: boolean;
   has_video?: boolean;
@@ -525,13 +522,6 @@ export async function readSessionFile(
     filename,
   });
   return new Uint8Array(data);
-}
-
-export async function updateSessionFavorite(
-  sessionId: string,
-  isFavorite: boolean,
-): Promise<void> {
-  return invoke("update_session_favorite", { sessionId, isFavorite });
 }
 
 export async function updateSessionNotes(

@@ -22,7 +22,6 @@
   // Count active filters
   let activeFilterCount = $derived.by(() => {
     let count = 0;
-    if ($sessionFilter.favorites_only) count++;
     if ($sessionFilter.has_audio) count++;
     if ($sessionFilter.has_midi) count++;
     if ($sessionFilter.has_video) count++;
@@ -100,15 +99,6 @@
           <label class="filter-option">
             <input 
               type="checkbox" 
-              checked={$sessionFilter.favorites_only}
-              onchange={() => updateFilter({ favorites_only: !$sessionFilter.favorites_only })}
-            />
-            <span class="filter-icon">★</span>
-            <span class="filter-label">Favorites only</span>
-          </label>
-          <label class="filter-option">
-            <input 
-              type="checkbox" 
               checked={$sessionFilter.has_notes === true}
               onchange={() => updateFilter({ has_notes: $sessionFilter.has_notes ? undefined : true })}
             />
@@ -173,9 +163,6 @@
                     onclick={() => selectSession(session.id)}
                   >
                     <div class="session-header">
-                      {#if session.is_favorite}
-                        <span class="favorite">★</span>
-                      {/if}
                       {#if session.notes}
                         <span class="session-title" title={session.notes}>
                           {session.notes.split('\n')[0].slice(0, 18)}{session.notes.length > 18 ? '…' : ''}
@@ -494,11 +481,6 @@
     overflow: hidden;
   }
   
-  .favorite {
-    color: #c9a962;
-    font-size: 0.6875rem;
-  }
-  
   .session-time {
     color: #e8e6e3;
     font-size: 0.8125rem;
@@ -689,10 +671,6 @@
   :global(body.light-mode) .session-item.selected {
     background: rgba(160, 128, 48, 0.1);
     border-color: rgba(160, 128, 48, 0.25);
-  }
-
-  :global(body.light-mode) .favorite {
-    color: #a08030;
   }
 
   :global(body.light-mode) .session-time {
