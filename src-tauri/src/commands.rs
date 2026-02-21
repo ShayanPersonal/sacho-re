@@ -4,8 +4,7 @@ use std::sync::Arc;
 use crate::config::Config;
 use crate::devices::{AudioDevice, MidiDevice, VideoDevice, DeviceManager};
 use crate::recording::{RecordingState, RecordingStatus, MidiMonitor};
-use crate::session::{SessionDatabase, SessionSummary, SessionMetadata, SessionFilter, SimilarityPoint};
-use crate::similarity;
+use crate::session::{SessionDatabase, SessionSummary, SessionMetadata, SessionFilter};
 use crate::autostart::{self, AutostartInfo};
 use parking_lot::{RwLock, Mutex};
 use tauri::{State, Emitter, Manager};
@@ -873,120 +872,188 @@ pub fn restart_device_pipelines(
 // ============================================================================
 
 #[derive(Debug, Serialize)]
-pub struct SimilarityData {
-    pub points: Vec<SimilarityPoint>,
-    pub clusters: Vec<ClusterInfo>,
+pub struct MidiImportInfo {
+    pub id: String,
+    pub file_name: String,
+    pub file_path: String,
+    pub imported_at: String,
 }
 
 #[derive(Debug, Serialize)]
-pub struct ClusterInfo {
-    pub id: i32,
-    pub name: String,
-    pub count: usize,
+pub struct SimilarityResult {
+    pub file: MidiImportInfo,
+    pub score: f32,
+    pub rank: u32,
 }
 
 #[tauri::command]
-pub fn get_similarity_data(
+pub async fn import_midi_folder(
+    app: tauri::AppHandle,
+    path: String,
     db: State<'_, SessionDatabase>,
-) -> Result<SimilarityData, String> {
-    let points = db.get_similarity_data()
-        .map_err(|e| e.to_string())?;
-    
-    // Count points per cluster
-    let mut cluster_counts: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
-    for point in &points {
-        if let Some(cluster_id) = point.cluster_id {
-            *cluster_counts.entry(cluster_id).or_insert(0) += 1;
-        }
-    }
-    
-    let clusters: Vec<ClusterInfo> = cluster_counts.into_iter()
-        .map(|(id, count)| ClusterInfo {
-            id,
-            name: format!("Cluster {}", id + 1),
-            count,
-        })
-        .collect();
-    
-    Ok(SimilarityData { points, clusters })
-}
+) -> Result<Vec<MidiImportInfo>, String> {
+    use crate::similarity::{midi_parser, melody, features};
+    use std::path::Path;
 
-#[tauri::command]
-pub async fn recalculate_similarity(
-    config: State<'_, RwLock<Config>>,
-    db: State<'_, SessionDatabase>,
-) -> Result<usize, String> {
-    let storage_path = config.read().storage_path.clone();
-    
-    // First, clean up sessions that no longer exist on disk
-    let existing_sessions = db.query_sessions(&SessionFilter::default())
-        .map_err(|e| e.to_string())?;
-    
-    for session in &existing_sessions {
-        let session_path = storage_path.join(&session.id);
-        if !session_path.exists() {
-            log::info!("Removing deleted session from database: {}", session.id);
-            let _ = db.delete_session(&session.id);
-        }
+    let folder = Path::new(&path);
+    if !folder.is_dir() {
+        return Err("Path is not a directory".to_string());
     }
-    
-    // Collect all MIDI files and extract features
-    let mut session_features: Vec<(String, crate::session::MidiFeatures)> = Vec::new();
-    
-    if storage_path.exists() {
-        for entry in std::fs::read_dir(&storage_path).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            
-            if !path.is_dir() {
-                continue;
+
+    // Recursively collect .mid/.midi files
+    let mut midi_paths = Vec::new();
+    collect_midi_files(folder, &mut midi_paths);
+
+    if midi_paths.is_empty() {
+        return Err("No MIDI files found in folder".to_string());
+    }
+
+    // Clear old imports
+    db.clear_midi_imports().map_err(|e| e.to_string())?;
+
+    let mut imports = Vec::new();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    for (idx, midi_path) in midi_paths.iter().enumerate() {
+        let file_name = midi_path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown.mid")
+            .to_string();
+
+        let _ = app.emit("midi-import-progress", MidiImportProgress {
+            current: idx + 1,
+            total: midi_paths.len(),
+            file_name: file_name.clone(),
+        });
+        let file_path_str = midi_path.to_string_lossy().to_string();
+        let id = format!("{:x}", md5_hash(&file_path_str));
+
+        // Parse MIDI and extract features
+        let (melodic_json, harmonic_json) = match midi_parser::parse_midi(midi_path) {
+            Ok((events, tpb)) => {
+                let skyline = melody::extract_skyline(&events, tpb);
+                let melodic = features::extract_melodic(&skyline);
+                let harmonic = features::extract_harmonic(&events, tpb);
+                (
+                    melodic.and_then(|f| serde_json::to_string(&f).ok()),
+                    harmonic.and_then(|f| serde_json::to_string(&f).ok()),
+                )
             }
-            
-            // Look for MIDI files
-            for file in std::fs::read_dir(&path).map_err(|e| e.to_string())? {
-                let file = file.map_err(|e| e.to_string())?;
-                let file_path = file.path();
-                
-                if file_path.extension().map(|e| e == "mid").unwrap_or(false) {
-                    if let Ok(features) = similarity::extract_features(&file_path) {
-                        // Use folder name as session ID
-                        let session_id = path.file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("")
-                            .to_string();
-                        
-                        session_features.push((session_id, features));
-                    }
-                    break; // Only process first MIDI file per session
+            Err(e) => {
+                log::warn!("Failed to parse MIDI {}: {}", file_name, e);
+                (None, None)
+            }
+        };
+
+        imports.push(crate::session::MidiImport {
+            id: id.clone(),
+            folder_path: path.clone(),
+            file_name: file_name.clone(),
+            file_path: file_path_str.clone(),
+            melodic_features: melodic_json,
+            harmonic_features: harmonic_json,
+            imported_at: now.clone(),
+        });
+    }
+
+    db.insert_midi_imports(&imports).map_err(|e| e.to_string())?;
+
+    let result: Vec<MidiImportInfo> = imports.iter().map(|i| MidiImportInfo {
+        id: i.id.clone(),
+        file_name: i.file_name.clone(),
+        file_path: i.file_path.clone(),
+        imported_at: i.imported_at.clone(),
+    }).collect();
+
+    Ok(result)
+}
+
+fn collect_midi_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_midi_files(&path, out);
+            } else if let Some(ext) = path.extension() {
+                let ext = ext.to_string_lossy().to_lowercase();
+                if ext == "mid" || ext == "midi" {
+                    out.push(path);
                 }
             }
         }
     }
-    
-    if session_features.is_empty() {
-        return Ok(0);
+}
+
+fn md5_hash(input: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    input.hash(&mut hasher);
+    hasher.finish()
+}
+
+#[tauri::command]
+pub fn get_midi_imports(
+    db: State<'_, SessionDatabase>,
+) -> Result<Vec<MidiImportInfo>, String> {
+    let imports = db.get_all_midi_imports().map_err(|e| e.to_string())?;
+    Ok(imports.iter().map(|i| MidiImportInfo {
+        id: i.id.clone(),
+        file_name: i.file_name.clone(),
+        file_path: i.file_path.clone(),
+        imported_at: i.imported_at.clone(),
+    }).collect())
+}
+
+#[tauri::command]
+pub fn get_similar_files(
+    file_id: String,
+    mode: String,
+    db: State<'_, SessionDatabase>,
+) -> Result<Vec<SimilarityResult>, String> {
+    use crate::similarity::{features, scoring};
+
+    let imports = db.get_all_midi_imports().map_err(|e| e.to_string())?;
+
+    let sim_mode = match mode.as_str() {
+        "harmonic" => scoring::SimilarityMode::Harmonic,
+        _ => scoring::SimilarityMode::Melodic,
+    };
+
+    // Build features list
+    let mut all_features: Vec<(String, features::MidiFileFeatures)> = Vec::new();
+    for import in &imports {
+        let melodic = import.melodic_features.as_ref()
+            .and_then(|s| serde_json::from_str(s).ok());
+        let harmonic = import.harmonic_features.as_ref()
+            .and_then(|s| serde_json::from_str(s).ok());
+        all_features.push((import.id.clone(), features::MidiFileFeatures { melodic, harmonic }));
     }
-    
-    // Extract just the features for reduction
-    let features: Vec<_> = session_features.iter()
-        .map(|(_, f)| f.clone())
-        .collect();
-    
-    // Reduce to 2D
-    let coords = similarity::reduce_to_2d(&features, &similarity::UmapParams::default());
-    
-    // Cluster the points
-    let cluster_result = similarity::auto_cluster(&coords);
-    
-    // Update database
-    for (i, (session_id, _)) in session_features.iter().enumerate() {
-        if let Some(coord) = coords.get(i) {
-            let cluster_id = cluster_result.labels.get(i).and_then(|&l| l);
-            let _ = db.update_similarity(session_id, *coord, cluster_id);
+
+    let similar = scoring::find_most_similar(&file_id, &all_features, sim_mode, 12, 0.05);
+
+    let results: Vec<SimilarityResult> = similar.iter().enumerate().map(|(i, (id, score))| {
+        let import = imports.iter().find(|imp| imp.id == *id).unwrap();
+        SimilarityResult {
+            file: MidiImportInfo {
+                id: import.id.clone(),
+                file_name: import.file_name.clone(),
+                file_path: import.file_path.clone(),
+                imported_at: import.imported_at.clone(),
+            },
+            score: *score,
+            rank: (i + 1) as u32,
         }
-    }
-    
-    Ok(session_features.len())
+    }).collect();
+
+    Ok(results)
+}
+
+#[tauri::command]
+pub fn clear_midi_imports(
+    db: State<'_, SessionDatabase>,
+) -> Result<(), String> {
+    db.clear_midi_imports().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1280,6 +1347,14 @@ pub fn get_encoder_availability() -> EncoderAvailability {
 // ============================================================================
 // Auto-select Encoder Preset
 // ============================================================================
+
+/// Progress update emitted during MIDI folder import
+#[derive(Debug, Clone, Serialize)]
+pub struct MidiImportProgress {
+    pub current: usize,
+    pub total: usize,
+    pub file_name: String,
+}
 
 /// Progress update emitted during auto-select
 #[derive(Debug, Clone, Serialize)]

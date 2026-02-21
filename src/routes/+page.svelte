@@ -2,7 +2,7 @@
     import { onMount } from "svelte";
     import RecordingIndicator from "$lib/components/RecordingIndicator.svelte";
     import SessionBrowser from "$lib/components/sessions/SessionBrowser.svelte";
-    import SimilarityMap from "$lib/components/similarity/SimilarityMap.svelte";
+    import SimilarityTab from "$lib/components/similarity/SimilarityTab.svelte";
     import DevicePanel from "$lib/components/devices/DevicePanel.svelte";
     import Settings from "$lib/components/Settings.svelte";
     import About from "$lib/components/About.svelte";
@@ -173,7 +173,7 @@
         {#if activeTab === "sessions"}
             <SessionBrowser />
         {:else if activeTab === "similarity"}
-            <SimilarityMap />
+            <SimilarityTab />
         {:else if activeTab === "devices"}
             <div class="lockable-content">
                 <DevicePanel />
@@ -886,36 +886,7 @@
         color: #2a2a2a;
     }
 
-    /* Similarity map */
-    :global(body.light-mode .map-container) {
-        border-color: rgba(0, 0, 0, 0.1);
-    }
-
-    :global(body.light-mode .cluster-legend) {
-        background: rgba(255, 255, 255, 0.7);
-        border-color: rgba(0, 0, 0, 0.08);
-    }
-
-    :global(body.light-mode .cluster-name) {
-        color: #4a4a4a;
-    }
-
-    :global(body.light-mode .cluster-count) {
-        color: #7a7a7a;
-    }
-
-    :global(body.light-mode .tooltip-content) {
-        background: rgba(255, 255, 255, 0.95);
-        border-color: rgba(0, 0, 0, 0.12);
-    }
-
-    :global(body.light-mode .tooltip-date) {
-        color: #2a2a2a;
-    }
-
-    :global(body.light-mode .tooltip-cluster) {
-        color: #5a5a5a;
-    }
+    /* Similarity tab overrides handled by SimilarityTab.svelte scoped styles */
 
     /* Empty and loading states */
     :global(body.light-mode .loading),

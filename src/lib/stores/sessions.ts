@@ -116,8 +116,6 @@ export function addNewSession(metadata: SessionMetadata) {
     is_favorite: false,
     tags: [],
     notes: '',
-    similarity_coords: null,
-    cluster_id: null
   };
   
   // Prepend to list (newest first)

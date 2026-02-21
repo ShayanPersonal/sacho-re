@@ -2244,9 +2244,6 @@ fn start_recording(
         tags: Vec::new(),
         notes: String::new(),
         is_favorite: false,
-        midi_features: None,
-        similarity_coords: None,
-        cluster_id: None,
     };
     
     if let Err(e) = crate::session::save_metadata(&initial_metadata) {
@@ -2434,9 +2431,6 @@ fn stop_recording(
         tags: Vec::new(),
         notes: String::new(),
         is_favorite: false,
-        midi_features: None,
-        similarity_coords: None,
-        cluster_id: None,
     };
     
     if let Err(e) = crate::session::save_metadata(&metadata) {

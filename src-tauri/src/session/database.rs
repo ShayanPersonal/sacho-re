@@ -1,6 +1,6 @@
 // SQLite session index for fast queries
 
-use super::{SessionMetadata, SessionSummary, SimilarityCoords};
+use super::{SessionMetadata, SessionSummary};
 use rusqlite::{Connection, params};
 use std::path::PathBuf;
 use parking_lot::Mutex;
@@ -67,27 +67,28 @@ impl SessionDatabase {
                 video_count INTEGER NOT NULL DEFAULT 0,
                 total_size_bytes INTEGER NOT NULL DEFAULT 0,
                 is_favorite INTEGER NOT NULL DEFAULT 0,
-                notes TEXT NOT NULL DEFAULT '',
-                similarity_x REAL,
-                similarity_y REAL,
-                cluster_id INTEGER
+                notes TEXT NOT NULL DEFAULT ''
             );
-            
+
             CREATE TABLE IF NOT EXISTS session_tags (
                 session_id TEXT NOT NULL,
                 tag TEXT NOT NULL,
                 PRIMARY KEY (session_id, tag),
                 FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
             );
-            
-            CREATE TABLE IF NOT EXISTS clusters (
-                id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL DEFAULT ''
+
+            CREATE TABLE IF NOT EXISTS midi_imports (
+                id TEXT PRIMARY KEY,
+                folder_path TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                melodic_features TEXT,
+                harmonic_features TEXT,
+                imported_at TEXT NOT NULL
             );
-            
+
             CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(timestamp DESC);
             CREATE INDEX IF NOT EXISTS idx_sessions_favorite ON sessions(is_favorite);
-            CREATE INDEX IF NOT EXISTS idx_sessions_cluster ON sessions(cluster_id);
             CREATE INDEX IF NOT EXISTS idx_session_tags_tag ON session_tags(tag);
             
             -- Full-text search for notes
@@ -114,8 +115,8 @@ impl SessionDatabase {
             INSERT INTO sessions (
                 id, timestamp, duration_secs, path, has_audio, has_midi, has_video,
                 audio_count, midi_count, video_count, total_size_bytes, is_favorite,
-                notes, similarity_x, similarity_y, cluster_id
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                notes
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             ON CONFLICT(id) DO UPDATE SET
                 timestamp = excluded.timestamp,
                 duration_secs = excluded.duration_secs,
@@ -128,10 +129,7 @@ impl SessionDatabase {
                 video_count = excluded.video_count,
                 total_size_bytes = excluded.total_size_bytes,
                 is_favorite = excluded.is_favorite,
-                notes = excluded.notes,
-                similarity_x = excluded.similarity_x,
-                similarity_y = excluded.similarity_y,
-                cluster_id = excluded.cluster_id
+                notes = excluded.notes
             "#,
             params![
                 metadata.id,
@@ -147,9 +145,6 @@ impl SessionDatabase {
                 total_size,
                 metadata.is_favorite,
                 metadata.notes,
-                metadata.similarity_coords.map(|c| c.x),
-                metadata.similarity_coords.map(|c| c.y),
-                metadata.cluster_id,
             ],
         )?;
         
@@ -185,8 +180,8 @@ impl SessionDatabase {
                 INSERT INTO sessions (
                     id, timestamp, duration_secs, path, has_audio, has_midi, has_video,
                     audio_count, midi_count, video_count, total_size_bytes, is_favorite,
-                    notes, similarity_x, similarity_y, cluster_id
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                    notes
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                 ON CONFLICT(id) DO UPDATE SET
                     timestamp = excluded.timestamp,
                     duration_secs = excluded.duration_secs,
@@ -213,9 +208,6 @@ impl SessionDatabase {
                     total_size,
                     metadata.is_favorite,
                     metadata.notes,
-                    metadata.similarity_coords.map(|c| c.x),
-                    metadata.similarity_coords.map(|c| c.y),
-                    metadata.cluster_id,
                 ],
             )?;
             
@@ -257,7 +249,7 @@ impl SessionDatabase {
             r#"
             SELECT DISTINCT s.id, s.timestamp, s.duration_secs, s.has_audio, s.has_midi, s.has_video,
                    s.audio_count, s.midi_count, s.video_count, s.total_size_bytes, s.is_favorite,
-                   s.similarity_x, s.similarity_y, s.cluster_id, s.notes
+                   s.notes
             FROM sessions s
             LEFT JOIN session_tags t ON s.id = t.session_id
             WHERE 1=1
@@ -329,14 +321,7 @@ impl SessionDatabase {
                 log::warn!("Failed to parse timestamp '{}': {}, using current time", timestamp_str, e);
                 Utc::now()
             });
-        
-        let similarity_x: Option<f32> = row.get(11)?;
-        let similarity_y: Option<f32> = row.get(12)?;
-        let similarity_coords = match (similarity_x, similarity_y) {
-            (Some(x), Some(y)) => Some(SimilarityCoords { x, y }),
-            _ => None,
-        };
-        
+
         Ok(SessionSummary {
             id: row.get(0)?,
             timestamp,
@@ -349,58 +334,9 @@ impl SessionDatabase {
             video_count: row.get(8)?,
             total_size_bytes: row.get(9)?,
             is_favorite: row.get(10)?,
-            tags: Vec::new(), // Will be populated separately if needed
-            notes: row.get(14)?,
-            similarity_coords,
-            cluster_id: row.get(13)?,
+            tags: Vec::new(),
+            notes: row.get(11)?,
         })
-    }
-    
-    /// Get similarity data for all sessions with MIDI
-    pub fn get_similarity_data(&self) -> anyhow::Result<Vec<SimilarityPoint>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, similarity_x, similarity_y, cluster_id, timestamp
-            FROM sessions
-            WHERE has_midi = 1 AND similarity_x IS NOT NULL AND similarity_y IS NOT NULL
-            "#
-        )?;
-        
-        let rows = stmt.query_map([], |row| {
-            let timestamp_str: String = row.get(4)?;
-            let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|e| {
-                    log::warn!("Failed to parse similarity timestamp '{}': {}, using current time", timestamp_str, e);
-                    Utc::now()
-                });
-            
-            Ok(SimilarityPoint {
-                id: row.get(0)?,
-                x: row.get(1)?,
-                y: row.get(2)?,
-                cluster_id: row.get(3)?,
-                timestamp,
-            })
-        })?;
-        
-        let mut points = Vec::new();
-        for row in rows {
-            points.push(row?);
-        }
-        
-        Ok(points)
-    }
-    
-    /// Update similarity coordinates for a session
-    pub fn update_similarity(&self, session_id: &str, coords: SimilarityCoords, cluster_id: Option<i32>) -> anyhow::Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
-            "UPDATE sessions SET similarity_x = ?1, similarity_y = ?2, cluster_id = ?3 WHERE id = ?4",
-            params![coords.x, coords.y, cluster_id, session_id],
-        )?;
-        Ok(())
     }
     
     /// Update favorite status for a session
@@ -422,6 +358,67 @@ impl SessionDatabase {
         )?;
         Ok(())
     }
+
+    /// Insert MIDI imports in a batch
+    pub fn insert_midi_imports(&self, imports: &[MidiImport]) -> anyhow::Result<()> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+
+        for import in imports {
+            tx.execute(
+                r#"
+                INSERT OR REPLACE INTO midi_imports (
+                    id, folder_path, file_name, file_path, melodic_features, harmonic_features, imported_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "#,
+                params![
+                    import.id,
+                    import.folder_path,
+                    import.file_name,
+                    import.file_path,
+                    import.melodic_features,
+                    import.harmonic_features,
+                    import.imported_at,
+                ],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Get all MIDI imports with features
+    pub fn get_all_midi_imports(&self) -> anyhow::Result<Vec<MidiImport>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, folder_path, file_name, file_path, melodic_features, harmonic_features, imported_at FROM midi_imports"
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(MidiImport {
+                id: row.get(0)?,
+                folder_path: row.get(1)?,
+                file_name: row.get(2)?,
+                file_path: row.get(3)?,
+                melodic_features: row.get(4)?,
+                harmonic_features: row.get(5)?,
+                imported_at: row.get(6)?,
+            })
+        })?;
+
+        let mut imports = Vec::new();
+        for row in rows {
+            imports.push(row?);
+        }
+        Ok(imports)
+    }
+
+    /// Clear all MIDI imports
+    pub fn clear_midi_imports(&self) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM midi_imports", [])?;
+        Ok(())
+    }
 }
 
 /// Filter for session queries
@@ -437,12 +434,15 @@ pub struct SessionFilter {
     pub offset: Option<usize>,
 }
 
-/// Point data for similarity visualization
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SimilarityPoint {
+/// Imported MIDI file for similarity analysis
+#[derive(Debug, Clone)]
+pub struct MidiImport {
     pub id: String,
-    pub x: f32,
-    pub y: f32,
-    pub cluster_id: Option<i32>,
-    pub timestamp: DateTime<Utc>,
+    pub folder_path: String,
+    pub file_name: String,
+    pub file_path: String,
+    pub melodic_features: Option<String>,
+    pub harmonic_features: Option<String>,
+    pub imported_at: String,
 }
+

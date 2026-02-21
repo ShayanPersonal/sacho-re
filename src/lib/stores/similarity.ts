@@ -1,123 +1,106 @@
-// Similarity map state store
+// Similarity explorer store
 
 import { writable, derived } from 'svelte/store';
-import type { SimilarityData, SimilarityPoint, ClusterInfo } from '$lib/api';
-import { getSimilarityData, recalculateSimilarity as apiRecalculate } from '$lib/api';
+import type { MidiImportInfo, SimilarityResult, SimilarityMode } from '$lib/api';
+import { importMidiFolder, getMidiImports, getSimilarFiles, clearMidiImports } from '$lib/api';
+import { open } from '@tauri-apps/plugin-dialog';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-// Store for similarity data
-export const similarityData = writable<SimilarityData>({
-  points: [],
-  clusters: []
-});
+export const importedFiles = writable<MidiImportInfo[]>([]);
+export const selectedFileId = writable<string | null>(null);
+export const similarFiles = writable<SimilarityResult[]>([]);
+export const similarityMode = writable<SimilarityMode>("melodic");
+export const isImporting = writable(false);
+export const isComputing = writable(false);
 
-// Selected point
-export const selectedPointId = writable<string | null>(null);
-
-// Hover point
-export const hoveredPointId = writable<string | null>(null);
-
-// View state
-export const viewTransform = writable({
-  x: 0,
-  y: 0,
-  scale: 1
-});
-
-// Loading state
-export const isCalculating = writable(false);
-
-// Derived stores
-export const points = derived(similarityData, $data => $data.points);
-export const clusters = derived(similarityData, $data => $data.clusters);
-
-export const selectedPoint = derived(
-  [similarityData, selectedPointId],
-  ([$data, $id]) => $id ? $data.points.find(p => p.id === $id) : null
-);
-
-export const hoveredPoint = derived(
-  [similarityData, hoveredPointId],
-  ([$data, $id]) => $id ? $data.points.find(p => p.id === $id) : null
-);
-
-// Get cluster color
-export function getClusterColor(clusterId: number | null): string {
-  if (clusterId === null) return '#5a5a5a'; // Gray for unclustered
-  
-  // Muted, warm color palette
-  const colors = [
-    '#c9a962', // gold
-    '#a67c52', // bronze
-    '#8b7355', // tan
-    '#7a8b6e', // sage
-    '#6b8a8a', // muted teal
-    '#8a7a6b', // warm gray
-    '#9a7b6a', // terracotta
-    '#7a6b5a', // umber
-    '#6a7a6a', // olive
-    '#8a6a7a', // mauve
-  ];
-  
-  return colors[clusterId % colors.length];
+export interface ImportProgress {
+  current: number;
+  total: number;
+  file_name: string;
 }
 
-// Actions
-export async function refreshSimilarityData() {
-  try {
-    const data = await getSimilarityData();
-    similarityData.set(data);
-  } catch (error) {
-    console.error('Failed to fetch similarity data:', error);
-  }
-}
+export const importProgress = writable<ImportProgress | null>(null);
 
-export async function recalculateSimilarity() {
-  isCalculating.set(true);
+export const selectedFile = derived(
+  [importedFiles, selectedFileId],
+  ([$files, $id]) => $id ? $files.find(f => f.id === $id) ?? null : null
+);
+
+export async function importFolder() {
+  const selected = await open({ directory: true, title: "Select MIDI Folder" });
+  if (!selected) return;
+
+  isImporting.set(true);
+  let unlisten: UnlistenFn | undefined;
   try {
-    const count = await apiRecalculate();
-    console.log(`Recalculated similarity for ${count} sessions`);
-    await refreshSimilarityData();
-    return count;
+    unlisten = await listen<ImportProgress>('midi-import-progress', (e) => {
+      importProgress.set(e.payload);
+    });
+    const files = await importMidiFolder(selected as string);
+    importedFiles.set(files);
+    selectedFileId.set(null);
+    similarFiles.set([]);
   } catch (error) {
-    console.error('Failed to recalculate similarity:', error);
-    throw error;
+    console.error('Failed to import MIDI folder:', error);
   } finally {
-    isCalculating.set(false);
+    unlisten?.();
+    importProgress.set(null);
+    isImporting.set(false);
   }
 }
 
-export function selectPoint(pointId: string | null) {
-  selectedPointId.set(pointId);
+export async function selectFile(id: string) {
+  selectedFileId.set(id);
+  isComputing.set(true);
+  try {
+    let mode: SimilarityMode = "melodic";
+    similarityMode.subscribe(m => mode = m)();
+    const results = await getSimilarFiles(id, mode);
+    similarFiles.set(results);
+  } catch (error) {
+    console.error('Failed to get similar files:', error);
+    similarFiles.set([]);
+  } finally {
+    isComputing.set(false);
+  }
 }
 
-export function hoverPoint(pointId: string | null) {
-  hoveredPointId.set(pointId);
+export async function switchMode(mode: SimilarityMode) {
+  similarityMode.set(mode);
+  let currentId: string | null = null;
+  selectedFileId.subscribe(id => currentId = id)();
+  if (currentId) {
+    isComputing.set(true);
+    try {
+      const results = await getSimilarFiles(currentId, mode);
+      similarFiles.set(results);
+    } catch (error) {
+      console.error('Failed to get similar files:', error);
+    } finally {
+      isComputing.set(false);
+    }
+  }
 }
 
-export function resetView() {
-  viewTransform.set({ x: 0, y: 0, scale: 1 });
+export async function clearImports() {
+  try {
+    await clearMidiImports();
+    importedFiles.set([]);
+    selectedFileId.set(null);
+    similarFiles.set([]);
+  } catch (error) {
+    console.error('Failed to clear imports:', error);
+  }
 }
 
-export function zoom(delta: number, centerX: number, centerY: number) {
-  viewTransform.update(t => {
-    const newScale = Math.max(0.1, Math.min(10, t.scale * (1 + delta * 0.1)));
-    const scaleChange = newScale / t.scale;
-    
-    return {
-      x: centerX - (centerX - t.x) * scaleChange,
-      y: centerY - (centerY - t.y) * scaleChange,
-      scale: newScale
-    };
-  });
+// Load previously imported files on module init
+async function init() {
+  try {
+    const files = await getMidiImports();
+    importedFiles.set(files);
+  } catch {
+    // Silently fail on init — no imports yet
+  }
 }
 
-export function pan(dx: number, dy: number) {
-  viewTransform.update(t => ({
-    ...t,
-    x: t.x + dx,
-    y: t.y + dy
-  }));
-}
-
-// Initialize
-refreshSimilarityData();
+init();

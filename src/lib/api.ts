@@ -266,8 +266,6 @@ export interface SessionSummary {
   is_favorite: boolean;
   tags: string[];
   notes: string;
-  similarity_coords: { x: number; y: number } | null;
-  cluster_id: number | null;
 }
 
 export interface SessionMetadata {
@@ -281,8 +279,6 @@ export interface SessionMetadata {
   tags: string[];
   notes: string;
   is_favorite: boolean;
-  similarity_coords: { x: number; y: number } | null;
-  cluster_id: number | null;
 }
 
 export interface AudioFileInfo {
@@ -387,24 +383,20 @@ export interface SessionFilter {
   offset?: number;
 }
 
-export interface SimilarityPoint {
+export interface MidiImportInfo {
   id: string;
-  x: number;
-  y: number;
-  cluster_id: number | null;
-  timestamp: string;
+  file_name: string;
+  file_path: string;
+  imported_at: string;
 }
 
-export interface SimilarityData {
-  points: SimilarityPoint[];
-  clusters: ClusterInfo[];
+export interface SimilarityResult {
+  file: MidiImportInfo;
+  score: number;
+  rank: number;
 }
 
-export interface ClusterInfo {
-  id: number;
-  name: string;
-  count: number;
-}
+export type SimilarityMode = "melodic" | "harmonic";
 
 // ============================================================================
 // Device Commands
@@ -674,12 +666,20 @@ export async function setAllUsersAutostart(enabled: boolean): Promise<void> {
 // Similarity Commands
 // ============================================================================
 
-export async function getSimilarityData(): Promise<SimilarityData> {
-  return invoke("get_similarity_data");
+export async function importMidiFolder(path: string): Promise<MidiImportInfo[]> {
+  return invoke("import_midi_folder", { path });
 }
 
-export async function recalculateSimilarity(): Promise<number> {
-  return invoke("recalculate_similarity");
+export async function getMidiImports(): Promise<MidiImportInfo[]> {
+  return invoke("get_midi_imports");
+}
+
+export async function getSimilarFiles(fileId: string, mode: SimilarityMode): Promise<SimilarityResult[]> {
+  return invoke("get_similar_files", { fileId, mode });
+}
+
+export async function clearMidiImports(): Promise<void> {
+  return invoke("clear_midi_imports");
 }
 
 export async function rescanSessions(): Promise<number> {

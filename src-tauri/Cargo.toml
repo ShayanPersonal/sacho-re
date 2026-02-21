@@ -49,9 +49,6 @@ gstreamer-pbutils = "0.24"
 # SQLite for session indexing
 rusqlite = { version = "0.32", features = ["bundled"] }
 
-# Numerical computation for similarity analysis
-ndarray = "0.16"
-
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
