@@ -607,7 +607,7 @@
                             >.
                         {:else}
                             No hardware-accelerated open codecs detected. We
-                            recommend <strong>H.264</strong> via Windows Media Foundation.
+                            recommend selecting <strong>H.264</strong>.
                         {/if}
                     </p>
                 {/if}
