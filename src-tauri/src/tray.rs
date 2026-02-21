@@ -4,11 +4,17 @@ use crate::recording::{RecordingStatus, MidiMonitor};
 use std::sync::Arc;
 use parking_lot::Mutex;
 use tauri::{
-    AppHandle, 
-    Manager,
+    AppHandle,
+    Manager, Runtime,
     tray::{TrayIconBuilder, MouseButton, MouseButtonState},
     menu::{Menu, MenuItem},
 };
+
+/// Holds references to tray menu items that need dynamic enable/disable
+pub struct TrayMenuItems<R: Runtime> {
+    pub start: MenuItem<R>,
+    pub stop: MenuItem<R>,
+}
 
 /// Tray icon state
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,12 +40,20 @@ impl From<RecordingStatus> for TrayState {
 pub fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
     // Create menu items
     let open_item = MenuItem::with_id(app, "open", "Open Sacho", true, None::<&str>)?;
+    let start_item = MenuItem::with_id(app, "start", "Start Recording", true, None::<&str>)?;
     let stop_item = MenuItem::with_id(app, "stop", "Stop Recording", false, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    
+
+    // Store references for dynamic enable/disable in update_tray_state
+    app.manage(TrayMenuItems {
+        start: start_item.clone(),
+        stop: stop_item.clone(),
+    });
+
     // Build menu
     let menu = Menu::with_items(app, &[
         &open_item,
+        &start_item,
         &stop_item,
         &quit_item,
     ])?;
@@ -56,6 +70,14 @@ pub fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.show();
                         let _ = window.set_focus();
+                    }
+                }
+                "start" => {
+                    log::info!("Start recording requested from tray");
+                    let midi_monitor = app.state::<Arc<Mutex<MidiMonitor>>>();
+                    let monitor = midi_monitor.lock();
+                    if let Err(e) = monitor.manual_start_recording() {
+                        log::warn!("Could not start recording from tray: {}", e);
                     }
                 }
                 "stop" => {
@@ -107,15 +129,13 @@ pub fn update_tray_state(app: &AppHandle, state: TrayState) {
             TrayState::Stopping => "Sacho - Stopping...",
             TrayState::Initializing => "Sacho - Initializing...",
         };
-        
+
         let _ = tray.set_tooltip(Some(tooltip));
-        
-        // TODO: Update icon based on state
-        // let icon_path = match state {
-        //     TrayState::Idle => "icons/tray-idle.png",
-        //     TrayState::Recording => "icons/tray-recording.png",
-        //     TrayState::Stopping => "icons/tray-stopping.png",
-        // };
-        // let _ = tray.set_icon(Some(icon_path));
+
+        // Toggle start/stop enabled state based on recording status
+        let is_idle = state == TrayState::Idle;
+        let items = app.state::<TrayMenuItems<tauri::Wry>>();
+        let _ = items.start.set_enabled(is_idle);
+        let _ = items.stop.set_enabled(!is_idle);
     }
 }

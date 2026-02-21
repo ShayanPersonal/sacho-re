@@ -658,6 +658,7 @@ pub fn update_config(
 
         // Emit event so frontend knows we're reinitializing
         let _ = app.emit("recording-state-changed", "initializing");
+        crate::tray::update_tray_state(&app, crate::tray::TrayState::Initializing);
     }
 
     // Update in memory
@@ -716,6 +717,7 @@ pub fn update_config(
 
         // Emit event so frontend knows we're ready
         let _ = app.emit("recording-state-changed", "idle");
+        crate::tray::update_tray_state(&app, crate::tray::TrayState::Idle);
 
         // Return error if restart failed
         result.map_err(|e| format!("Failed to reinitialize devices: {}", e))?;
@@ -1350,6 +1352,7 @@ pub async fn auto_select_encoder_preset(
         state.status = RecordingStatus::Initializing;
     }
     let _ = app.emit("recording-state-changed", "initializing");
+    crate::tray::update_tray_state(&app, crate::tray::TrayState::Initializing);
 
     // 4. Get the video manager from the monitor and stop video pipelines only.
     let video_manager = {
@@ -1415,6 +1418,7 @@ pub async fn auto_select_encoder_preset(
         state.status = RecordingStatus::Idle;
     }
     let _ = app.emit("recording-state-changed", "idle");
+    crate::tray::update_tray_state(&app, crate::tray::TrayState::Idle);
 
     result
 }

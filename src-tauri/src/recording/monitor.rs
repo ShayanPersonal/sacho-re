@@ -2258,6 +2258,7 @@ fn start_recording(
         notifications::notify_recording_started(app_handle, &active_devices);
     }
     
+    crate::tray::update_tray_state(app_handle, crate::tray::TrayState::Recording);
     let _ = app_handle.emit("recording-started", session_path.to_string_lossy().to_string());
     println!("[Sacho] Recording started: {:?}", session_path);
 }
@@ -2309,9 +2310,10 @@ fn stop_recording(
         state.active_midi_devices.clear();
         state.active_audio_devices.clear();
         state.active_video_devices.clear();
+        crate::tray::update_tray_state(app_handle, crate::tray::TrayState::Idle);
         return;
     };
-    
+
     // Update recording state to idle immediately (before slow file operations)
     {
         let recording_state = app_handle.state::<RwLock<RecordingState>>();
@@ -2322,6 +2324,7 @@ fn stop_recording(
         state.elapsed_seconds = 0;
         // Keep device info for now, will be cleared after save
     }
+    crate::tray::update_tray_state(app_handle, crate::tray::TrayState::Idle);
     
     // Stop video recording and get video files
     let mut video_files = {
