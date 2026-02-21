@@ -67,6 +67,13 @@ pub fn setup_tray(app: &AppHandle) -> anyhow::Result<()> {
                     }
                 }
                 "quit" => {
+                    // Explicitly stop MIDI monitor before exiting so that
+                    // midir's MidiInputConnection::close() runs and releases
+                    // WinMM handles.  Without this, std::process::exit()
+                    // skips Drop impls and some USB MIDI drivers leave the
+                    // port marked "in use" system-wide.
+                    let midi_monitor = app.state::<Arc<Mutex<MidiMonitor>>>();
+                    midi_monitor.lock().stop();
                     app.exit(0);
                 }
                 _ => {}

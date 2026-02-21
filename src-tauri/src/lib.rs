@@ -63,6 +63,19 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // The NSIS uninstaller (PREUNINSTALL hook) launches a second
+            // instance with --quit to ask us to shut down gracefully.  This
+            // lets midir close WinMM MIDI handles before the process exits;
+            // without it, some USB MIDI drivers leave the device marked
+            // "in use" system-wide after a force-kill.
+            if args.iter().any(|a| a == "--quit") {
+                log::info!("Received --quit from uninstaller, shutting down gracefully");
+                let midi_monitor = app.state::<Arc<Mutex<recording::MidiMonitor>>>();
+                midi_monitor.lock().stop();
+                app.exit(0);
+                return;
+            }
+
             // Focus the existing window when a second instance tries to launch,
             // but not if the second instance was also an autostart (e.g. both
             // HKCU and HKLM Run entries exist from a legacy install).
@@ -84,6 +97,15 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // If --quit was passed but we reached setup, it means no other
+            // instance was running (the single-instance plugin would have
+            // intercepted and exited).  Exit immediately without initializing
+            // any resources — no MIDI ports to open, nothing to clean up.
+            if std::env::args().any(|arg| arg == "--quit") {
+                log::info!("--quit: no running instance found, exiting");
+                std::process::exit(0);
+            }
+
             // Initialize application state
             let app_handle = app.handle().clone();
             
@@ -196,6 +218,16 @@ pub fn run() {
             commands::get_disconnected_devices,
             commands::restart_device_pipelines,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Sacho");
+        .build(tauri::generate_context!())
+        .expect("error while building Sacho")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Explicitly stop the MIDI monitor so midir closes all WinMM
+                // handles before the process exits.  Without this,
+                // std::process::exit() skips Drop impls and some USB MIDI
+                // drivers leave the device marked "in use" system-wide.
+                let midi_monitor = app.state::<Arc<Mutex<recording::MidiMonitor>>>();
+                midi_monitor.lock().stop();
+            }
+        });
 }

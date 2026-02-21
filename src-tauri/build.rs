@@ -95,10 +95,36 @@ fn generate_nsis_hooks() {
 ; ============================================================================
 !macro NSIS_HOOK_PREUNINSTALL
     ; ---- Autostart cleanup ----
-    ; Remove autostart BEFORE CheckIfAppIsRunning closes the app,
-    ; so it won't relaunch between close and exe deletion.
+    ; Remove autostart BEFORE the graceful-quit attempt so the app
+    ; won't relaunch between close and exe deletion.
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${{PRODUCTNAME}}"
     DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${{PRODUCTNAME}}"
+
+    ; ---- Graceful shutdown ----
+    ; Ask the running app to quit cleanly so it can close MIDI ports
+    ; via midir before the process exits.  The --quit flag is handled
+    ; by the single-instance plugin: it tells the first instance to
+    ; call MidiMonitor::stop() and then app.exit(0).  The second
+    ; instance exits immediately after delivering the message.
+    ;
+    ; Only attempt this if the app is actually running — otherwise
+    ; the --quit instance would become the primary instance.  The
+    ; Rust setup() guards against this too, but skipping the launch
+    ; avoids the overhead entirely.
+    !if "${{INSTALLMODE}}" == "currentUser"
+    nsis_tauri_utils::FindProcessCurrentUser "${{MAINBINARYNAME}}.exe"
+    !else
+    nsis_tauri_utils::FindProcess "${{MAINBINARYNAME}}.exe"
+    !endif
+    Pop $R0
+    ${{If}} $R0 = 0
+        DetailPrint "Requesting graceful shutdown..."
+        Exec '"$INSTDIR\${{MAINBINARYNAME}}.exe" --quit'
+        ; Give the running instance time to finish its shutdown
+        ; (stop MIDI, stop audio/video, exit).  CheckIfAppIsRunning
+        ; will force-kill anything still alive after this.
+        Sleep 3000
+    ${{EndIf}}
 !macroend
 
 ; ============================================================================
