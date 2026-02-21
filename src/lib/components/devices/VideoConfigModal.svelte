@@ -585,7 +585,7 @@
 
                 {#if encoderAvailability}
                     <p class="encoder-info">
-                        {#if encoderAvailability.av1.has_hardware || encoderAvailability.vp9.has_hardware || encoderAvailability.vp8.has_hardware || encoderAvailability.h264.has_hardware}
+                        {#if encoderAvailability.av1.has_hardware || encoderAvailability.vp9.has_hardware || encoderAvailability.vp8.has_hardware}
                             Your device supports hardware acceleration for {[
                                 encoderAvailability.av1.has_hardware
                                     ? "AV1"
@@ -596,9 +596,6 @@
                                 encoderAvailability.vp8.has_hardware
                                     ? "VP8"
                                     : null,
-                                encoderAvailability.h264.has_hardware
-                                    ? "H.264"
-                                    : null,
                             ]
                                 .filter(Boolean)
                                 .join(", ")
@@ -607,11 +604,10 @@
                                 >{recommendedCodec
                                     ? getCodecDisplayName(recommendedCodec)
                                     : "the default"}</strong
-                            > for the best experience.
+                            >.
                         {:else}
-                            Your system does not support hardware acceleration
-                            for the available codecs. If you experience
-                            choppiness, try reducing resolution or framerate.
+                            No hardware-accelerated open codecs detected. We
+                            recommend <strong>H.264</strong> via Windows Media Foundation.
                         {/if}
                     </p>
                 {/if}
