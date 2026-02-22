@@ -531,5 +531,5 @@ fn default_preset_level() -> u8 {
 
 /// Default sound volume (for serde)
 fn default_sound_volume() -> f64 {
-    0.5
+    1.0
 }
