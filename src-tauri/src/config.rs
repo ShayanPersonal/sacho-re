@@ -344,7 +344,7 @@ impl Default for Config {
         Self {
             storage_path: get_default_storage_path(),
             idle_timeout_secs: 5,
-            pre_roll_secs: 3, // Default to 3 seconds of pre-roll
+            pre_roll_secs: 2, // Default to 2 seconds of pre-roll
             audio_format: AudioFormat::Wav,
             wav_bit_depth: AudioBitDepth::default(),
             wav_sample_rate: AudioSampleRate::default(),
@@ -516,7 +516,7 @@ fn get_config_path(app_handle: &AppHandle) -> PathBuf {
 
 /// Default pre-roll duration (for serde)
 fn default_pre_roll_secs() -> u32 {
-    3
+    2
 }
 
 /// Default true value (for serde)

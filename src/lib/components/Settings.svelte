@@ -155,7 +155,7 @@
             2,
             Math.min(30, localSettings.idle_timeout_secs),
         );
-        const preRollMax = localSettings.encode_during_preroll ? 30 : 5;
+        const preRollMax = localSettings.encode_during_preroll ? 30 : 6;
         localSettings.pre_roll_secs = Math.max(
             0,
             Math.min(preRollMax, localSettings.pre_roll_secs),
@@ -340,7 +340,7 @@
                         <input
                             type="number"
                             min="0"
-                            max={localSettings.encode_during_preroll ? 30 : 5}
+                            max={localSettings.encode_during_preroll ? 30 : 6}
                             bind:value={localSettings.pre_roll_secs}
                             oninput={autoSaveDebounced}
                         />
@@ -367,9 +367,9 @@
                                     if (!localSettings) return;
                                     if (
                                         !localSettings.encode_during_preroll &&
-                                        localSettings.pre_roll_secs > 5
+                                        localSettings.pre_roll_secs > 6
                                     ) {
-                                        localSettings.pre_roll_secs = 5;
+                                        localSettings.pre_roll_secs = 6;
                                     }
                                     autoSave();
                                 }}

@@ -77,6 +77,8 @@ pub struct BufferedFrame {
 pub struct VideoPrerollBuffer {
     frames: std::collections::VecDeque<BufferedFrame>,
     max_duration: Duration,
+    /// Extra retention beyond max_duration to compensate for frame timing jitter
+    headroom: Duration,
     /// Estimated bytes per second for memory management
     bytes_per_sec: usize,
     /// Maximum buffer size in bytes (to prevent unbounded memory usage)
@@ -94,11 +96,22 @@ impl VideoPrerollBuffer {
     /// Create a new pre-roll buffer with a custom byte rate estimate.
     /// Use this for raw video where frame sizes are much larger than compressed.
     pub fn with_byte_rate(max_duration_secs: u32, bytes_per_sec: usize) -> Self {
-        let max_bytes = bytes_per_sec * max_duration_secs as usize;
+        Self::with_headroom(max_duration_secs, bytes_per_sec, 0.0)
+    }
+
+    /// Create a new pre-roll buffer with extra headroom beyond `max_duration`.
+    /// The buffer retains `max_duration + headroom` worth of frames during `trim()`,
+    /// but `drain()` only returns the most recent `max_duration` of frames.
+    /// This compensates for frame timing jitter and codec granularity.
+    pub fn with_headroom(max_duration_secs: u32, bytes_per_sec: usize, headroom_secs: f64) -> Self {
+        let headroom = Duration::from_secs_f64(headroom_secs);
+        let total_secs = max_duration_secs as f64 + headroom_secs;
+        let max_bytes = (bytes_per_sec as f64 * total_secs) as usize;
 
         Self {
             frames: std::collections::VecDeque::new(),
             max_duration: Duration::from_secs(max_duration_secs as u64),
+            headroom,
             bytes_per_sec,
             max_bytes,
             current_bytes: 0,
@@ -122,9 +135,10 @@ impl VideoPrerollBuffer {
             return;
         }
 
-        let cutoff = Instant::now() - self.max_duration;
+        let retention = self.max_duration + self.headroom;
+        let cutoff = Instant::now() - retention;
 
-        // Trim by time
+        // Trim by time (retaining headroom beyond max_duration)
         while let Some(front) = self.frames.front() {
             if front.wall_time < cutoff || self.current_bytes > self.max_bytes {
                 if let Some(removed) = self.frames.pop_front() {
@@ -136,10 +150,21 @@ impl VideoPrerollBuffer {
         }
     }
 
-    /// Drain all frames from the buffer
+    /// Drain all frames from the buffer, trimmed to at most `max_duration`.
+    /// When headroom is configured, the buffer retains extra frames beyond
+    /// `max_duration` — this method strips them so the output doesn't exceed
+    /// the configured pre-roll length.
     pub fn drain(&mut self) -> Vec<BufferedFrame> {
         self.current_bytes = 0;
-        self.frames.drain(..).collect()
+        let mut frames: Vec<BufferedFrame> = self.frames.drain(..).collect();
+
+        if !self.headroom.is_zero() && !frames.is_empty() {
+            let latest = frames.last().unwrap().wall_time;
+            let cutoff = latest - self.max_duration;
+            frames.retain(|f| f.wall_time >= cutoff);
+        }
+
+        frames
     }
 
     /// Get the duration of buffered content
@@ -156,7 +181,8 @@ impl VideoPrerollBuffer {
     /// Set the maximum duration
     pub fn set_duration(&mut self, secs: u32) {
         self.max_duration = Duration::from_secs(secs as u64);
-        self.max_bytes = self.bytes_per_sec * secs as usize;
+        let total_secs = secs as f64 + self.headroom.as_secs_f64();
+        self.max_bytes = (self.bytes_per_sec as f64 * total_secs) as usize;
         self.trim();
     }
 
@@ -968,8 +994,12 @@ impl VideoCapturePipeline {
             source_fps
         );
 
-        // Create pre-roll buffer
-        let preroll_buffer = Arc::new(Mutex::new(VideoPrerollBuffer::new(pre_roll_secs)));
+        // Create pre-roll buffer with 2s headroom for compressed cameras (one full GOP)
+        let preroll_buffer = Arc::new(Mutex::new(VideoPrerollBuffer::with_headroom(
+            pre_roll_secs,
+            5 * 1024 * 1024,
+            2.0,
+        )));
 
         // Shared flag: the appsink callback skips frame allocation when false.
         // True when pre_roll_secs > 0 or recording is active.
@@ -1275,16 +1305,19 @@ impl VideoCapturePipeline {
         // Create pre-roll buffer for raw frames.
         // When encode_during_preroll is active, this is just a 1-second staging buffer
         // that poll() drains every ~10ms to feed the continuous encoder.
-        // When inactive, this is the full pre-roll buffer sized for raw video up to 8K.
+        // When inactive, this is the full pre-roll buffer sized for raw video up to 8K,
+        // with 0.5s headroom to compensate for frame timing jitter.
         const RAW_BYTES_PER_SEC: usize = 3840 * 2160 * 3 / 2 * 60;
         let raw_buffer_secs = if encode_during_preroll {
             1
         } else {
             pre_roll_secs
         };
-        let preroll_buffer = Arc::new(Mutex::new(VideoPrerollBuffer::with_byte_rate(
+        let headroom_secs = if encode_during_preroll { 0.0 } else { 0.5 };
+        let preroll_buffer = Arc::new(Mutex::new(VideoPrerollBuffer::with_headroom(
             raw_buffer_secs,
             RAW_BYTES_PER_SEC,
+            headroom_secs,
         )));
 
         // Shared flag: the appsink callback skips frame allocation when false.
