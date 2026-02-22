@@ -257,7 +257,13 @@ pub fn scan_session_dir_for_index(
         durations.into_iter().fold(0.0f64, f64::max)
     };
 
-    let title = extract_title_from_folder_name(&folder_name);
+    // If folder name doesn't match the expected timestamp format, use the full
+    // folder name as the title (non-standard folder — title is not editable).
+    let title = if parse_session_timestamp(&folder_name).is_some() {
+        extract_title_from_folder_name(&folder_name)
+    } else {
+        Some(folder_name.clone())
+    };
 
     Ok(SessionIndexData {
         id: folder_name,
@@ -389,7 +395,13 @@ pub fn build_session_from_directory(session_path: &Path) -> anyhow::Result<Sessi
     let max_video = video_files.iter().map(|f| f.duration_secs).fold(0.0f64, f64::max);
     let duration_secs = max_audio.max(max_video);
 
-    let title = extract_title_from_folder_name(&folder_name);
+    // If folder name doesn't match the expected timestamp format, use the full
+    // folder name as the title (non-standard folder — title is not editable).
+    let title = if parse_session_timestamp(&folder_name).is_some() {
+        extract_title_from_folder_name(&folder_name)
+    } else {
+        Some(folder_name.clone())
+    };
 
     Ok(SessionMetadata {
         id: folder_name,

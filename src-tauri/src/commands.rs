@@ -393,6 +393,11 @@ pub fn rename_session(
         return Err("Session folder not found".to_string());
     }
 
+    // Reject rename for non-standard folders (no valid timestamp prefix)
+    if crate::session::parse_session_timestamp(&session_id).is_none() {
+        return Err("Cannot rename this session — folder name is not in the expected format".to_string());
+    }
+
     // Extract timestamp prefix from current folder name
     let timestamp_prefix = session_id.split(" - ").next().unwrap_or(&session_id);
     let sanitized_title = sanitize_title(&new_title);

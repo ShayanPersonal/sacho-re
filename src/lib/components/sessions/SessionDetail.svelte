@@ -141,6 +141,9 @@
     }
 
     // Title editing state
+    // Non-standard folders (no valid timestamp prefix) are not renamable
+    const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/;
+    let isRenamable = $derived(TIMESTAMP_RE.test(session.id));
     let titleValue = $state(session.title ?? '');
     let isRenaming = $state(false);
 
@@ -727,15 +730,19 @@
 <div class="session-detail">
     <div class="detail-header">
         <div class="header-info">
-            <input
-                class="title-input"
-                type="text"
-                placeholder="Add title..."
-                bind:value={titleValue}
-                onblur={handleTitleSave}
-                onkeydown={handleTitleKeydown}
-                disabled={isRenaming}
-            />
+            {#if isRenamable}
+                <input
+                    class="title-input"
+                    type="text"
+                    placeholder="Add title..."
+                    bind:value={titleValue}
+                    onblur={handleTitleSave}
+                    onkeydown={handleTitleKeydown}
+                    disabled={isRenaming}
+                />
+            {:else}
+                <span class="title-readonly">{session.title ?? session.id}</span>
+            {/if}
             <p class="session-date">
                 {formatDate(session.timestamp)} &middot; {formatDuration(session.duration_secs)}
             </p>
@@ -1090,11 +1097,19 @@
         opacity: 0.5;
     }
 
+    .title-readonly {
+        display: block;
+        width: 100%;
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #fff;
+        font-family: inherit;
+    }
+
     .session-date {
         font-size: 0.8125rem;
         color: #6b6b6b;
         margin-top: 0.125rem;
-        padding-left: 0.375rem;
     }
 
     /* Player Section */
@@ -1614,6 +1629,10 @@
 
     :global(body.light-mode) .title-input::placeholder {
         color: #8a8a8a;
+    }
+
+    :global(body.light-mode) .title-readonly {
+        color: #2a2a2a;
     }
 
     :global(body.light-mode) .title-input:hover {
