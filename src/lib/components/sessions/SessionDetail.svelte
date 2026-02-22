@@ -144,7 +144,7 @@
     // Non-standard folders (no valid timestamp prefix) are not renamable
     const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/;
     let isRenamable = $derived(TIMESTAMP_RE.test(session.id));
-    let titleValue = $state(session.title ?? '');
+    let titleValue = $state(session.title ?? "");
     let isRenaming = $state(false);
 
     // Notes editing state
@@ -175,28 +175,28 @@
     // Sync notes and title when session changes
     $effect(() => {
         notesValue = session.notes;
-        titleValue = session.title ?? '';
+        titleValue = session.title ?? "";
     });
 
     // Save title on blur/enter
     async function handleTitleSave() {
         const trimmed = titleValue.trim();
         // Only rename if the title actually changed
-        if (trimmed === (session.title ?? '')) return;
+        if (trimmed === (session.title ?? "")) return;
         isRenaming = true;
         try {
             await renameCurrentSession(session.id, trimmed);
         } catch (e) {
-            console.error('Failed to rename session:', e);
+            console.error("Failed to rename session:", e);
             // Revert on error
-            titleValue = session.title ?? '';
+            titleValue = session.title ?? "";
         } finally {
             isRenaming = false;
         }
     }
 
     function handleTitleKeydown(e: KeyboardEvent) {
-        if (e.key === 'Enter') {
+        if (e.key === "Enter") {
             e.preventDefault();
             (e.target as HTMLInputElement).blur();
         }
@@ -734,17 +734,20 @@
                 <input
                     class="title-input"
                     type="text"
-                    placeholder="Add title..."
+                    placeholder="Title..."
                     bind:value={titleValue}
                     onblur={handleTitleSave}
                     onkeydown={handleTitleKeydown}
                     disabled={isRenaming}
                 />
             {:else}
-                <span class="title-readonly">{session.title ?? session.id}</span>
+                <span class="title-readonly">{session.title ?? session.id}</span
+                >
             {/if}
             <p class="session-date">
-                {formatDate(session.timestamp)} &middot; {formatDuration(session.duration_secs)}
+                {formatDate(session.timestamp)} &middot; {formatDuration(
+                    session.duration_secs,
+                )}
             </p>
         </div>
     </div>
@@ -908,7 +911,9 @@
                         </button>
                         <span class="track-label">Audio</span>
                         <span class="track-info">
-                            {currentAudioFile?.device_name ?? currentVideoFile?.device_name ?? "Unknown"}
+                            {currentAudioFile?.device_name ??
+                                currentVideoFile?.device_name ??
+                                "Unknown"}
                         </span>
                         {#if session.audio_files.length > 0}
                             <div class="volume-control">
@@ -916,7 +921,9 @@
                                     <div class="meter-track">
                                         <div
                                             class="meter-fill"
-                                            style="width: {rmsToMeterPercent(audioMeterLevel)}%"
+                                            style="width: {rmsToMeterPercent(
+                                                audioMeterLevel,
+                                            )}%"
                                         ></div>
                                     </div>
                                     <input
@@ -926,12 +933,27 @@
                                         max="12"
                                         step="0.1"
                                         value={audioVolumes[audioIndex] ?? 0}
-                                        oninput={(e) => setAudioVolume(audioIndex, parseFloat((e.target as HTMLInputElement).value))}
-                                        ondblclick={() => setAudioVolume(audioIndex, 0)}
+                                        oninput={(e) =>
+                                            setAudioVolume(
+                                                audioIndex,
+                                                parseFloat(
+                                                    (
+                                                        e.target as HTMLInputElement
+                                                    ).value,
+                                                ),
+                                            )}
+                                        ondblclick={() =>
+                                            setAudioVolume(audioIndex, 0)}
                                         title="Track volume (double-click to reset)"
                                     />
                                 </div>
-                                <span class="volume-label">{(audioVolumes[audioIndex] ?? 0) > 0 ? '+' : ''}{(audioVolumes[audioIndex] ?? 0).toFixed(1)} dB</span>
+                                <span class="volume-label"
+                                    >{(audioVolumes[audioIndex] ?? 0) > 0
+                                        ? "+"
+                                        : ""}{(
+                                        audioVolumes[audioIndex] ?? 0
+                                    ).toFixed(1)} dB</span
+                                >
                             </div>
                         {/if}
                         {#if session.audio_files.length > 1}
@@ -1003,7 +1025,7 @@
             <div class="notes-section">
                 <textarea
                     class="notes-input"
-                    placeholder="Add notes..."
+                    placeholder="Notes..."
                     value={notesValue}
                     oninput={handleNotesChange}
                     rows="3"
@@ -1011,8 +1033,7 @@
             </div>
         </div>
 
-        <div class="detail-content">
-        </div>
+        <div class="detail-content"></div>
     </div>
 
     <div class="detail-actions">
@@ -1330,7 +1351,9 @@
         line-height: 1.6;
         resize: none;
         min-height: 60px;
-        transition: background 0.15s ease, border-color 0.15s ease;
+        transition:
+            background 0.15s ease,
+            border-color 0.15s ease;
     }
 
     .notes-input:hover {
@@ -1540,7 +1563,6 @@
         color: #6b6b6b;
         margin-bottom: 0.5rem;
     }
-
 
     .notes {
         padding: 0.75rem;
