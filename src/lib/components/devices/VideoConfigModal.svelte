@@ -600,14 +600,16 @@
                                 .filter(Boolean)
                                 .join(", ")
                                 .replace(/, ([^,]*)$/, " and $1")}. We recommend
+                            selecting
                             <strong
                                 >{recommendedCodec
                                     ? getCodecDisplayName(recommendedCodec)
                                     : "the default"}</strong
                             >.
                         {:else}
-                            No hardware-accelerated open codecs detected. We
-                            recommend selecting <strong>H.264</strong>.
+                            No hardware-accelerated open codecs detected. VP9
+                            gives the best quality at the smallest file size. We
+                            recommend H.264 if it lags.
                         {/if}
                     </p>
                 {/if}

@@ -346,7 +346,7 @@ fn apply_software_av1(encoder: &gst::Element, level: u8, keyframe_interval: u32,
         2 => (11, 1_800),
         3 => (10, 2_500),
         4 => (8, 3_500),
-        _ => (6, 4_500),
+        _ => (8, 4_500),
     };
 
     encoder.set_property("preset", preset);

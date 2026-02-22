@@ -863,7 +863,7 @@
                                 }}
                             />
                             <span class="setting-label"
-                                >Play warning sound if device disconnects</span
+                                >Play warning sound if a device disconnects</span
                             >
                         </label>
                         {#if localSettings.sound_device_disconnect}
