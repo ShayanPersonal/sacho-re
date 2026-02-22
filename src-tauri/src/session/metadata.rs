@@ -45,6 +45,9 @@ pub struct SessionMetadata {
 
     /// User notes
     pub notes: String,
+
+    /// Session title (extracted from folder name)
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +85,7 @@ pub struct SessionSummary {
     pub has_midi: bool,
     pub has_video: bool,
     pub notes: String,
+    pub title: Option<String>,
 }
 
 impl From<&SessionMetadata> for SessionSummary {
@@ -94,6 +98,7 @@ impl From<&SessionMetadata> for SessionSummary {
             has_midi: !meta.midi_files.is_empty(),
             has_video: !meta.video_files.is_empty(),
             notes: meta.notes.clone(),
+            title: meta.title.clone(),
         }
     }
 }

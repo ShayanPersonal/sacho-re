@@ -369,6 +369,67 @@ pub fn update_session_notes(
     Ok(())
 }
 
+/// Sanitize a title for use in folder names.
+/// Strips characters invalid on Windows/Mac/Linux filesystems.
+fn sanitize_title(title: &str) -> String {
+    title
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+#[tauri::command]
+pub fn rename_session(
+    db: State<'_, SessionDatabase>,
+    config: State<'_, RwLock<Config>>,
+    session_id: String,
+    new_title: String,
+) -> Result<SessionSummary, String> {
+    let config = config.read();
+    let old_path = config.storage_path.join(&session_id);
+    if !old_path.exists() {
+        return Err("Session folder not found".to_string());
+    }
+
+    // Extract timestamp prefix from current folder name
+    let timestamp_prefix = session_id.split(" - ").next().unwrap_or(&session_id);
+    let sanitized_title = sanitize_title(&new_title);
+    let new_folder_name = crate::session::build_folder_name(
+        timestamp_prefix,
+        if sanitized_title.is_empty() { None } else { Some(&sanitized_title) },
+    );
+
+    if new_folder_name == session_id {
+        // No change needed - query from DB and return current data
+        let filter = SessionFilter { search_query: None, ..Default::default() };
+        let sessions = db.query_sessions(&filter).map_err(|e| e.to_string())?;
+        return sessions.into_iter()
+            .find(|s| s.id == session_id)
+            .ok_or_else(|| "Session not found in database".to_string());
+    }
+
+    let new_path = config.storage_path.join(&new_folder_name);
+    if new_path.exists() {
+        return Err("A session with this name already exists".to_string());
+    }
+
+    // Rename the folder on disk
+    std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
+
+    // Update DB: rename (ID changed)
+    db.rename_session(&session_id, &new_folder_name, &new_path.to_string_lossy())
+        .map_err(|e| e.to_string())?;
+
+    // Return new summary by querying DB
+    let filter = SessionFilter { search_query: None, ..Default::default() };
+    let sessions = db.query_sessions(&filter).map_err(|e| e.to_string())?;
+    sessions.into_iter()
+        .find(|s| s.id == new_folder_name)
+        .ok_or_else(|| "Session not found after rename".to_string())
+}
+
 // ============================================================================
 // Config Commands
 // ============================================================================
@@ -962,6 +1023,7 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
                     } else {
                         db_row.notes_modified_at.clone()
                     },
+                    title: crate::session::extract_title_from_folder_name(folder_name),
                 });
             }
         } else {

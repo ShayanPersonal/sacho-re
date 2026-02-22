@@ -10,6 +10,7 @@
     import {
         updateNotes,
         selectedSession,
+        renameCurrentSession,
     } from "$lib/stores/sessions";
     import { revealItemInDir } from "@tauri-apps/plugin-opener";
     import { convertFileSrc } from "@tauri-apps/api/core";
@@ -139,6 +140,10 @@
         audioVolumes[index] = Math.abs(db) < 0.5 ? 0 : db;
     }
 
+    // Title editing state
+    let titleValue = $state(session.title ?? '');
+    let isRenaming = $state(false);
+
     // Notes editing state
     let notesValue = $state(session.notes);
     let saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -164,10 +169,35 @@
         }
     }
 
-    // Sync notes when session changes
+    // Sync notes and title when session changes
     $effect(() => {
         notesValue = session.notes;
+        titleValue = session.title ?? '';
     });
+
+    // Save title on blur/enter
+    async function handleTitleSave() {
+        const trimmed = titleValue.trim();
+        // Only rename if the title actually changed
+        if (trimmed === (session.title ?? '')) return;
+        isRenaming = true;
+        try {
+            await renameCurrentSession(session.id, trimmed);
+        } catch (e) {
+            console.error('Failed to rename session:', e);
+            // Revert on error
+            titleValue = session.title ?? '';
+        } finally {
+            isRenaming = false;
+        }
+    }
+
+    function handleTitleKeydown(e: KeyboardEvent) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            (e.target as HTMLInputElement).blur();
+        }
+    }
 
     // Save notes with debounce
     function handleNotesChange(e: Event) {
@@ -697,11 +727,17 @@
 <div class="session-detail">
     <div class="detail-header">
         <div class="header-info">
-            <h2 class="session-title">
-                {formatDate(session.timestamp)}
-            </h2>
-            <p class="session-duration">
-                Duration: {formatDuration(session.duration_secs)}
+            <input
+                class="title-input"
+                type="text"
+                placeholder="Add title..."
+                bind:value={titleValue}
+                onblur={handleTitleSave}
+                onkeydown={handleTitleKeydown}
+                disabled={isRenaming}
+            />
+            <p class="session-date">
+                {formatDate(session.timestamp)} &middot; {formatDuration(session.duration_secs)}
             </p>
         </div>
     </div>
@@ -1022,19 +1058,43 @@
         flex-shrink: 0; /* Keep header fixed */
     }
 
-    .session-title {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
+    .title-input {
+        width: 100%;
         font-size: 1.25rem;
         font-weight: 600;
         color: #fff;
-        margin-bottom: 0.25rem;
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 0.25rem;
+        padding: 0.25rem 0.375rem;
+        margin: -0.25rem -0.375rem;
+        font-family: inherit;
+        transition: border-color 0.15s ease;
     }
 
-    .session-duration {
-        font-size: 0.875rem;
+    .title-input::placeholder {
+        color: #4a4a4a;
+        font-weight: 400;
+    }
+
+    .title-input:hover {
+        border-color: rgba(255, 255, 255, 0.08);
+    }
+
+    .title-input:focus {
+        outline: none;
+        border-color: rgba(201, 169, 98, 0.4);
+    }
+
+    .title-input:disabled {
+        opacity: 0.5;
+    }
+
+    .session-date {
+        font-size: 0.8125rem;
         color: #6b6b6b;
+        margin-top: 0.125rem;
+        padding-left: 0.375rem;
     }
 
     /* Player Section */
@@ -1548,11 +1608,23 @@
         border-bottom-color: rgba(0, 0, 0, 0.08);
     }
 
-    :global(body.light-mode) .session-title {
+    :global(body.light-mode) .title-input {
         color: #2a2a2a;
     }
 
-    :global(body.light-mode) .session-duration {
+    :global(body.light-mode) .title-input::placeholder {
+        color: #8a8a8a;
+    }
+
+    :global(body.light-mode) .title-input:hover {
+        border-color: rgba(0, 0, 0, 0.1);
+    }
+
+    :global(body.light-mode) .title-input:focus {
+        border-color: rgba(160, 128, 48, 0.5);
+    }
+
+    :global(body.light-mode) .session-date {
         color: #5a5a5a;
     }
 

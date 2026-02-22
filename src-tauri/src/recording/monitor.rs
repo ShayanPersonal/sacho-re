@@ -2386,6 +2386,7 @@ fn stop_recording(
         midi_files,
         video_files,
         notes: String::new(),
+        title: None,
     };
     
     let db = app_handle.state::<SessionDatabase>();

@@ -2,7 +2,7 @@
 
 import { writable, derived, get } from 'svelte/store';
 import type { SessionSummary, SessionMetadata, SessionFilter, RescanProgress } from '$lib/api';
-import { getSessions, getSessionDetail, deleteSession as apiDeleteSession, updateSessionNotes as apiUpdateNotes, rescanSessions as apiRescanSessions } from '$lib/api';
+import { getSessions, getSessionDetail, deleteSession as apiDeleteSession, updateSessionNotes as apiUpdateNotes, rescanSessions as apiRescanSessions, renameSession as apiRenameSession } from '$lib/api';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 // Store for session list
@@ -121,6 +121,7 @@ export function addNewSession(metadata: SessionMetadata) {
     has_midi: (metadata.midi_files?.length ?? 0) > 0,
     has_video: (metadata.video_files?.length ?? 0) > 0,
     notes: '',
+    title: metadata.title ?? null,
   };
   
   // Prepend to list (newest first)
@@ -181,6 +182,28 @@ export async function updateNotes(sessionId: string, notes: string) {
     );
   } catch (error) {
     console.error('Failed to update notes:', error);
+    throw error;
+  }
+}
+
+export async function renameCurrentSession(oldId: string, newTitle: string) {
+  try {
+    const newSummary = await apiRenameSession(oldId, newTitle);
+
+    // Replace old entry with new summary in the list
+    sessions.update(list => list.map(s =>
+      s.id === oldId ? newSummary : s
+    ));
+
+    // Update selected session ID to the new ID
+    selectedSessionId.set(newSummary.id);
+
+    // Reload detail with the new path
+    await selectSession(newSummary.id);
+
+    return newSummary;
+  } catch (error) {
+    console.error('Failed to rename session:', error);
     throw error;
   }
 }
