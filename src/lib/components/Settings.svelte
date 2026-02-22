@@ -433,7 +433,7 @@
                     </div>
                     <p class="setting-recommendation">
                         Tip: You can back up this folder to cloud storage and
-                        open it in other installations of this app.
+                        open it in this app on other systems.
                     </p>
                 </div>
                 <div class="setting-row">
