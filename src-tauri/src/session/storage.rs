@@ -5,6 +5,7 @@ use super::unsanitize_device_name;
 use std::path::Path;
 use std::io::{Read, Seek, SeekFrom};
 use chrono::{DateTime, NaiveDateTime, Utc, TimeZone};
+use gstreamer_pbutils;
 
 // ============================================================================
 // Read-only header parsing functions
@@ -105,14 +106,20 @@ pub fn read_flac_duration(path: &Path) -> anyhow::Result<f64> {
 }
 
 /// Read video (or any media) duration using GStreamer Discoverer.
+/// Creates a one-off Discoverer. For batch operations, use
+/// `read_video_duration_with_discoverer` with a shared instance.
 pub fn read_video_duration(path: &Path) -> anyhow::Result<f64> {
-    use gstreamer_pbutils as gst_pbutils;
+    let discoverer = get_or_create_discoverer()?;
+    read_video_duration_with_discoverer(path, &discoverer)
+}
 
-    gstreamer::init().map_err(|e| anyhow::anyhow!("GStreamer init failed: {}", e))?;
-
+/// Read video duration using a pre-created GStreamer Discoverer (avoids
+/// repeated init + teardown when scanning many files).
+pub fn read_video_duration_with_discoverer(
+    path: &Path,
+    discoverer: &gstreamer_pbutils::Discoverer,
+) -> anyhow::Result<f64> {
     let uri = format!("file:///{}", path.to_string_lossy().replace('\\', "/"));
-    let discoverer = gst_pbutils::Discoverer::new(gstreamer::ClockTime::from_seconds(10))
-        .map_err(|e| anyhow::anyhow!("Failed to create discoverer: {}", e))?;
 
     let info = discoverer.discover_uri(&uri)
         .map_err(|e| anyhow::anyhow!("Discovery failed: {}", e))?;
@@ -121,6 +128,14 @@ pub fn read_video_duration(path: &Path) -> anyhow::Result<f64> {
         .ok_or_else(|| anyhow::anyhow!("No duration found"))?;
 
     Ok(duration.nseconds() as f64 / 1_000_000_000.0)
+}
+
+/// Create a GStreamer Discoverer, ensuring gstreamer::init() has been called.
+pub fn get_or_create_discoverer() -> anyhow::Result<gstreamer_pbutils::Discoverer> {
+    gstreamer::init().map_err(|e| anyhow::anyhow!("GStreamer init failed: {}", e))?;
+
+    gstreamer_pbutils::Discoverer::new(gstreamer::ClockTime::from_seconds(10))
+        .map_err(|e| anyhow::anyhow!("Failed to create discoverer: {}", e))
 }
 
 /// Count NoteOn events with velocity > 0 in a MIDI file using midly.
@@ -147,11 +162,120 @@ pub fn count_midi_events(path: &Path) -> anyhow::Result<usize> {
 }
 
 // ============================================================================
+// Lightweight scan for session index (rescan_sessions)
+// ============================================================================
+
+use super::database::SessionIndexData;
+
+/// Lightweight scan of a session directory for the session index.
+/// Reads file extensions, parses audio/video durations from headers, reads notes.txt.
+/// Does NOT count MIDI events or check MIDI header corruption.
+/// If ANY audio/video file fails to return a valid duration, session duration is 0.0.
+///
+/// Pass `discoverer` to reuse a GStreamer Discoverer across multiple calls
+/// (avoids repeated init/teardown). Pass `None` to create one on demand.
+pub fn scan_session_dir_for_index(
+    session_path: &Path,
+    discoverer: Option<&gstreamer_pbutils::Discoverer>,
+) -> anyhow::Result<SessionIndexData> {
+    let folder_name = session_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| anyhow::anyhow!("Invalid session path"))?
+        .to_string();
+
+    let timestamp = parse_session_timestamp(&folder_name)
+        .unwrap_or_else(Utc::now);
+
+    let entries = std::fs::read_dir(session_path)?;
+
+    let mut has_audio = false;
+    let mut has_midi = false;
+    let mut has_video = false;
+    let mut durations: Vec<f64> = Vec::new();
+    let mut any_duration_failed = false;
+    let mut notes = String::new();
+    let mut notes_modified_at = String::new();
+
+    // Lazy-init a fallback discoverer only if needed and none was provided
+    let mut fallback_discoverer: Option<gstreamer_pbutils::Discoverer> = None;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let fname = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+
+        if fname == "notes.txt" {
+            notes = std::fs::read_to_string(&path).unwrap_or_default();
+            if let Ok(meta) = std::fs::metadata(&path) {
+                if let Ok(modified) = meta.modified() {
+                    let dt: DateTime<Utc> = modified.into();
+                    notes_modified_at = dt.to_rfc3339();
+                }
+            }
+            continue;
+        }
+
+        if fname.ends_with(".mid") {
+            has_midi = true;
+        } else if fname.ends_with(".wav") {
+            has_audio = true;
+            match read_wav_duration(&path) {
+                Ok(d) => durations.push(d),
+                Err(_) => any_duration_failed = true,
+            }
+        } else if fname.ends_with(".flac") {
+            has_audio = true;
+            match read_flac_duration(&path) {
+                Ok(d) => durations.push(d),
+                Err(_) => any_duration_failed = true,
+            }
+        } else if fname.ends_with(".mkv") {
+            has_video = true;
+            let disc = discoverer.or_else(|| {
+                if fallback_discoverer.is_none() {
+                    fallback_discoverer = get_or_create_discoverer().ok();
+                }
+                fallback_discoverer.as_ref()
+            });
+            let result = match disc {
+                Some(d) => read_video_duration_with_discoverer(&path, d),
+                None => Err(anyhow::anyhow!("Failed to create GStreamer discoverer")),
+            };
+            match result {
+                Ok(d) => durations.push(d),
+                Err(_) => any_duration_failed = true,
+            }
+        }
+    }
+
+    let duration_secs = if any_duration_failed {
+        0.0
+    } else {
+        durations.into_iter().fold(0.0f64, f64::max)
+    };
+
+    Ok(SessionIndexData {
+        id: folder_name,
+        timestamp,
+        path: session_path.to_string_lossy().to_string(),
+        duration_secs,
+        has_audio,
+        has_midi,
+        has_video,
+        notes,
+        notes_modified_at,
+    })
+}
+
+// ============================================================================
 // Directory scan → SessionMetadata
 // ============================================================================
 
 /// Parse a session timestamp from a folder name like "2026-02-21_14-32-45".
-fn parse_session_timestamp(folder_name: &str) -> Option<DateTime<Utc>> {
+pub fn parse_session_timestamp(folder_name: &str) -> Option<DateTime<Utc>> {
     NaiveDateTime::parse_from_str(folder_name, "%Y-%m-%d_%H-%M-%S")
         .ok()
         .map(|dt| Utc.from_utc_datetime(&dt))

@@ -156,6 +156,7 @@ pub fn get_sessions(
 #[tauri::command]
 pub fn get_session_detail(
     config: State<'_, RwLock<Config>>,
+    db: State<'_, SessionDatabase>,
     session_id: String,
 ) -> Result<Option<SessionMetadata>, String> {
     let config = config.read();
@@ -170,6 +171,19 @@ pub fn get_session_detail(
     // Build metadata from directory scan
     let mut metadata = crate::session::build_session_from_directory(&session_path)
         .map_err(|e| e.to_string())?;
+
+    // Sync notes to DB if notes.txt was modified externally
+    let notes_path = session_path.join("notes.txt");
+    if notes_path.exists() {
+        if let Ok(file_meta) = std::fs::metadata(&notes_path) {
+            if let Ok(modified) = file_meta.modified() {
+                let dt: chrono::DateTime<chrono::Utc> = modified.into();
+                let modified_str = dt.to_rfc3339();
+                // Best-effort DB sync — don't fail the detail load on DB error
+                let _ = db.update_notes_with_timestamp(&session_id, &metadata.notes, &modified_str);
+            }
+        }
+    }
 
     // Check file integrity (detect interrupted recordings)
     use crate::recording::monitor;
@@ -206,6 +220,13 @@ pub fn get_session_detail(
     // If no media files found, session is empty
     if metadata.midi_files.is_empty() && metadata.audio_files.is_empty() && metadata.video_files.is_empty() {
         return Ok(None);
+    }
+
+    // Duration 0 with audio/video files indicates corruption — show repair banner
+    if metadata.duration_secs == 0.0
+        && (!metadata.audio_files.is_empty() || !metadata.video_files.is_empty())
+    {
+        has_corrupt_files = true;
     }
 
     // If any files are corrupt, add a repair flag via a placeholder MIDI entry
@@ -315,10 +336,6 @@ pub fn update_session_notes(
     session_id: String,
     notes: String,
 ) -> Result<(), String> {
-    // Update database
-    db.update_notes(&session_id, &notes)
-        .map_err(|e| e.to_string())?;
-
     // Write notes.txt to the session folder (or delete if empty)
     let config = config.read();
     let notes_path = config.storage_path.join(&session_id).join("notes.txt");
@@ -328,8 +345,24 @@ pub fn update_session_notes(
         if notes_path.exists() {
             let _ = std::fs::remove_file(&notes_path);
         }
+        // Update database with empty notes and empty timestamp
+        db.update_notes_with_timestamp(&session_id, &notes, "")
+            .map_err(|e| e.to_string())?;
     } else {
         std::fs::write(&notes_path, &notes)
+            .map_err(|e| e.to_string())?;
+
+        // Read back the OS modified time and update DB
+        let notes_modified_at = std::fs::metadata(&notes_path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .map(|t| {
+                let dt: chrono::DateTime<chrono::Utc> = t.into();
+                dt.to_rfc3339()
+            })
+            .unwrap_or_default();
+
+        db.update_notes_with_timestamp(&session_id, &notes, &notes_modified_at)
             .map_err(|e| e.to_string())?;
     }
 
@@ -806,52 +839,159 @@ pub fn clear_midi_imports(
 }
 
 #[tauri::command]
-pub fn rescan_sessions(
-    config: State<'_, RwLock<Config>>,
-    db: State<'_, SessionDatabase>,
+pub async fn rescan_sessions(
+    app: tauri::AppHandle,
 ) -> Result<usize, String> {
+    tokio::task::spawn_blocking(move || {
+        rescan_sessions_blocking(&app)
+    }).await.map_err(|e| e.to_string())?
+}
+
+fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
+    use std::collections::{HashMap, HashSet};
+    use crate::session::{SessionIndexData, UpdatedSessionData, ExistingSessionRow};
+
+    let config = app.state::<RwLock<Config>>();
+    let db = app.state::<SessionDatabase>();
     let storage_path = config.read().storage_path.clone();
 
     if !storage_path.exists() {
         return Ok(0);
     }
 
-    // Collect all metadata first, then batch insert
-    let mut sessions: Vec<SessionMetadata> = Vec::new();
+    // 1. Collect folder names from disk
+    let mut folder_list: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let mut disk_folders: HashSet<String> = HashSet::new();
 
-    // Scan all directories in storage path
     for entry in std::fs::read_dir(&storage_path).map_err(|e| e.to_string())? {
         let entry = match entry {
             Ok(e) => e,
             Err(_) => continue,
         };
         let path = entry.path();
-
         if !path.is_dir() {
             continue;
         }
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            disk_folders.insert(name.to_string());
+            folder_list.push((name.to_string(), path));
+        }
+    }
 
-        // Build metadata from directory scan (skip folders with no media files)
-        match crate::session::build_session_from_directory(&path) {
-            Ok(metadata) => {
-                if !metadata.midi_files.is_empty()
-                    || !metadata.audio_files.is_empty()
-                    || !metadata.video_files.is_empty()
-                {
-                    sessions.push(metadata);
+    // 2. Get existing sessions from DB
+    let existing = db.get_all_existing_sessions().map_err(|e| e.to_string())?;
+    let existing_map: HashMap<String, ExistingSessionRow> = existing
+        .into_iter()
+        .map(|row| (row.id.clone(), row))
+        .collect();
+
+    // Only emit progress if there are new sessions to scan (the slow path)
+    let new_count = folder_list.iter()
+        .filter(|(name, _)| !existing_map.contains_key(name))
+        .count();
+    let emit_progress = new_count > 0;
+    let total = folder_list.len();
+
+    // Create a single shared GStreamer Discoverer for all video duration reads
+    let discoverer = if new_count > 0 {
+        crate::session::get_or_create_discoverer().ok()
+    } else {
+        None
+    };
+
+    // 3. Diff: new, updated, deleted
+    let mut new_sessions: Vec<SessionIndexData> = Vec::new();
+    let mut updated_sessions: Vec<UpdatedSessionData> = Vec::new();
+
+    for (i, (folder_name, path)) in folder_list.iter().enumerate() {
+        if emit_progress {
+            let _ = app.emit("rescan-progress", RescanProgress {
+                current: i + 1,
+                total,
+            });
+        }
+
+        if let Some(db_row) = existing_map.get(folder_name) {
+            // Existing session - lightweight check only (no header parsing)
+            let mut has_audio = false;
+            let mut has_midi = false;
+            let mut has_video = false;
+            let mut notes_modified_at = String::new();
+
+            if let Ok(entries) = std::fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    let fname = match entry.file_name().to_str() {
+                        Some(n) => n.to_string(),
+                        None => continue,
+                    };
+                    if fname == "notes.txt" {
+                        if let Ok(meta) = entry.metadata() {
+                            if let Ok(modified) = meta.modified() {
+                                let dt: chrono::DateTime<chrono::Utc> = modified.into();
+                                notes_modified_at = dt.to_rfc3339();
+                            }
+                        }
+                    } else if fname.ends_with(".wav") || fname.ends_with(".flac") {
+                        has_audio = true;
+                    } else if fname.ends_with(".mid") {
+                        has_midi = true;
+                    } else if fname.ends_with(".mkv") {
+                        has_video = true;
+                    }
                 }
             }
-            Err(e) => {
-                log::debug!("Skipping directory {}: {}", path.display(), e);
+
+            // Check if anything changed
+            let tags_changed = has_audio != db_row.has_audio
+                || has_midi != db_row.has_midi
+                || has_video != db_row.has_video;
+            let notes_changed = notes_modified_at != db_row.notes_modified_at;
+
+            if tags_changed || notes_changed {
+                let notes_path = path.join("notes.txt");
+                let notes = std::fs::read_to_string(&notes_path).unwrap_or_default();
+
+                updated_sessions.push(UpdatedSessionData {
+                    id: folder_name.clone(),
+                    has_audio,
+                    has_midi,
+                    has_video,
+                    notes,
+                    notes_modified_at: if notes_changed {
+                        notes_modified_at
+                    } else {
+                        db_row.notes_modified_at.clone()
+                    },
+                });
+            }
+        } else {
+            // New session - full scan with header parsing
+            match crate::session::scan_session_dir_for_index(path, discoverer.as_ref()) {
+                Ok(index_data) => {
+                    if index_data.has_audio || index_data.has_midi || index_data.has_video {
+                        new_sessions.push(index_data);
+                    }
+                }
+                Err(e) => {
+                    log::debug!("Skipping directory {}: {}", path.display(), e);
+                }
             }
         }
     }
-    
-    // Batch insert all sessions in a single transaction
-    let count = db.batch_upsert_sessions(&sessions).map_err(|e| e.to_string())?;
-    
-    log::info!("Rescanned {} sessions", count);
-    Ok(count)
+
+    // 4. Sessions in DB but not on disk -> deleted
+    let deleted_ids: Vec<&String> = existing_map.keys()
+        .filter(|id| !disk_folders.contains(id.as_str()))
+        .collect();
+
+    // 5. Batch sync in a single transaction
+    let _count = db.batch_sync(&new_sessions, &updated_sessions, &deleted_ids)
+        .map_err(|e| e.to_string())?;
+
+    let result = new_sessions.len() + updated_sessions.len();
+    log::info!("Rescanned sessions: {} new, {} updated, {} deleted",
+        new_sessions.len(), updated_sessions.len(), deleted_ids.len());
+    Ok(result)
 }
 
 // ============================================================================
@@ -1098,6 +1238,13 @@ pub fn get_encoder_availability() -> EncoderAvailability {
 // ============================================================================
 // Auto-select Encoder Preset
 // ============================================================================
+
+/// Progress update emitted during session rescan
+#[derive(Debug, Clone, Serialize)]
+pub struct RescanProgress {
+    pub current: usize,
+    pub total: usize,
+}
 
 /// Progress update emitted during MIDI folder import
 #[derive(Debug, Clone, Serialize)]

@@ -1,8 +1,9 @@
 // Session list store
 
 import { writable, derived, get } from 'svelte/store';
-import type { SessionSummary, SessionMetadata, SessionFilter } from '$lib/api';
+import type { SessionSummary, SessionMetadata, SessionFilter, RescanProgress } from '$lib/api';
 import { getSessions, getSessionDetail, deleteSession as apiDeleteSession, updateSessionNotes as apiUpdateNotes, rescanSessions as apiRescanSessions } from '$lib/api';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 // Store for session list
 export const sessions = writable<SessionSummary[]>([]);
@@ -25,6 +26,9 @@ export const sessionFilter = writable<SessionFilter>({
 
 // Loading state
 export const isLoading = writable(false);
+
+// Scan progress (non-null only during first-time scan of new sessions)
+export const scanProgress = writable<RescanProgress | null>(null);
 
 // Derived store for grouped sessions by date
 export const groupedSessions = derived(sessions, $sessions => {
@@ -64,25 +68,33 @@ export const groupedSessions = derived(sessions, $sessions => {
 // Actions
 export async function refreshSessions(autoSelectLatest = false) {
   isLoading.set(true);
+  scanProgress.set(null);
   try {
-    // First rescan sessions from disk to rebuild the database index
+    // Listen for progress events during rescan
+    let unlisten: UnlistenFn | null = null;
     try {
+      unlisten = await listen<RescanProgress>('rescan-progress', (event) => {
+        scanProgress.set(event.payload);
+      });
       await apiRescanSessions();
     } catch (e) {
       console.error('Failed to rescan sessions:', e);
+    } finally {
+      if (unlisten) unlisten();
+      scanProgress.set(null);
     }
-    
+
     let filter: SessionFilter = {};
     sessionFilter.subscribe(f => filter = f)();
-    
+
     const sessionList = await getSessions(filter);
     sessions.set(sessionList);
-    
+
     // Auto-select the latest session if requested and no session is currently selected
     if (autoSelectLatest && sessionList.length > 0) {
       let currentSelection: string | null = null;
       selectedSessionId.subscribe(id => currentSelection = id)();
-      
+
       if (!currentSelection) {
         // Sessions are sorted by timestamp descending, so first one is the latest
         await selectSession(sessionList[0].id);

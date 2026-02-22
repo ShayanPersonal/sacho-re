@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { 
-    sessions, 
-    groupedSessions, 
-    selectedSession, 
+  import {
+    sessions,
+    groupedSessions,
+    selectedSession,
     selectedSessionId,
     sessionFilter,
     isLoading,
+    scanProgress,
     selectSession,
     deleteSessionById,
     updateFilter,
@@ -139,7 +140,17 @@
     
     <div class="session-list">
       {#if $isLoading}
-        <div class="loading">Loading sessions...</div>
+        {#if $scanProgress}
+          <div class="scan-progress">
+            <p class="scan-message">Loading recordings for the first time. This may take a while.</p>
+            <div class="progress-bar-track">
+              <div class="progress-bar-fill" style="width: {($scanProgress.current / $scanProgress.total) * 100}%"></div>
+            </div>
+            <p class="scan-count">{$scanProgress.current} of {$scanProgress.total}</p>
+          </div>
+        {:else}
+          <div class="loading">Loading sessions...</div>
+        {/if}
       {:else if $sessions.length === 0}
         <div class="empty">No sessions found</div>
       {:else}
@@ -405,6 +416,45 @@
     color: #4a4a4a;
     font-size: 0.8125rem;
   }
+
+  .scan-progress {
+    padding: 2rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .scan-message {
+    color: #8a8a8a;
+    font-size: 0.75rem;
+    text-align: center;
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  .progress-bar-track {
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: #c9a962;
+    border-radius: 2px;
+    transition: width 0.15s ease-out;
+  }
+
+  .scan-count {
+    color: #5a5a5a;
+    font-size: 0.6875rem;
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
+    letter-spacing: 0.02em;
+    margin: 0;
+  }
   
   .session-group {
     display: flex;
@@ -646,6 +696,22 @@
   :global(body.light-mode) .loading,
   :global(body.light-mode) .empty {
     color: #8a8a8a;
+  }
+
+  :global(body.light-mode) .scan-message {
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .progress-bar-track {
+    background: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .progress-bar-fill {
+    background: #a08030;
+  }
+
+  :global(body.light-mode) .scan-count {
+    color: #7a7a7a;
   }
 
   :global(body.light-mode) .group-header {

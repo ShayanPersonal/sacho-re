@@ -31,8 +31,6 @@ pub struct AudioStreamWriter {
     channels: u16,
     /// Native input sample rate from cpal
     native_rate: u32,
-    /// Output sample rate (after resampling, or native if passthrough)
-    output_rate: u32,
     /// Total frames pushed (for PTS / duration calculation)
     frames_pushed: u64,
 }
@@ -147,7 +145,6 @@ impl AudioStreamWriter {
             device_name: device_name.to_string(),
             channels,
             native_rate,
-            output_rate,
             frames_pushed: 0,
         })
     }

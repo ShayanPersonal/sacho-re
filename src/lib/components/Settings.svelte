@@ -432,8 +432,8 @@
                         >
                     </div>
                     <p class="setting-recommendation">
-                        We recommend backing up this folder to a cloud storage
-                        service.
+                        Tip: You can back up this folder to the cloud and open
+                        it in other instances of this application.
                     </p>
                 </div>
                 <div class="setting-row">

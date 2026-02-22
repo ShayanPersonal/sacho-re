@@ -657,6 +657,11 @@ export async function clearMidiImports(): Promise<void> {
   return invoke("clear_midi_imports");
 }
 
+export interface RescanProgress {
+  current: number;
+  total: number;
+}
+
 export async function rescanSessions(): Promise<number> {
   return invoke("rescan_sessions");
 }

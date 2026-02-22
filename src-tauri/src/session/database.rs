@@ -62,7 +62,8 @@ impl SessionDatabase {
                 has_audio INTEGER NOT NULL DEFAULT 0,
                 has_midi INTEGER NOT NULL DEFAULT 0,
                 has_video INTEGER NOT NULL DEFAULT 0,
-                notes TEXT NOT NULL DEFAULT ''
+                notes TEXT NOT NULL DEFAULT '',
+                notes_modified_at TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS midi_imports (
@@ -84,7 +85,17 @@ impl SessionDatabase {
                 content_rowid='rowid'
             );
         "#)?;
-        
+
+        // Migration: add notes_modified_at column for existing databases
+        let has_column: bool = conn
+            .prepare("SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'notes_modified_at'")?
+            .query_row([], |row| row.get::<_, i64>(0))
+            .map(|count| count > 0)?;
+
+        if !has_column {
+            conn.execute_batch("ALTER TABLE sessions ADD COLUMN notes_modified_at TEXT NOT NULL DEFAULT ''")?;
+        }
+
         Ok(())
     }
     
@@ -95,8 +106,8 @@ impl SessionDatabase {
             r#"
             INSERT INTO sessions (
                 id, timestamp, duration_secs, path, has_audio, has_midi, has_video,
-                notes
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                notes, notes_modified_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '')
             ON CONFLICT(id) DO UPDATE SET
                 timestamp = excluded.timestamp,
                 duration_secs = excluded.duration_secs,
@@ -121,46 +132,117 @@ impl SessionDatabase {
         Ok(())
     }
     
-    /// Batch upsert multiple sessions in a single transaction (much faster)
-    pub fn batch_upsert_sessions(&self, sessions: &[SessionMetadata]) -> anyhow::Result<usize> {
+    /// Get all existing session rows for lightweight comparison during rescan
+    pub fn get_all_existing_sessions(&self) -> anyhow::Result<Vec<ExistingSessionRow>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, has_audio, has_midi, has_video, notes_modified_at FROM sessions"
+        )?;
+
+        let mut rows_out = Vec::new();
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            rows_out.push(ExistingSessionRow {
+                id: row.get(0)?,
+                has_audio: row.get(1)?,
+                has_midi: row.get(2)?,
+                has_video: row.get(3)?,
+                notes_modified_at: row.get(4)?,
+            });
+        }
+        Ok(rows_out)
+    }
+
+    /// Sync new, updated, and deleted sessions in a single transaction
+    pub fn batch_sync(
+        &self,
+        new: &[SessionIndexData],
+        updated: &[UpdatedSessionData],
+        deleted_ids: &[&String],
+    ) -> anyhow::Result<usize> {
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
-
         let mut count = 0;
-        for metadata in sessions {
+
+        for s in new {
             tx.execute(
                 r#"
                 INSERT INTO sessions (
                     id, timestamp, duration_secs, path, has_audio, has_midi, has_video,
-                    notes
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    notes, notes_modified_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                 ON CONFLICT(id) DO UPDATE SET
                     timestamp = excluded.timestamp,
                     duration_secs = excluded.duration_secs,
                     path = excluded.path,
                     has_audio = excluded.has_audio,
                     has_midi = excluded.has_midi,
-                    has_video = excluded.has_video
+                    has_video = excluded.has_video,
+                    notes = excluded.notes,
+                    notes_modified_at = excluded.notes_modified_at
                 "#,
                 params![
-                    metadata.id,
-                    metadata.timestamp.to_rfc3339(),
-                    metadata.duration_secs,
-                    metadata.path.to_string_lossy().to_string(),
-                    !metadata.audio_files.is_empty(),
-                    !metadata.midi_files.is_empty(),
-                    !metadata.video_files.is_empty(),
-                    metadata.notes,
+                    s.id,
+                    s.timestamp.to_rfc3339(),
+                    s.duration_secs,
+                    s.path,
+                    s.has_audio,
+                    s.has_midi,
+                    s.has_video,
+                    s.notes,
+                    s.notes_modified_at,
                 ],
             )?;
+            count += 1;
+        }
 
+        for u in updated {
+            tx.execute(
+                r#"
+                UPDATE sessions SET
+                    has_audio = ?1,
+                    has_midi = ?2,
+                    has_video = ?3,
+                    notes = ?4,
+                    notes_modified_at = ?5
+                WHERE id = ?6
+                "#,
+                params![
+                    u.has_audio,
+                    u.has_midi,
+                    u.has_video,
+                    u.notes,
+                    u.notes_modified_at,
+                    u.id,
+                ],
+            )?;
+            count += 1;
+        }
+
+        for id in deleted_ids {
+            tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
             count += 1;
         }
 
         tx.commit()?;
         Ok(count)
     }
-    
+
+    /// Update notes and modified timestamp for a session
+    pub fn update_notes_with_timestamp(
+        &self,
+        session_id: &str,
+        notes: &str,
+        notes_modified_at: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE sessions SET notes = ?1, notes_modified_at = ?2 WHERE id = ?3",
+            params![notes, notes_modified_at, session_id],
+        )?;
+        Ok(())
+    }
+
     /// Delete a session from the index
     pub fn delete_session(&self, session_id: &str) -> anyhow::Result<()> {
         let conn = self.conn.lock();
@@ -255,15 +337,6 @@ impl SessionDatabase {
         })
     }
     
-    /// Update notes for a session
-    pub fn update_notes(&self, session_id: &str, notes: &str) -> anyhow::Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
-            "UPDATE sessions SET notes = ?1 WHERE id = ?2",
-            params![notes, session_id],
-        )?;
-        Ok(())
-    }
 
     /// Insert MIDI imports in a batch
     pub fn insert_midi_imports(&self, imports: &[MidiImport]) -> anyhow::Result<()> {
@@ -337,6 +410,38 @@ pub struct SessionFilter {
     pub has_notes: Option<bool>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
+}
+
+/// Lightweight session data for initial index (new sessions only)
+pub struct SessionIndexData {
+    pub id: String,
+    pub timestamp: DateTime<Utc>,
+    pub path: String,
+    pub duration_secs: f64,
+    pub has_audio: bool,
+    pub has_midi: bool,
+    pub has_video: bool,
+    pub notes: String,
+    pub notes_modified_at: String,
+}
+
+/// Existing session row for lightweight comparison during rescan
+pub struct ExistingSessionRow {
+    pub id: String,
+    pub has_audio: bool,
+    pub has_midi: bool,
+    pub has_video: bool,
+    pub notes_modified_at: String,
+}
+
+/// Tag/notes-only update data (no duration recompute)
+pub struct UpdatedSessionData {
+    pub id: String,
+    pub has_audio: bool,
+    pub has_midi: bool,
+    pub has_video: bool,
+    pub notes: String,
+    pub notes_modified_at: String,
 }
 
 /// Imported MIDI file for similarity analysis
