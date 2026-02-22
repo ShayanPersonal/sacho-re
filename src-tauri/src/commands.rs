@@ -916,6 +916,7 @@ pub async fn rescan_sessions(
 fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
     use std::collections::{HashMap, HashSet};
     use crate::session::{SessionIndexData, UpdatedSessionData, ExistingSessionRow};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     let config = app.state::<RwLock<Config>>();
     let db = app.state::<SessionDatabase>();
@@ -926,8 +927,16 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
     }
 
     // 1. Collect folder names from disk
-    let mut folder_list: Vec<(String, std::path::PathBuf)> = Vec::new();
     let mut disk_folders: HashSet<String> = HashSet::new();
+    let mut existing_folders: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let mut new_folders: Vec<(String, std::path::PathBuf)> = Vec::new();
+
+    // 2. Get existing sessions from DB (before partitioning)
+    let existing = db.get_all_existing_sessions().map_err(|e| e.to_string())?;
+    let existing_map: HashMap<String, ExistingSessionRow> = existing
+        .into_iter()
+        .map(|row| (row.id.clone(), row))
+        .collect();
 
     for entry in std::fs::read_dir(&storage_path).map_err(|e| e.to_string())? {
         let entry = match entry {
@@ -940,45 +949,28 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
         }
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             disk_folders.insert(name.to_string());
-            folder_list.push((name.to_string(), path));
+            if existing_map.contains_key(name) {
+                existing_folders.push((name.to_string(), path));
+            } else {
+                new_folders.push((name.to_string(), path));
+            }
         }
     }
 
-    // 2. Get existing sessions from DB
-    let existing = db.get_all_existing_sessions().map_err(|e| e.to_string())?;
-    let existing_map: HashMap<String, ExistingSessionRow> = existing
-        .into_iter()
-        .map(|row| (row.id.clone(), row))
-        .collect();
+    let emit_progress = !new_folders.is_empty();
+    let total = existing_folders.len() + new_folders.len();
+    let progress_counter = std::sync::Arc::new(AtomicUsize::new(0));
 
-    // Only emit progress if there are new sessions to scan (the slow path)
-    let new_count = folder_list.iter()
-        .filter(|(name, _)| !existing_map.contains_key(name))
-        .count();
-    let emit_progress = new_count > 0;
-    let total = folder_list.len();
-
-    // Create a single shared GStreamer Discoverer for all video duration reads
-    let discoverer = if new_count > 0 {
-        crate::session::get_or_create_discoverer().ok()
-    } else {
-        None
-    };
-
-    // 3. Diff: new, updated, deleted
-    let mut new_sessions: Vec<SessionIndexData> = Vec::new();
+    // 3a. Existing sessions — lightweight check (sequential, fast)
     let mut updated_sessions: Vec<UpdatedSessionData> = Vec::new();
 
-    for (i, (folder_name, path)) in folder_list.iter().enumerate() {
+    for (folder_name, path) in &existing_folders {
         if emit_progress {
-            let _ = app.emit("rescan-progress", RescanProgress {
-                current: i + 1,
-                total,
-            });
+            let done = progress_counter.fetch_add(1, Ordering::Relaxed) + 1;
+            let _ = app.emit("rescan-progress", RescanProgress { current: done, total });
         }
 
         if let Some(db_row) = existing_map.get(folder_name) {
-            // Existing session - lightweight check only (no header parsing)
             let mut has_audio = false;
             let mut has_midi = false;
             let mut has_video = false;
@@ -1007,7 +999,6 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
                 }
             }
 
-            // Check if anything changed
             let tags_changed = has_audio != db_row.has_audio
                 || has_midi != db_row.has_midi
                 || has_video != db_row.has_video;
@@ -1031,12 +1022,62 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
                     title: crate::session::extract_title_from_folder_name(folder_name),
                 });
             }
-        } else {
-            // New session - full scan with header parsing
-            match crate::session::scan_session_dir_for_index(path, discoverer.as_ref()) {
+        }
+    }
+
+    // 3b. New sessions — parallel full scan with header parsing
+    //
+    // Each worker thread pulls folders from a shared queue, creates its own
+    // GStreamer Discoverer (not Send, so one per thread), and sends results
+    // back via a channel. This overlaps I/O-latency across folders, which is
+    // the main bottleneck on cloud-backed filesystems like Google Drive.
+    let new_sessions: Vec<SessionIndexData> = if new_folders.is_empty() {
+        Vec::new()
+    } else {
+        let num_workers = 8.min(new_folders.len());
+        let work_queue = std::sync::Arc::new(
+            std::sync::Mutex::new(new_folders.into_iter())
+        );
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let mut workers = Vec::with_capacity(num_workers);
+        for _ in 0..num_workers {
+            let work = work_queue.clone();
+            let tx = tx.clone();
+            let app_handle = app.clone();
+            let counter = progress_counter.clone();
+
+            workers.push(std::thread::spawn(move || {
+                // One discoverer per worker, reused across all its folders
+                let discoverer = crate::session::get_or_create_discoverer().ok();
+                loop {
+                    let item = { work.lock().unwrap().next() };
+                    match item {
+                        Some((name, path)) => {
+                            let result = crate::session::scan_session_dir_for_index(
+                                &path,
+                                discoverer.as_ref(),
+                            );
+                            let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                            let _ = app_handle.emit(
+                                "rescan-progress",
+                                RescanProgress { current: done, total },
+                            );
+                            let _ = tx.send((name, path, result));
+                        }
+                        None => break,
+                    }
+                }
+            }));
+        }
+        drop(tx); // close sender so rx iterator terminates when workers finish
+
+        let mut results = Vec::new();
+        for (_name, path, result) in rx {
+            match result {
                 Ok(index_data) => {
                     if index_data.has_audio || index_data.has_midi || index_data.has_video {
-                        new_sessions.push(index_data);
+                        results.push(index_data);
                     }
                 }
                 Err(e) => {
@@ -1044,7 +1085,13 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
                 }
             }
         }
-    }
+
+        for w in workers {
+            let _ = w.join();
+        }
+
+        results
+    };
 
     // 4. Sessions in DB but not on disk -> deleted
     let deleted_ids: Vec<&String> = existing_map.keys()

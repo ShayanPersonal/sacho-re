@@ -21,6 +21,7 @@
         previewCustomSound,
     } from "$lib/sounds";
     import { setCustomSound, clearCustomSound } from "$lib/api";
+    import { refreshSessions } from "$lib/stores/sessions";
 
     function positionTooltip(node: HTMLElement) {
         const rect = node.getBoundingClientRect();
@@ -177,7 +178,8 @@
 
         if (selected && typeof selected === "string") {
             localSettings.storage_path = selected;
-            autoSave();
+            await saveSettings(localSettings);
+            refreshSessions();
         }
     }
 
@@ -433,7 +435,7 @@
                     </div>
                     <p class="setting-recommendation">
                         Tip: You can back up this folder to cloud storage and
-                        open it in this app on other systems.
+                        open it on other instances of this app.
                     </p>
                 </div>
                 <div class="setting-row">
