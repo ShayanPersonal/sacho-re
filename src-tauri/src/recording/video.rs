@@ -681,6 +681,9 @@ impl PrerollVideoEncoder {
             crate::encoding::VideoCodec::Ffv1 => {
                 AsyncVideoEncoder::create_ffv1_encoder(hw_type, &config, width, height, fps)
             }
+            crate::encoding::VideoCodec::H264 => {
+                AsyncVideoEncoder::create_h264_encoder(hw_type, &config, width, height, fps)
+            }
             _ => {
                 return Err(VideoError::Pipeline(format!(
                     "Unsupported codec for preroll encoding: {:?}",
@@ -1639,6 +1642,8 @@ impl VideoCapturePipeline {
                 Err(e) => {
                     println!("[Video] Warning: Failed to create PrerollVideoEncoder: {}. Falling back to raw pre-roll.", e);
                     self.encode_during_preroll = false;
+                    // Expand the 1-second staging buffer to the full pre-roll duration
+                    self.preroll_buffer.lock().set_duration(self.pre_roll_secs);
                 }
             }
         }

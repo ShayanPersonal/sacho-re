@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use super::midi::TimestampedMidiEvent;
 
 /// Maximum pre-roll duration when encoding during pre-roll is OFF
-pub const MAX_PRE_ROLL_SECS: u32 = 6;
+pub const MAX_PRE_ROLL_SECS: u32 = 5;
 
 /// Maximum pre-roll duration when encoding during pre-roll is ON
 /// Encoded frames are much smaller than raw, so we can afford a longer window.
