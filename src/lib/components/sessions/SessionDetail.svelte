@@ -1068,7 +1068,7 @@
     .title-input {
         width: 100%;
         font-size: 1.25rem;
-        font-weight: 600;
+        font-weight: 500;
         color: #fff;
         background: transparent;
         border: 1px solid transparent;
@@ -1101,7 +1101,7 @@
         display: block;
         width: 100%;
         font-size: 1.25rem;
-        font-weight: 600;
+        font-weight: 500;
         color: #fff;
         font-family: inherit;
     }
@@ -1321,24 +1321,32 @@
     .notes-input {
         width: 100%;
         padding: 0.75rem;
-        background: rgba(0, 0, 0, 0.3);
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: transparent;
+        border: 1px solid rgba(255, 255, 255, 0.04);
         border-radius: 0.25rem;
         color: #e4e4e7;
-        font-family: inherit;
-        font-size: 0.875rem;
-        line-height: 1.5;
-        resize: vertical;
+        font-family: "Lora", "Georgia", "Times New Roman", serif;
+        font-size: 0.9375rem;
+        line-height: 1.6;
+        resize: none;
         min-height: 60px;
+        transition: background 0.15s ease, border-color 0.15s ease;
+    }
+
+    .notes-input:hover {
+        background: rgba(0, 0, 0, 0.15);
+        border-color: rgba(255, 255, 255, 0.04);
     }
 
     .notes-input::placeholder {
-        color: #5a5a5a;
+        color: #4a4a4a;
     }
 
     .notes-input:focus {
         outline: none;
-        border-color: rgba(239, 68, 68, 0.4);
+        background: rgba(0, 0, 0, 0.3);
+        border-color: rgba(255, 255, 255, 0.08);
+        resize: vertical;
     }
 
     .track-control {
@@ -1803,9 +1811,14 @@
     }
 
     :global(body.light-mode) .notes-input {
-        background: rgba(255, 255, 255, 0.8);
-        border-color: rgba(0, 0, 0, 0.12);
+        background: transparent;
+        border-color: rgba(0, 0, 0, 0.06);
         color: #2a2a2a;
+    }
+
+    :global(body.light-mode) .notes-input:hover {
+        background: rgba(0, 0, 0, 0.03);
+        border-color: rgba(0, 0, 0, 0.06);
     }
 
     :global(body.light-mode) .notes-input::placeholder {
@@ -1813,7 +1826,8 @@
     }
 
     :global(body.light-mode) .notes-input:focus {
-        border-color: rgba(200, 60, 60, 0.4);
+        background: rgba(255, 255, 255, 0.8);
+        border-color: rgba(0, 0, 0, 0.12);
     }
 
     :global(body.light-mode) .detail-section h3 {
