@@ -63,7 +63,8 @@ impl SessionDatabase {
                 has_midi INTEGER NOT NULL DEFAULT 0,
                 has_video INTEGER NOT NULL DEFAULT 0,
                 notes TEXT NOT NULL DEFAULT '',
-                notes_modified_at TEXT NOT NULL DEFAULT ''
+                notes_modified_at TEXT NOT NULL DEFAULT '',
+                title TEXT
             );
 
             CREATE TABLE IF NOT EXISTS midi_imports (
@@ -96,6 +97,16 @@ impl SessionDatabase {
             conn.execute_batch("ALTER TABLE sessions ADD COLUMN notes_modified_at TEXT NOT NULL DEFAULT ''")?;
         }
 
+        // Migration: add title column for existing databases
+        let has_title: bool = conn
+            .prepare("SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'title'")?
+            .query_row([], |row| row.get::<_, i64>(0))
+            .map(|count| count > 0)?;
+
+        if !has_title {
+            conn.execute_batch("ALTER TABLE sessions ADD COLUMN title TEXT")?;
+        }
+
         Ok(())
     }
     
@@ -106,8 +117,8 @@ impl SessionDatabase {
             r#"
             INSERT INTO sessions (
                 id, timestamp, duration_secs, path, has_audio, has_midi, has_video,
-                notes, notes_modified_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '')
+                notes, notes_modified_at, title
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '', ?9)
             ON CONFLICT(id) DO UPDATE SET
                 timestamp = excluded.timestamp,
                 duration_secs = excluded.duration_secs,
@@ -115,7 +126,8 @@ impl SessionDatabase {
                 has_audio = excluded.has_audio,
                 has_midi = excluded.has_midi,
                 has_video = excluded.has_video,
-                notes = excluded.notes
+                notes = excluded.notes,
+                title = excluded.title
             "#,
             params![
                 metadata.id,
@@ -126,6 +138,7 @@ impl SessionDatabase {
                 !metadata.midi_files.is_empty(),
                 !metadata.video_files.is_empty(),
                 metadata.notes,
+                metadata.title,
             ],
         )?;
 
@@ -169,8 +182,8 @@ impl SessionDatabase {
                 r#"
                 INSERT INTO sessions (
                     id, timestamp, duration_secs, path, has_audio, has_midi, has_video,
-                    notes, notes_modified_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                    notes, notes_modified_at, title
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                 ON CONFLICT(id) DO UPDATE SET
                     timestamp = excluded.timestamp,
                     duration_secs = excluded.duration_secs,
@@ -179,7 +192,8 @@ impl SessionDatabase {
                     has_midi = excluded.has_midi,
                     has_video = excluded.has_video,
                     notes = excluded.notes,
-                    notes_modified_at = excluded.notes_modified_at
+                    notes_modified_at = excluded.notes_modified_at,
+                    title = excluded.title
                 "#,
                 params![
                     s.id,
@@ -191,6 +205,7 @@ impl SessionDatabase {
                     s.has_video,
                     s.notes,
                     s.notes_modified_at,
+                    s.title,
                 ],
             )?;
             count += 1;
@@ -204,8 +219,9 @@ impl SessionDatabase {
                     has_midi = ?2,
                     has_video = ?3,
                     notes = ?4,
-                    notes_modified_at = ?5
-                WHERE id = ?6
+                    notes_modified_at = ?5,
+                    title = ?6
+                WHERE id = ?7
                 "#,
                 params![
                     u.has_audio,
@@ -213,6 +229,7 @@ impl SessionDatabase {
                     u.has_video,
                     u.notes,
                     u.notes_modified_at,
+                    u.title,
                     u.id,
                 ],
             )?;
@@ -243,6 +260,16 @@ impl SessionDatabase {
         Ok(())
     }
 
+    /// Rename a session (update ID, path, and title)
+    pub fn rename_session(&self, old_id: &str, new_id: &str, new_path: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE sessions SET id = ?1, path = ?2, title = ?3 WHERE id = ?4",
+            params![new_id, new_path, super::extract_title_from_folder_name(new_id), old_id],
+        )?;
+        Ok(())
+    }
+
     /// Delete a session from the index
     pub fn delete_session(&self, session_id: &str) -> anyhow::Result<()> {
         let conn = self.conn.lock();
@@ -258,17 +285,17 @@ impl SessionDatabase {
         let mut sql = String::from(
             r#"
             SELECT s.id, s.timestamp, s.duration_secs, s.has_audio, s.has_midi, s.has_video,
-                   s.notes
+                   s.notes, s.title
             FROM sessions s
             WHERE 1=1
             "#
         );
-        
+
         // Build search query if provided
         let search_pattern = filter.search_query.as_ref().map(|q| format!("%{}%", q));
-        
+
         if search_pattern.is_some() {
-            sql.push_str(" AND s.notes LIKE ?1");
+            sql.push_str(" AND (s.notes LIKE ?1 OR s.title LIKE ?1)");
         }
         
         if filter.has_audio == Some(true) {
@@ -334,6 +361,7 @@ impl SessionDatabase {
             has_midi: row.get(4)?,
             has_video: row.get(5)?,
             notes: row.get(6)?,
+            title: row.get(7)?,
         })
     }
     
@@ -423,6 +451,7 @@ pub struct SessionIndexData {
     pub has_video: bool,
     pub notes: String,
     pub notes_modified_at: String,
+    pub title: Option<String>,
 }
 
 /// Existing session row for lightweight comparison during rescan
@@ -442,6 +471,7 @@ pub struct UpdatedSessionData {
     pub has_video: bool,
     pub notes: String,
     pub notes_modified_at: String,
+    pub title: Option<String>,
 }
 
 /// Imported MIDI file for similarity analysis

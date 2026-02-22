@@ -257,6 +257,8 @@ pub fn scan_session_dir_for_index(
         durations.into_iter().fold(0.0f64, f64::max)
     };
 
+    let title = extract_title_from_folder_name(&folder_name);
+
     Ok(SessionIndexData {
         id: folder_name,
         timestamp,
@@ -267,6 +269,7 @@ pub fn scan_session_dir_for_index(
         has_video,
         notes,
         notes_modified_at,
+        title,
     })
 }
 
@@ -275,10 +278,27 @@ pub fn scan_session_dir_for_index(
 // ============================================================================
 
 /// Parse a session timestamp from a folder name like "2026-02-21_14-32-45".
+/// Handles titled folders: "2026-02-21_14-32-45 - My Song" -> strips title before parsing.
 pub fn parse_session_timestamp(folder_name: &str) -> Option<DateTime<Utc>> {
-    NaiveDateTime::parse_from_str(folder_name, "%Y-%m-%d_%H-%M-%S")
+    let timestamp_part = folder_name.split(" - ").next().unwrap_or(folder_name);
+    NaiveDateTime::parse_from_str(timestamp_part, "%Y-%m-%d_%H-%M-%S")
         .ok()
         .map(|dt| Utc.from_utc_datetime(&dt))
+}
+
+/// Extract title from a folder name like "2026-01-22_20-19-05 - sad Song".
+/// Returns None if no " - " separator or folder is just a timestamp.
+pub fn extract_title_from_folder_name(folder_name: &str) -> Option<String> {
+    folder_name.split_once(" - ").map(|(_, title)| title.to_string())
+}
+
+/// Build a folder name from a timestamp string and optional title.
+/// "2026-01-22_20-19-05" + Some("sad Song") => "2026-01-22_20-19-05 - sad Song"
+pub fn build_folder_name(timestamp_prefix: &str, title: Option<&str>) -> String {
+    match title {
+        Some(t) if !t.is_empty() => format!("{} - {}", timestamp_prefix, t),
+        _ => timestamp_prefix.to_string(),
+    }
 }
 
 /// Build a `SessionMetadata` by scanning a session directory's files.
@@ -369,6 +389,8 @@ pub fn build_session_from_directory(session_path: &Path) -> anyhow::Result<Sessi
     let max_video = video_files.iter().map(|f| f.duration_secs).fold(0.0f64, f64::max);
     let duration_secs = max_audio.max(max_video);
 
+    let title = extract_title_from_folder_name(&folder_name);
+
     Ok(SessionMetadata {
         id: folder_name,
         timestamp,
@@ -378,5 +400,6 @@ pub fn build_session_from_directory(session_path: &Path) -> anyhow::Result<Sessi
         midi_files,
         video_files,
         notes,
+        title,
     })
 }

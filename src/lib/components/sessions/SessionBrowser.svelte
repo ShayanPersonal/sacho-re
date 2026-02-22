@@ -73,7 +73,7 @@
     <div class="search-bar">
       <input 
         type="text" 
-        placeholder="Search notes..." 
+        placeholder="Search..." 
         bind:value={searchQuery}
         onkeydown={(e) => e.key === 'Enter' && handleSearch()}
       />
@@ -174,7 +174,11 @@
                     onclick={() => selectSession(session.id)}
                   >
                     <div class="session-header">
-                      {#if session.notes}
+                      {#if session.title}
+                        <span class="session-title" title={session.title}>
+                          {session.title.slice(0, 18)}{session.title.length > 18 ? '…' : ''}
+                        </span>
+                      {:else if session.notes}
                         <span class="session-title" title={session.notes}>
                           {session.notes.split('\n')[0].slice(0, 18)}{session.notes.length > 18 ? '…' : ''}
                         </span>

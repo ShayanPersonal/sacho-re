@@ -260,6 +260,7 @@ export interface SessionSummary {
   has_midi: boolean;
   has_video: boolean;
   notes: string;
+  title: string | null;
 }
 
 export interface SessionMetadata {
@@ -271,6 +272,7 @@ export interface SessionMetadata {
   midi_files: MidiFileInfo[];
   video_files: VideoFileInfo[];
   notes: string;
+  title: string | null;
 }
 
 export interface AudioFileInfo {
@@ -528,6 +530,13 @@ export async function updateSessionNotes(
   notes: string,
 ): Promise<void> {
   return invoke("update_session_notes", { sessionId, notes });
+}
+
+export async function renameSession(
+  sessionId: string,
+  newTitle: string,
+): Promise<SessionSummary> {
+  return invoke("rename_session", { sessionId, newTitle });
 }
 
 // ============================================================================
