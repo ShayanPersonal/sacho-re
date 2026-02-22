@@ -1034,7 +1034,7 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
     let new_sessions: Vec<SessionIndexData> = if new_folders.is_empty() {
         Vec::new()
     } else {
-        let num_workers = 8.min(new_folders.len());
+        let num_workers = 16.min(new_folders.len());
         let work_queue = std::sync::Arc::new(
             std::sync::Mutex::new(new_folders.into_iter())
         );
