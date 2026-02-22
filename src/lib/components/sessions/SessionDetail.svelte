@@ -146,10 +146,38 @@
     let isRenamable = $derived(TIMESTAMP_RE.test(session.id));
     let titleValue = $state(session.title ?? "");
     let isRenaming = $state(false);
+    let titleMeasure: HTMLSpanElement | null = $state(null);
+    let titleWidth = $state("4ch");
 
     // Notes editing state
     let notesValue = $state(session.notes);
     let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    // Pending save context — stores session ID + value at time of edit
+    // so flushes always target the correct session even after switching
+    let pendingTitleSave: { sessionId: string; value: string } | null = null;
+    let pendingNotesSave: { sessionId: string; value: string } | null = null;
+
+    function flushPendingTitle() {
+        if (pendingTitleSave) {
+            const { sessionId, value } = pendingTitleSave;
+            pendingTitleSave = null;
+            const trimmed = value.trim();
+            if (trimmed) {
+                renameCurrentSession(sessionId, trimmed).catch(console.error);
+            }
+        }
+    }
+
+    function flushPendingNotes() {
+        if (saveTimeout && pendingNotesSave) {
+            clearTimeout(saveTimeout);
+            saveTimeout = null;
+            const { sessionId, value } = pendingNotesSave;
+            pendingNotesSave = null;
+            updateNotes(sessionId, value);
+        }
+    }
 
     // More menu state
     let moreMenuOpen = $state(false);
@@ -178,21 +206,41 @@
         titleValue = session.title ?? "";
     });
 
-    // Save title on blur/enter
-    async function handleTitleSave() {
+    // Measure title width from hidden span
+    function measureTitleWidth() {
+        if (!titleMeasure) return;
+        titleWidth = titleMeasure.offsetWidth + 20 + "px";
+    }
+
+    $effect(() => {
+        titleValue;
+        titleMeasure;
+        requestAnimationFrame(measureTitleWidth);
+    });
+
+    // Save title (shared logic for blur/enter and session-switch flush)
+    async function doTitleSave() {
         const trimmed = titleValue.trim();
-        // Only rename if the title actually changed
         if (trimmed === (session.title ?? "")) return;
         isRenaming = true;
         try {
             await renameCurrentSession(session.id, trimmed);
         } catch (e) {
             console.error("Failed to rename session:", e);
-            // Revert on error
             titleValue = session.title ?? "";
         } finally {
             isRenaming = false;
         }
+    }
+
+    function handleTitleSave() {
+        pendingTitleSave = null;
+        doTitleSave();
+    }
+
+    function handleTitleInput() {
+        // No debounce — just mark dirty so flush-on-blur / session-switch saves it
+        pendingTitleSave = { sessionId: session.id, value: titleValue };
     }
 
     function handleTitleKeydown(e: KeyboardEvent) {
@@ -209,9 +257,20 @@
 
         // Debounce save
         if (saveTimeout) clearTimeout(saveTimeout);
+        pendingNotesSave = { sessionId: session.id, value: notesValue };
         saveTimeout = setTimeout(() => {
+            pendingNotesSave = null;
             updateNotes(session.id, notesValue);
         }, 500);
+    }
+
+    function handleNotesBlur() {
+        if (saveTimeout) {
+            clearTimeout(saveTimeout);
+            saveTimeout = null;
+            pendingNotesSave = null;
+            updateNotes(session.id, notesValue);
+        }
     }
 
     // Check if the detected codec needs the custom frame player (MJPEG or FFV1)
@@ -359,6 +418,11 @@
         if (currentSessionId === previousSessionId) {
             return;
         }
+
+        // Flush any pending saves for the old session before switching
+        flushPendingTitle();
+        flushPendingNotes();
+
         previousSessionId = currentSessionId;
 
         // Reset all playback state
@@ -715,7 +779,8 @@
         cancelAnimationFrame(animationFrame);
         synth?.dispose();
         pause();
-        if (saveTimeout) clearTimeout(saveTimeout);
+        flushPendingTitle();
+        flushPendingNotes();
         if (audioContext) {
             audioContext.close();
             audioContext = null;
@@ -731,12 +796,16 @@
     <div class="detail-header">
         <div class="header-info">
             {#if isRenamable}
+                <span class="title-measure" bind:this={titleMeasure}>{titleValue || "Title..."}</span>
                 <input
                     class="title-input"
                     type="text"
                     placeholder="Title..."
+                    maxlength="60"
+                    style="width: {titleWidth}"
                     bind:value={titleValue}
                     onblur={handleTitleSave}
+                    oninput={handleTitleInput}
                     onkeydown={handleTitleKeydown}
                     disabled={isRenaming}
                 />
@@ -1028,6 +1097,7 @@
                     placeholder="Notes..."
                     value={notesValue}
                     oninput={handleNotesChange}
+                    onblur={handleNotesBlur}
                     rows="3"
                 ></textarea>
             </div>
@@ -1086,10 +1156,21 @@
         flex-shrink: 0; /* Keep header fixed */
     }
 
-    .title-input {
-        width: 100%;
+    .title-measure {
+        position: absolute;
+        visibility: hidden;
+        height: 0;
+        overflow: hidden;
+        white-space: pre;
         font-size: 1.25rem;
-        font-weight: 500;
+        font-weight: 400;
+        font-family: inherit;
+        padding: 0 0.375rem;
+    }
+
+    .title-input {
+        font-size: 1.25rem;
+        font-weight: 400;
         color: #fff;
         background: transparent;
         border: 1px solid transparent;
@@ -1098,6 +1179,8 @@
         margin: -0.25rem -0.375rem;
         font-family: inherit;
         transition: border-color 0.15s ease;
+        min-width: 4ch;
+        max-width: 100%;
     }
 
     .title-input::placeholder {
@@ -1122,7 +1205,7 @@
         display: block;
         width: 100%;
         font-size: 1.25rem;
-        font-weight: 500;
+        font-weight: 400;
         color: #fff;
         font-family: inherit;
     }
@@ -1342,13 +1425,14 @@
     .notes-input {
         width: 100%;
         padding: 0.75rem;
-        background: transparent;
+        background: rgba(255, 255, 255, 0.04);
         border: 1px solid rgba(255, 255, 255, 0.04);
         border-radius: 0.25rem;
         color: #e4e4e7;
-        font-family: "Lora", "Georgia", "Times New Roman", serif;
-        font-size: 0.9375rem;
-        line-height: 1.6;
+        font-family: "Roboto", sans-serif;
+        font-weight: 300;
+        font-size: 0.875rem;
+        line-height: 1.5;
         resize: none;
         min-height: 60px;
         transition:
@@ -1833,7 +1917,7 @@
     }
 
     :global(body.light-mode) .notes-input {
-        background: transparent;
+        background: rgba(255, 255, 255, 0.5);
         border-color: rgba(0, 0, 0, 0.06);
         color: #2a2a2a;
     }
