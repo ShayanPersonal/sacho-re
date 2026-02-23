@@ -1591,22 +1591,22 @@ impl MidiMonitor {
                 // Use user-saved config if available, otherwise compute smart defaults
                 let dev_config = if let Some(cfg) = device_configs.get(device_id) {
                     // Verify the saved codec is still supported
-                    if device.supported_codecs.contains(&cfg.source_codec) {
-                        println!("[Sacho] Video device {}: using saved config ({:?} {}x{} @ {:.2}fps)",
-                            device_id, cfg.source_codec, cfg.source_width, cfg.source_height, cfg.source_fps);
+                    if device.capabilities.contains_key(&cfg.source_format) {
+                        println!("[Sacho] Video device {}: using saved config ({} {}x{} @ {:.2}fps)",
+                            device_id, cfg.source_format, cfg.source_width, cfg.source_height, cfg.source_fps);
                         cfg.clone()
                     } else {
-                        // Saved codec no longer available, fall back to defaults
+                        // Saved format no longer available, fall back to defaults
                         let default = device.default_config()?;
-                        println!("[Sacho] Video device {}: saved codec {:?} unavailable, falling back to {:?} {}x{} @ {:.2}fps",
-                            device_id, cfg.source_codec, default.source_codec, default.source_width, default.source_height, default.source_fps);
+                        println!("[Sacho] Video device {}: saved format '{}' unavailable, falling back to {} {}x{} @ {:.2}fps",
+                            device_id, cfg.source_format, default.source_format, default.source_width, default.source_height, default.source_fps);
                         default
                     }
                 } else {
                     // No saved config - compute smart defaults
                     let default = device.default_config()?;
-                    println!("[Sacho] Video device {}: no config saved, defaulting to {:?} {}x{} @ {:.2}fps",
-                        device_id, default.source_codec, default.source_width, default.source_height, default.source_fps);
+                    println!("[Sacho] Video device {}: no config saved, defaulting to {} {}x{} @ {:.2}fps",
+                        device_id, default.source_format, default.source_width, default.source_height, default.source_fps);
                     default
                 };
 

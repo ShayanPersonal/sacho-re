@@ -20,7 +20,10 @@
       "WebSearch",
       "WebFetch(domain:music-ir.org)",
       "WebFetch(domain:julian-urbano.info)",
-      "WebFetch(domain:archives.ismir.net)"
+      "WebFetch(domain:archives.ismir.net)",
+      "Bash(timeout 8 gst-launch-1.0:*)",
+      "Bash(timeout 5 gst-launch-1.0:*)",
+      "Bash(cd:*)"
     ]
   }
 }

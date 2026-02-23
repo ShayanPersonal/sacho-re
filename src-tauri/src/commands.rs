@@ -58,12 +58,12 @@ pub fn get_video_devices(
 #[tauri::command]
 pub fn validate_video_device_config(
     device_id: String,
-    codec: String,
+    format: String,
     width: u32,
     height: u32,
     fps: f64,
 ) -> bool {
-    crate::devices::enumeration::validate_video_config(&device_id, &codec, width, height, fps)
+    crate::devices::enumeration::validate_video_config(&device_id, &format, width, height, fps)
 }
 
 // ============================================================================
@@ -1515,7 +1515,7 @@ pub async fn auto_select_encoder_preset(
             .filter_map(|dev_id| {
                 let device = devices.video_devices.iter().find(|d| &d.id == dev_id)?;
                 let dev_cfg = if let Some(c) = dev_configs.get(dev_id) {
-                    if device.supported_codecs.contains(&c.source_codec) {
+                    if device.capabilities.contains_key(&c.source_format) {
                         c.clone()
                     } else {
                         device.default_config()?
@@ -1592,7 +1592,7 @@ async fn run_auto_select_test(
         device_index,
         device_name,
         device_id,
-        dev_config.source_codec,
+        &dev_config.source_format,
         dev_config.source_width,
         dev_config.source_height,
         dev_config.source_fps,
@@ -1600,6 +1600,7 @@ async fn run_auto_select_test(
         Some(target_codec),
         dev_config.encoder_type,
         dev_config.preset_level,
+        dev_config.video_bit_depth,
         false, // Don't encode during pre-roll for auto-select tests
     ).map_err(|e| format!("Failed to create test pipeline: {}", e))?;
     
@@ -1646,6 +1647,7 @@ async fn run_auto_select_test(
             target_codec,
             preset_level: level,
             custom_bitrate_kbps: None,
+            video_bit_depth: dev_config.video_bit_depth,
             target_width: None,
             target_height: None,
             target_fps: None,

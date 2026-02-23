@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-use crate::encoding::{VideoCodec, HardwareEncoderType};
+use crate::encoding::HardwareEncoderType;
 
 /// Default maximum encoding height when the user hasn't chosen a specific target.
 /// This is just the initial selection — users can pick higher values in the UI.
@@ -229,8 +229,9 @@ impl AudioSampleRate {
 /// - FPS: match source if ≤30.5fps, else 30.0
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VideoDeviceConfig {
-    /// Source codec to capture from the device
-    pub source_codec: VideoCodec,
+    /// Source format to capture from the device (e.g. "YUY2", "NV12", "MJPEG", "H264").
+    /// This is the actual pixel/codec format string from GStreamer, not an abstract enum.
+    pub source_format: String,
     /// Source capture width
     pub source_width: u32,
     /// Source capture height
@@ -239,12 +240,12 @@ pub struct VideoDeviceConfig {
     pub source_fps: f64,
 
     // ── Encoding settings ──────────────────────────────────────────────
-    /// true = record as-is, false = encode. Default: true for pre-encoded, false for Raw.
+    /// true = record as-is, false = encode. Default: true for pre-encoded, false for raw.
     #[serde(default = "default_true")]
     pub passthrough: bool,
     /// Target codec when encoding (AV1/VP9/VP8/FFV1). None = auto-detect best.
     #[serde(default)]
-    pub encoding_codec: Option<VideoCodec>,
+    pub encoding_codec: Option<crate::encoding::VideoCodec>,
     /// Hardware accelerator. None = auto-detect best for codec.
     #[serde(default)]
     pub encoder_type: Option<HardwareEncoderType>,
@@ -255,6 +256,10 @@ pub struct VideoDeviceConfig {
     /// When set, the encoder uses this bitrate instead of the preset's suggestion.
     #[serde(default)]
     pub custom_bitrate_kbps: Option<u32>,
+    /// Encoding bit depth for lossless codecs (FFV1). None = 8-bit default.
+    /// Only meaningful when encoding_codec = FFV1 and passthrough = false.
+    #[serde(default)]
+    pub video_bit_depth: Option<u8>,
 
     // ── Target resolution/fps ──────────────────────────────────────────
     /// Target encoding width. 0 = smart default (match source if ≤1080p, else 1080p).
@@ -267,7 +272,7 @@ pub struct VideoDeviceConfig {
 
 impl PartialEq for VideoDeviceConfig {
     fn eq(&self, other: &Self) -> bool {
-        self.source_codec == other.source_codec
+        self.source_format == other.source_format
             && self.source_width == other.source_width
             && self.source_height == other.source_height
             && (self.source_fps - other.source_fps).abs() < 0.001
@@ -276,6 +281,7 @@ impl PartialEq for VideoDeviceConfig {
             && self.encoder_type == other.encoder_type
             && self.preset_level == other.preset_level
             && self.custom_bitrate_kbps == other.custom_bitrate_kbps
+            && self.video_bit_depth == other.video_bit_depth
             && self.target_width == other.target_width
             && self.target_height == other.target_height
             && (self.target_fps - other.target_fps).abs() < 0.001
@@ -333,13 +339,14 @@ impl VideoDeviceConfig {
 
     /// Returns true if only preset_level differs (no pipeline restart needed).
     pub fn pipeline_fields_equal(&self, other: &Self) -> bool {
-        self.source_codec == other.source_codec
+        self.source_format == other.source_format
             && self.source_width == other.source_width
             && self.source_height == other.source_height
             && (self.source_fps - other.source_fps).abs() < 0.001
             && self.passthrough == other.passthrough
             && self.encoding_codec == other.encoding_codec
             && self.encoder_type == other.encoder_type
+            && self.video_bit_depth == other.video_bit_depth
             && self.target_width == other.target_width
             && self.target_height == other.target_height
             && (self.target_fps - other.target_fps).abs() < 0.001

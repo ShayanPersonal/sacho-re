@@ -172,7 +172,15 @@ impl VideoCodec {
             VideoCodec::Av1 => Some("av1dec"),
             VideoCodec::Ffv1 => Some("avdec_ffv1"),
             VideoCodec::Raw => None,
-            VideoCodec::H264 => Some("avdec_h264"), // LGPL decoder from gst-libav, no licensing issue for decoding
+            VideoCodec::H264 => {
+                // Platform-native decoders only (no bundled software decoder)
+                #[cfg(target_os = "windows")]
+                { Some("d3d11h264dec") }  // DXVA via Direct3D11 (system H.264 decoder)
+                #[cfg(target_os = "macos")]
+                { Some("vtdec") }         // Apple VideoToolbox
+                #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+                { None }                  // No H.264 decoder on Linux
+            }
         }
     }
 }
@@ -213,5 +221,96 @@ pub fn codec_from_extension(ext: &str) -> Option<ContainerFormat> {
     match ext.to_lowercase().as_str() {
         "mkv" => Some(ContainerFormat::Mkv),
         _ => None,
+    }
+}
+
+/// Returns the optimal intermediate pixel format for the given encoding codec and bit depth.
+/// - AV1: always P010_10LE — AV1 internally uses 10-bit, so feeding it 10-bit
+///   avoids a lossy 8→10→8 round-trip. Upconverting 8-bit source is lossless.
+/// - FFV1 with video_bit_depth=10: P010_10LE — user explicitly chose 10-bit lossless.
+/// - Everything else: NV12 (8-bit 4:2:0).
+pub fn intermediate_format_for_codec(codec: VideoCodec, video_bit_depth: Option<u8>) -> &'static str {
+    match codec {
+        VideoCodec::Av1 => "P010_10LE",
+        VideoCodec::Ffv1 if video_bit_depth == Some(10) => "P010_10LE",
+        _ => "NV12",
+    }
+}
+
+/// Returns true if the GStreamer pixel format string represents 10-bit or higher.
+pub fn is_10bit_format(format: &str) -> bool {
+    format.contains("10")
+}
+
+// ============================================================================
+// Format-string helpers (source format → GStreamer pipeline elements)
+// ============================================================================
+
+/// Returns true for raw pixel formats (YUY2, NV12, BGR, etc.).
+/// Returns false for known pre-encoded formats (MJPEG, H264, AV1, VP8, VP9).
+/// Unknown formats are assumed raw.
+pub fn is_raw_format(format: &str) -> bool {
+    !matches!(
+        format,
+        "MJPEG" | "H264" | "AV1" | "VP8" | "VP9"
+    )
+}
+
+/// Build GStreamer caps media-type and optional format field from a format string.
+///
+/// Returns `(media_type, format_field)`:
+/// - "MJPEG" → ("image/jpeg", None)
+/// - "H264"  → ("video/x-h264", None)
+/// - "AV1"   → ("video/x-av1", None)
+/// - "VP8"   → ("video/x-vp8", None)
+/// - "VP9"   → ("video/x-vp9", None)
+/// - anything else → ("video/x-raw", Some(format))
+pub fn format_to_gst_caps(format: &str) -> (&'static str, Option<&str>) {
+    match format {
+        "MJPEG" => ("image/jpeg", None),
+        "H264"  => ("video/x-h264", None),
+        "AV1"   => ("video/x-av1", None),
+        "VP8"   => ("video/x-vp8", None),
+        "VP9"   => ("video/x-vp9", None),
+        _       => ("video/x-raw", Some(format)),
+    }
+}
+
+/// Returns the GStreamer decoder element name for a pre-encoded format.
+/// Raw pixel formats return None (no decoding needed).
+pub fn decoder_for_format(format: &str) -> Option<&'static str> {
+    match format {
+        "MJPEG" => Some("jpegdec"),
+        "VP8"   => Some("vp8dec"),
+        "VP9"   => Some("vp9dec"),
+        "AV1"   => Some("av1dec"),
+        "H264"  => {
+            #[cfg(target_os = "windows")]
+            { Some("d3d11h264dec") }
+            #[cfg(target_os = "macos")]
+            { Some("vtdec") }
+            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+            { None }
+        }
+        _ => None, // Raw pixel formats
+    }
+}
+
+/// Returns the GStreamer parser element name for a format.
+/// Only H264 and AV1 need a real parser; everything else uses identity.
+pub fn parser_for_format(format: &str) -> &'static str {
+    match format {
+        "H264"  => "h264parse",
+        "AV1"   => "av1parse",
+        _       => "identity",
+    }
+}
+
+/// Whether HTML5 `<video>` can natively play content in this source format.
+pub fn native_playback_for_format(format: &str) -> bool {
+    match format {
+        "MJPEG" => false,
+        "AV1" | "VP8" | "VP9" | "H264" => true,
+        _ => true, // Raw will be encoded to a supported codec
     }
 }

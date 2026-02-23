@@ -55,18 +55,16 @@ export interface CodecCapability {
 export interface VideoDevice {
   id: string;
   name: string;
-  /** Supported video codecs for this device */
-  supported_codecs: VideoCodec[];
-  /** Per-codec capabilities: codec -> list of resolutions with available framerates */
-  capabilities: Record<VideoCodec, CodecCapability[]>;
-  /** All formats detected from the device (for display) */
-  all_formats: string[];
+  /** Per-format capabilities: format string -> list of resolutions with available framerates.
+   * Format strings are actual pixel/codec names from GStreamer (e.g. "YUY2", "NV12", "MJPEG", "H264"). */
+  capabilities: Record<string, CodecCapability[]>;
 }
 
 /** Per-device video source configuration.
  * target_width/height = 0 and target_fps = 0 means "Match Source" */
 export interface VideoDeviceConfig {
-  source_codec: VideoCodec;
+  /** Source format string (e.g. "YUY2", "NV12", "MJPEG", "H264") */
+  source_format: string;
   source_width: number;
   source_height: number;
   source_fps: number;
@@ -80,17 +78,19 @@ export interface VideoDeviceConfig {
   preset_level: number;
   /** Custom bitrate override in kbps (null = use preset default) */
   custom_bitrate_kbps: number | null;
+  /** Encoding bit depth for lossless codecs like FFV1. null = 8-bit default. */
+  video_bit_depth: number | null;
   target_width: number;
   target_height: number;
   target_fps: number;
 }
 
-/** Check if a video device supports any recording codec */
+/** Check if a video device supports any recording format */
 export function isVideoDeviceSupported(device: VideoDevice): boolean {
-  return device.supported_codecs.length > 0;
+  return Object.keys(device.capabilities).length > 0;
 }
 
-/** Get human-readable codec name */
+/** Get human-readable codec name for encoding codecs */
 export function getCodecDisplayName(codec: VideoCodec): string {
   switch (codec) {
     case "mjpeg":
@@ -108,6 +108,17 @@ export function getCodecDisplayName(codec: VideoCodec): string {
     case "h264":
       return "H.264";
   }
+}
+
+/** Returns true for raw pixel formats that require encoding.
+ * Returns false for known pre-encoded formats (MJPEG, H264, AV1, VP8, VP9). */
+export function isRawFormat(format: string): boolean {
+  return !["MJPEG", "H264", "AV1", "VP8", "VP9"].includes(format);
+}
+
+/** Returns true if a GStreamer source format name is 10-bit or higher */
+export function is10BitFormat(format: string): boolean {
+  return format.includes("10");
 }
 
 /** Get a friendly resolution label like "1080p (1920x1080)" */
@@ -190,34 +201,36 @@ export const DEFAULT_TARGET_FPS = 30;
 /** Tolerance for comparing FPS to DEFAULT_TARGET_FPS (includes 30000/1001 ≈ 29.97). */
 export const DEFAULT_TARGET_FPS_TOLERANCE = 30.5;
 
-/** Codecs that only support passthrough (no encoding/decoding due to licensing) */
-export const PASSTHROUGH_ONLY_CODECS: VideoCodec[] = [];
-
-/** Codecs that require encoding (cannot be stored as passthrough in MKV) */
-export const ENCODE_ONLY_CODECS: VideoCodec[] = ["raw"];
-
-/** Codec preference order for defaults: Raw > AV1 > VP9 > VP8 > MJPEG */
-const CODEC_PRIORITY: VideoCodec[] = ["raw", "av1", "vp9", "vp8", "mjpeg"];
+/** Format preference order for defaults: raw pixel formats first, then pre-encoded */
+const FORMAT_PRIORITY: string[] = [
+  "YUY2", "NV12", "I420", "YV12", "BGR", "BGRx",
+  "MJPEG", "H264", "AV1", "VP9", "VP8",
+];
 
 /** Compute a smart default configuration for a device.
- * - Codec: Raw > AV1 > VP9 > VP8 > MJPEG
+ * - Format: YUY2 > NV12 > I420 > YV12 > BGR > MJPEG > H264 > AV1 > VP9 > VP8
  * - Resolution: min(highest available, 1080p)
  * - FPS: min(highest available at chosen resolution, ~30)
  * - Target: "Match Source" (0/0/0) */
 export function computeDefaultConfig(
   device: VideoDevice,
 ): VideoDeviceConfig | null {
-  // Pick preferred codec
-  let codec: VideoCodec | null = null;
-  for (const c of CODEC_PRIORITY) {
-    if (device.supported_codecs.includes(c)) {
-      codec = c;
+  // Pick preferred format
+  let format: string | null = null;
+  for (const f of FORMAT_PRIORITY) {
+    if (device.capabilities[f]) {
+      format = f;
       break;
     }
   }
-  if (!codec) return null;
+  // Fall back to first available format
+  if (!format) {
+    const keys = Object.keys(device.capabilities);
+    if (keys.length === 0) return null;
+    format = keys[0];
+  }
 
-  const caps = device.capabilities[codec];
+  const caps = device.capabilities[format];
   if (!caps || caps.length === 0) return null;
 
   // Find best resolution: highest that's ≤ default target height, or smallest available
@@ -234,16 +247,19 @@ export function computeDefaultConfig(
     chosenCap.framerates[chosenCap.framerates.length - 1] ??
     DEFAULT_TARGET_FPS;
 
+  const raw = isRawFormat(format);
+
   return {
-    source_codec: codec,
+    source_format: format,
     source_width: width,
     source_height: height,
     source_fps: fps,
-    passthrough: codec !== "raw" && codec !== "mjpeg",
+    passthrough: !raw, // Raw formats require encoding, pre-encoded can passthrough
     encoding_codec: null,
     encoder_type: null,
     preset_level: 3,
     custom_bitrate_kbps: null,
+    video_bit_depth: null,
     target_width: 0, // Match Source
     target_height: 0, // Match Source
     target_fps: 0, // Match Source
@@ -420,14 +436,14 @@ export async function getVideoDevices(): Promise<VideoDevice[]> {
 /** Validate that a video device configuration will work at runtime. */
 export async function validateVideoDeviceConfig(
   deviceId: string,
-  codec: VideoCodec,
+  format: string,
   width: number,
   height: number,
   fps: number,
 ): Promise<boolean> {
   return invoke("validate_video_device_config", {
     deviceId,
-    codec,
+    format,
     width,
     height,
     fps,

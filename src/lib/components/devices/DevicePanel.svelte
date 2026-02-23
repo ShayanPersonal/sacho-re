@@ -29,7 +29,6 @@
     } from "$lib/stores/devices";
     import { settings } from "$lib/stores/settings";
     import type {
-        VideoCodec,
         VideoDevice,
         VideoDeviceConfig,
         EncoderAvailability,
@@ -40,6 +39,7 @@
         getResolutionLabel,
         formatFps,
         computeDefaultConfig,
+        isRawFormat,
     } from "$lib/api";
     import VideoConfigModal from "./VideoConfigModal.svelte";
 
@@ -66,17 +66,15 @@
         );
     }
 
-    // Filter codecs to only show those that are actually usable, with 'raw' last
-    function getAvailableCodecs(codecs: VideoCodec[]): VideoCodec[] {
-        let filtered = codecs;
-        if (!isRawEncodingAvailable()) {
-            filtered = codecs.filter((c) => c !== "raw");
-        }
-        return [...filtered].sort((a, b) => {
-            if (a === "raw") return 1;
-            if (b === "raw") return -1;
-            return 0;
-        });
+    // Check if a video device has at least one usable format
+    // (pre-encoded formats are always usable; raw formats need an encoder)
+    function isDeviceUsable(device: VideoDevice): boolean {
+        const formats = Object.keys(device.capabilities);
+        if (formats.length === 0) return false;
+        // If any pre-encoded format exists, the device is usable
+        if (formats.some((f) => !isRawFormat(f))) return true;
+        // Otherwise, only usable if raw encoding is available
+        return isRawEncodingAvailable();
     }
 
     /** Get a compact summary of the current config for a device */
@@ -85,7 +83,7 @@
             $videoDeviceConfigs[device.id] ?? computeDefaultConfig(device);
         if (!cfg) return "No supported formats";
 
-        const codec = getCodecDisplayName(cfg.source_codec);
+        const codec = cfg.source_format;
         const resLabel = getResolutionLabel(
             cfg.source_width,
             cfg.source_height,
@@ -599,10 +597,7 @@
                     </div>
                     <div class="device-list">
                         {#each filterDevices($videoDevices) as device}
-                            {@const availableCodecs = getAvailableCodecs(
-                                device.supported_codecs,
-                            )}
-                            {@const isSupported = availableCodecs.length > 0}
+                            {@const isSupported = isDeviceUsable(device)}
                             {@const isDisconnected = $disconnectedDevices.has(device.id)}
                             <div
                                 class="device-row video-row"

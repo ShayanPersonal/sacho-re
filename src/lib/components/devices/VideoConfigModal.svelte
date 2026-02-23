@@ -8,6 +8,8 @@
         EncoderAvailability,
     } from "$lib/api";
     import {
+        isRawFormat,
+        is10BitFormat,
         getCodecDisplayName,
         getResolutionLabel,
         getTargetResolutions,
@@ -18,8 +20,6 @@
         getEncoderAvailability,
         getPresetBitrates,
         autoSelectEncoderPreset,
-        PASSTHROUGH_ONLY_CODECS,
-        ENCODE_ONLY_CODECS,
         DEFAULT_TARGET_HEIGHT,
         DEFAULT_TARGET_FPS,
         DEFAULT_TARGET_FPS_TOLERANCE,
@@ -36,16 +36,15 @@
     // Compute effective config: saved config or smart defaults
     const effectiveConfig = currentConfig ?? computeDefaultConfig(device);
 
-    // Available codecs for this device
-    const availableCodecs = $derived(device.supported_codecs);
-
-    // State for selections
-    let selectedCodec = $state<VideoCodec>(
-        effectiveConfig?.source_codec ?? availableCodecs[0] ?? "raw",
-    );
+    // State for selections — cascade: Resolution → Framerate → Format
     let selectedWidth = $state<number>(effectiveConfig?.source_width ?? 0);
     let selectedHeight = $state<number>(effectiveConfig?.source_height ?? 0);
     let selectedFps = $state<number>(effectiveConfig?.source_fps ?? 0);
+    let selectedFormat = $state<string>(
+        effectiveConfig?.source_format ??
+            Object.keys(device.capabilities)[0] ??
+            "",
+    );
     // 0 = "Match Source" sentinel
     let selectedTargetWidth = $state<number>(
         effectiveConfig?.target_width ?? 0,
@@ -66,6 +65,9 @@
     let presetLevel = $state<number>(effectiveConfig?.preset_level ?? 3);
     let customBitrateKbps = $state<number | null>(
         effectiveConfig?.custom_bitrate_kbps ?? null,
+    );
+    let videoBitDepth = $state<number | null>(
+        effectiveConfig?.video_bit_depth ?? null,
     );
     let encoderAvailability = $state<EncoderAvailability | null>(null);
 
@@ -152,37 +154,84 @@
             .catch(() => {});
     });
 
-    // Get capabilities for the selected codec
-    const codecCaps = $derived<CodecCapability[]>(
-        device.capabilities[selectedCodec] ?? [],
-    );
+    // ── Cascade: Resolution → Framerate → Format ──────────────────────
 
-    // Available resolutions for selected codec (sorted highest first)
-    const availableResolutions = $derived(
-        codecCaps.map((c) => ({
-            width: c.width,
-            height: c.height,
-            label: getResolutionLabel(c.width, c.height),
-        })),
-    );
+    // All resolutions: union across ALL formats
+    const allResolutions = $derived.by(() => {
+        const seen = new Set<string>();
+        const result: { width: number; height: number; label: string }[] = [];
+        for (const caps of Object.values(device.capabilities)) {
+            for (const c of caps) {
+                const key = `${c.width}x${c.height}`;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    result.push({
+                        width: c.width,
+                        height: c.height,
+                        label: getResolutionLabel(c.width, c.height),
+                    });
+                }
+            }
+        }
+        // Sort by pixel count descending
+        result.sort((a, b) => b.width * b.height - a.width * a.height);
+        return result;
+    });
 
-    // Available FPS for selected codec + resolution
-    const availableFps = $derived(
-        codecCaps.find(
-            (c) => c.width === selectedWidth && c.height === selectedHeight,
-        )?.framerates ?? [],
-    );
+    // Available FPS at the selected resolution (union across all formats)
+    const availableFps = $derived.by(() => {
+        const fpsSet = new Set<number>();
+        for (const caps of Object.values(device.capabilities)) {
+            const cap = caps.find(
+                (c) => c.width === selectedWidth && c.height === selectedHeight,
+            );
+            if (cap) {
+                for (const f of cap.framerates) fpsSet.add(f);
+            }
+        }
+        const result = [...fpsSet];
+        result.sort((a, b) => b - a); // Descending
+        return result;
+    });
 
-    // Whether this codec is passthrough-only (no encoding/decoding available)
-    const isPassthroughOnly = $derived(
-        PASSTHROUGH_ONLY_CODECS.includes(selectedCodec),
-    );
+    // Available formats at the selected resolution + framerate
+    const availableFormats = $derived.by(() => {
+        const result: string[] = [];
+        for (const [format, caps] of Object.entries(device.capabilities)) {
+            const cap = caps.find(
+                (c) => c.width === selectedWidth && c.height === selectedHeight,
+            );
+            if (
+                cap &&
+                cap.framerates.some((f) => Math.abs(f - selectedFps) < 0.01)
+            ) {
+                result.push(format);
+            }
+        }
+        // Sort: H264 first, then MJPEG, then the rest
+        const priority = ["H264", "MJPEG"];
+        result.sort((a, b) => {
+            const ai = priority.indexOf(a);
+            const bi = priority.indexOf(b);
+            if (ai !== -1 && bi !== -1) return ai - bi;
+            if (ai !== -1) return -1;
+            if (bi !== -1) return 1;
+            return 0;
+        });
+        return result;
+    });
 
-    // Whether this codec requires encoding (cannot passthrough, e.g. raw → MKV)
-    const isEncodeOnly = $derived(ENCODE_ONLY_CODECS.includes(selectedCodec));
+    // Whether the selected format is a raw pixel format (requires encoding)
+    const isSelectedRaw = $derived(isRawFormat(selectedFormat));
+
+    // Whether this format requires encoding (raw pixels can't be stored as-is)
+    const isEncodeOnly = $derived(isSelectedRaw);
 
     // Whether encoding settings are active (not passthrough)
     const isEncoding = $derived(!passthrough);
+
+    // Whether the source format is 10-bit or higher
+    const sourceIs10Bit = $derived(is10BitFormat(selectedFormat));
 
     // Target resolutions (only relevant for encoding): "Match Source" + common resolutions
     const targetResolutions = $derived(
@@ -210,7 +259,7 @@
         if (encoderAvailability.ffv1.available)
             codecs.push({
                 codec: "ffv1",
-                label: "FFV1 (Lossless, very large files)",
+                label: "FFV1 (huge, lossless files)",
             });
         return codecs;
     });
@@ -229,8 +278,6 @@
     });
 
     // When encoding codec changes, always select the recommended encoder for that codec.
-    // Force reactivity via null intermediate in case the recommended value is the same
-    // (e.g., both codecs only have Software).
     let lastCodecForEncoder = encodingCodec;
     $effect(() => {
         const codec = encodingCodec;
@@ -247,7 +294,6 @@
             if (info?.recommended) {
                 const rec = info.recommended as HardwareEncoderType;
                 encoderType = null;
-                // Use microtask to ensure Svelte processes the null before the real value
                 queueMicrotask(() => {
                     encoderType = rec;
                 });
@@ -281,50 +327,57 @@
         5: "Heaviest",
     };
 
-    // When codec changes, set passthrough default: passthrough-only codecs are forced,
-    // raw/mjpeg = encode, all others = passthrough
-    let lastCodecForPassthrough = selectedCodec;
-    $effect(() => {
-        if (selectedCodec !== lastCodecForPassthrough) {
-            lastCodecForPassthrough = selectedCodec;
-            if (PASSTHROUGH_ONLY_CODECS.includes(selectedCodec)) {
-                passthrough = true;
-            } else if (ENCODE_ONLY_CODECS.includes(selectedCodec)) {
-                passthrough = false;
-            } else {
-                passthrough = selectedCodec !== "mjpeg";
-            }
-        }
-    });
+    // ── Cascade effects ──────────────────────────────────────────────
 
-    // Initialize defaults when codec changes
+    // When resolution changes: recompute available fps; if current fps unavailable, pick highest
     $effect(() => {
-        const caps = device.capabilities[selectedCodec] ?? [];
-        if (caps.length > 0) {
-            const hasMatch = caps.some(
-                (c) => c.width === selectedWidth && c.height === selectedHeight,
-            );
-            if (!hasMatch) {
-                selectedWidth = caps[0].width;
-                selectedHeight = caps[0].height;
-            }
-        }
-    });
-
-    // Update FPS when resolution changes
-    $effect(() => {
-        const cap = codecCaps.find(
-            (c) => c.width === selectedWidth && c.height === selectedHeight,
-        );
-        if (cap) {
-            const fpsOptions = cap.framerates;
-            // Check if current selection is close to any available option
+        // Touch selectedWidth/selectedHeight to trigger
+        const _w = selectedWidth,
+            _h = selectedHeight;
+        const fpsOptions = availableFps;
+        if (fpsOptions.length > 0) {
             const hasClose = fpsOptions.some(
                 (f) => Math.abs(f - selectedFps) < 0.01,
             );
-            if (fpsOptions.length > 0 && !hasClose) {
+            if (!hasClose) {
                 selectedFps = fpsOptions[0]; // Pick highest available
             }
+        }
+    });
+
+    // When resolution or framerate changes: always auto-select the best format
+    // (H264 first, then MJPEG, then raw — per the availableFormats sort order)
+    $effect(() => {
+        // Touch selectedWidth/selectedHeight/selectedFps to trigger
+        const _w = selectedWidth,
+            _h = selectedHeight,
+            _fps = selectedFps;
+        const formats = availableFormats;
+        if (formats.length > 0) {
+            selectedFormat = formats[0];
+        }
+    });
+
+    // When format changes: update passthrough/encode defaults
+    let lastFormatForPassthrough = selectedFormat;
+    $effect(() => {
+        if (selectedFormat !== lastFormatForPassthrough) {
+            lastFormatForPassthrough = selectedFormat;
+            const raw = isRawFormat(selectedFormat);
+            if (raw) {
+                passthrough = false; // Raw formats must be encoded
+            } else if (selectedFormat === "MJPEG") {
+                passthrough = false; // MJPEG should be re-encoded by default
+            } else {
+                passthrough = true; // Pre-encoded formats default to passthrough
+            }
+        }
+    });
+
+    // Auto-select 10-bit when source is 10-bit and codec is FFV1
+    $effect(() => {
+        if (encodingCodec === "ffv1" && sourceIs10Bit) {
+            videoBitDepth = 10;
         }
     });
 
@@ -332,12 +385,10 @@
     // When source changes with a specific target, validate it still makes sense
     $effect(() => {
         if (passthrough) {
-            // Passthrough: target is always ignored, keep sentinels
             selectedTargetWidth = 0;
             selectedTargetHeight = 0;
             selectedTargetFps = 0;
         }
-        // For encoding: if target is non-zero and exceeds source, reset to Match Source
         if (isEncoding && selectedTargetWidth !== 0) {
             if (
                 selectedTargetWidth > selectedWidth ||
@@ -352,8 +403,6 @@
                 selectedTargetFps = 0;
             }
         }
-        // "Match Source" (0) doesn't truly match when the backend caps to defaults.
-        // Show the real resolved value so the user sees what will actually be used.
         if (
             isEncoding &&
             selectedTargetFps === 0 &&
@@ -404,7 +453,7 @@
     /** Build the current config from UI state */
     function buildConfig(): VideoDeviceConfig {
         return {
-            source_codec: selectedCodec,
+            source_format: selectedFormat,
             source_width: selectedWidth,
             source_height: selectedHeight,
             source_fps: selectedFps,
@@ -413,6 +462,7 @@
             encoder_type: encoderType,
             preset_level: presetLevel,
             custom_bitrate_kbps: isEncoding ? customBitrateKbps : null,
+            video_bit_depth: encodingCodec === "ffv1" ? videoBitDepth : null,
             target_width: isEncoding ? selectedTargetWidth : 0,
             target_height: isEncoding ? selectedTargetHeight : 0,
             target_fps: isEncoding ? selectedTargetFps : 0,
@@ -424,7 +474,7 @@
         if (!effectiveConfig) return true;
         const current = buildConfig();
         return (
-            current.source_codec !== effectiveConfig.source_codec ||
+            current.source_format !== effectiveConfig.source_format ||
             current.source_width !== effectiveConfig.source_width ||
             current.source_height !== effectiveConfig.source_height ||
             Math.abs(current.source_fps - effectiveConfig.source_fps) > 0.01 ||
@@ -434,6 +484,7 @@
             current.preset_level !== effectiveConfig.preset_level ||
             current.custom_bitrate_kbps !==
                 effectiveConfig.custom_bitrate_kbps ||
+            current.video_bit_depth !== effectiveConfig.video_bit_depth ||
             current.target_width !== effectiveConfig.target_width ||
             current.target_height !== effectiveConfig.target_height ||
             Math.abs(current.target_fps - effectiveConfig.target_fps) > 0.01
@@ -446,14 +497,14 @@
             validationError = null;
             const valid = await validateVideoDeviceConfig(
                 device.id,
-                selectedCodec,
+                selectedFormat,
                 selectedWidth,
                 selectedHeight,
                 selectedFps,
             );
             if (!valid) {
-                validationError = `This device does not support ${selectedWidth}x${selectedHeight} @ ${formatFps(selectedFps)}fps with ${getCodecDisplayName(selectedCodec)}. Try a different combination.`;
-                return; // Don't close — let the user fix the config
+                validationError = `This device does not support ${selectedWidth}x${selectedHeight} @ ${formatFps(selectedFps)}fps with ${selectedFormat}. Try a different combination.`;
+                return;
             }
             onSave(buildConfig());
         }
@@ -477,40 +528,6 @@
         </div>
 
         <div class="modal-body">
-            <!-- Source Codec -->
-            <div class="field">
-                <label for="codec-select">
-                    Source Codec
-                    <span class="help-wrapper">
-                        <button
-                            class="help-btn"
-                            onclick={(e) => {
-                                e.stopPropagation();
-                                showStreamSourceHelp = !showStreamSourceHelp;
-                            }}
-                            onblur={() => (showStreamSourceHelp = false)}
-                        >
-                            ?
-                        </button>
-                        {#if showStreamSourceHelp}
-                            <span class="help-tooltip">
-                                We detect that your video device can deliver its
-                                video stream pre-encoded with the codecs in the
-                                dropdown menu. <br /><br />RAW streams are most
-                                reliable over high-speed connections.
-                            </span>
-                        {/if}
-                    </span>
-                </label>
-                <select id="codec-select" bind:value={selectedCodec}>
-                    {#each availableCodecs as codec}
-                        <option value={codec}
-                            >{getCodecDisplayName(codec)}</option
-                        >
-                    {/each}
-                </select>
-            </div>
-
             <!-- Source Resolution -->
             <div class="field">
                 <label for="resolution-select">Source Resolution</label>
@@ -522,7 +539,7 @@
                             (e.target as HTMLSelectElement).value,
                         )}
                 >
-                    {#each availableResolutions as res}
+                    {#each allResolutions as res}
                         <option value="{res.width}x{res.height}"
                             >{res.label}</option
                         >
@@ -540,26 +557,59 @@
                 </select>
             </div>
 
+            <!-- Source Format -->
+            <div class="field">
+                <label for="format-select">
+                    Source Format
+                    <span class="help-wrapper">
+                        <button
+                            class="help-btn"
+                            onclick={(e) => {
+                                e.stopPropagation();
+                                showStreamSourceHelp = !showStreamSourceHelp;
+                            }}
+                            onblur={() => (showStreamSourceHelp = false)}
+                        >
+                            ?
+                        </button>
+                        {#if showStreamSourceHelp}
+                            <span class="help-tooltip">
+                                Video devices can send their video streams in
+                                various "pixel formats" which you can select
+                                here.<br /><br /> Compressed formats such as H264
+                                can be recorded in passthrough mode.
+                            </span>
+                        {/if}
+                    </span>
+                </label>
+                <select id="format-select" bind:value={selectedFormat}>
+                    {#each availableFormats as fmt}
+                        <option value={fmt}
+                            >{fmt}{fmt === "H264"
+                                ? " (supports passthrough)"
+                                : ""}</option
+                        >
+                    {/each}
+                </select>
+            </div>
+
             <div class="divider"></div>
 
             <!-- Encode / Passthrough -->
             <div class="field">
                 <div class="radio-group">
-                    <label
-                        class="radio-label"
-                        class:radio-disabled={isPassthroughOnly}
-                    >
+                    <label class="radio-label">
                         <input
                             type="radio"
                             name="passthrough"
                             value="encode"
                             checked={!passthrough}
-                            disabled={isPassthroughOnly}
+                            disabled={false}
                             onchange={() => (passthrough = false)}
                         />
-                        {selectedCodec === "raw"
+                        {isSelectedRaw
                             ? "Encode (Recommended)"
-                            : selectedCodec === "mjpeg"
+                            : selectedFormat === "MJPEG"
                               ? "Re-encode (Recommended)"
                               : "Re-encode"}
                     </label>
@@ -575,46 +625,40 @@
                             disabled={isEncodeOnly}
                             onchange={() => (passthrough = true)}
                         />
-                        Passthrough{selectedCodec !== "raw" &&
-                        selectedCodec !== "mjpeg" &&
-                        !isPassthroughOnly
+                        Passthrough{!isSelectedRaw && selectedFormat !== "MJPEG"
                             ? " (Recommended)"
                             : ""}
                     </label>
                 </div>
-                {#if isPassthroughOnly}
-                    <span class="field-hint">
-                        <span class="warning-icon">&#9888;</span>
-                        {getCodecDisplayName(selectedCodec)} is a proprietary codec
-                        and will be recorded as passthrough only. In-app playback
-                        depends on support from your operating system.
-                    </span>
-                {:else if isEncodeOnly}
-                    <span class="field-hint">RAW video must be encoded</span>
-                {:else if passthrough && selectedCodec === "mjpeg"}
+                {#if isEncodeOnly}
+                    <span class="field-hint"
+                        >{selectedFormat} video must be encoded</span
+                    >
+                {:else if passthrough && selectedFormat === "MJPEG"}
                     <span class="field-hint"
                         ><span class="field-hint warning"
-                            >&#9888; MJPEG uses significant disk space, which
-                            can be saved by re-encoding.</span
+                            >&#9888; MJPEG has high disk usage, which can be
+                            saved by re-encoding.</span
                         ></span
                     >
                 {:else if passthrough}
                     <span class="field-hint"
                         >Video is recorded to disk directly from the source.</span
                     >
-                {:else if !passthrough && selectedCodec === "mjpeg"}
+                {:else if !passthrough && selectedFormat === "MJPEG"}
                     <span class="field-hint"
                         >MJPEG source will be re-encoded using the settings
                         below.</span
                     >
-                {:else if !passthrough && selectedCodec !== "raw"}
+                {:else if !passthrough && !isSelectedRaw}
                     <span class="field-hint warning"
-                        >&#9888; Re-encoding an already-compressed stream can
+                        >&#9888; This source is already encoded. Re-encoding may
                         cause quality loss.</span
                     >
                 {:else}
                     <span class="field-hint"
-                        >RAW source will be encoded using the settings below.</span
+                        >{selectedFormat} source will be encoded using the settings
+                        below.</span
                     >
                 {/if}
             </div>
@@ -855,6 +899,40 @@
                             {/if}
                         </span>
                     </div>
+                    {#if encodingCodec === "ffv1"}
+                        <div class="field">
+                            <label>Bit Depth</label>
+                            <div class="radio-group">
+                                <label class="radio-label">
+                                    <input
+                                        type="radio"
+                                        name="bitdepth"
+                                        value={8}
+                                        checked={videoBitDepth !== 10}
+                                        onchange={() => (videoBitDepth = null)}
+                                    />
+                                    8-bit
+                                </label>
+                                <label
+                                    class="radio-label"
+                                    class:radio-disabled={!sourceIs10Bit}
+                                    title={!sourceIs10Bit
+                                        ? "10-bit requires a 10-bit source format."
+                                        : ""}
+                                >
+                                    <input
+                                        type="radio"
+                                        name="bitdepth"
+                                        value={10}
+                                        checked={videoBitDepth === 10}
+                                        disabled={!sourceIs10Bit}
+                                        onchange={() => (videoBitDepth = 10)}
+                                    />
+                                    10-bit
+                                </label>
+                            </div>
+                        </div>
+                    {/if}
                 {/if}
             {/if}
         </div>

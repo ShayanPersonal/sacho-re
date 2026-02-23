@@ -204,8 +204,8 @@ pub struct VideoCapturePipeline {
     pub device_id: String,
     /// Human-readable device name
     pub device_name: String,
-    /// Video codec being captured (Raw means we need to encode)
-    pub codec: crate::encoding::VideoCodec,
+    /// Source format string (e.g. "YUY2", "MJPEG", "H264")
+    pub source_format: String,
     /// GStreamer pipeline
     pipeline: gst::Pipeline,
     /// App sink for pulling frames (kept alive for pipeline)
@@ -249,6 +249,8 @@ pub struct VideoCapturePipeline {
     preset_level: u8,
     /// Custom bitrate override (kbps). None = use preset default.
     custom_bitrate_kbps: Option<u32>,
+    /// Encoding bit depth for lossless codecs (FFV1). None = 8-bit default.
+    video_bit_depth: Option<u8>,
     /// Whether encode-during-preroll is active (raw video only)
     encode_during_preroll: bool,
     /// Configured pre-roll duration in seconds
@@ -631,6 +633,7 @@ impl PrerollVideoEncoder {
         target_codec: crate::encoding::VideoCodec,
         preset_level: u8,
         custom_bitrate_kbps: Option<u32>,
+        video_bit_depth: Option<u8>,
         max_preroll_secs: u32,
         target_width: Option<u32>,
         target_height: Option<u32>,
@@ -653,12 +656,14 @@ impl PrerollVideoEncoder {
             target_codec,
             preset_level,
             custom_bitrate_kbps,
+            video_bit_depth,
             target_width,
             target_height,
             target_fps,
         };
 
         // Create the common pipeline start (appsrc -> queue -> videoconvert [-> scale] [-> rate])
+        let pixel_format = crate::encoding::intermediate_format_for_codec(target_codec, video_bit_depth);
         let (pipeline, appsrc, chain_tail) =
             AsyncVideoEncoder::create_common_pipeline_start_with_target(
                 width,
@@ -667,6 +672,7 @@ impl PrerollVideoEncoder {
                 target_width,
                 target_height,
                 target_fps,
+                pixel_format,
             )
             .map_err(|e| VideoError::Pipeline(format!("PrerollEncoder pipeline: {}", e)))?;
 
@@ -908,7 +914,7 @@ impl VideoCapturePipeline {
         device_index: u32,
         device_name_hint: &str,
         device_id: &str,
-        codec: crate::encoding::VideoCodec,
+        source_format: &str,
         source_width: u32,
         source_height: u32,
         source_fps: f64,
@@ -922,9 +928,10 @@ impl VideoCapturePipeline {
         // Find the exact caps AND the provider that supports them.
         // The matched device is then used to create the source element, ensuring
         // the pipeline uses the correct provider (KS vs MF vs DirectShow).
-        let (input_caps, matched_device) = crate::devices::enumeration::get_device_for_caps(
+        let (caps_name, format_field) = crate::encoding::format_to_gst_caps(source_format);
+        let (input_caps, matched_device) = crate::devices::enumeration::get_device_for_format(
             device_id,
-            codec.gst_caps_name(),
+            source_format,
             source_width,
             source_height,
             source_fps,
@@ -932,15 +939,17 @@ impl VideoCapturePipeline {
         .map(|(caps, dev)| (caps, Some(dev)))
         .unwrap_or_else(|| {
             println!("[Video] Using fallback partial caps (no exact provider match available)");
-            let caps = gst::Caps::builder(codec.gst_caps_name())
+            let mut builder = gst::Caps::builder(caps_name)
                 .field("width", source_width as i32)
                 .field("height", source_height as i32)
                 .field(
                     "framerate",
                     crate::encoding::encoder::fps_to_gst_fraction(source_fps),
-                )
-                .build();
-            (caps, None)
+                );
+            if let Some(fmt) = format_field {
+                builder = builder.field("format", fmt);
+            }
+            (builder.build(), None)
         });
 
         let (source, device_name) =
@@ -948,7 +957,7 @@ impl VideoCapturePipeline {
 
         println!(
             "[Video] Creating {} passthrough pipeline for {} (device {})",
-            codec.display_name(),
+            source_format,
             device_name,
             device_index
         );
@@ -973,11 +982,7 @@ impl VideoCapturePipeline {
             .sync(false)
             .build();
 
-        // For MJPEG, skip the parser. jpegparse extracts dimensions from JPEG SOF markers,
-        // which some capture devices report with swapped width/height. By skipping it,
-        // we use the camera's advertised dimensions directly. Cameras already output
-        // well-formed JPEG frames so no parsing is needed for capture.
-        // For other codecs, use identity (passthrough) since they don't need parsing either.
+        // Skip parsers in the capture pipeline — cameras output well-formed frames.
         // Note: jpegparse IS still used in the MjpegDemuxer for playback (video/mjpeg.rs).
         pipeline
             .add_many([&source, &capsfilter, &queue, appsink.upcast_ref()])
@@ -989,13 +994,13 @@ impl VideoCapturePipeline {
         // Debug: Print the caps being used
         println!(
             "[Video] {} passthrough pipeline created for {} (device {})",
-            codec.display_name(),
+            source_format,
             device_name,
             device_index
         );
         println!(
             "[Video]   Capsfilter set to: {} {}x{} @ {}fps",
-            codec.gst_caps_name(),
+            caps_name,
             source_width,
             source_height,
             source_fps
@@ -1068,7 +1073,7 @@ impl VideoCapturePipeline {
         Ok(Self {
             device_id: format!("webcam-{}", device_index),
             device_name,
-            codec,
+            source_format: source_format.to_string(),
             pipeline,
             appsink,
             preroll_buffer,
@@ -1090,6 +1095,7 @@ impl VideoCapturePipeline {
             total_frames_dropped: 0,
             preset_level: crate::encoding::DEFAULT_PRESET,
             custom_bitrate_kbps: None,
+            video_bit_depth: None,
             encode_during_preroll: false,
             pre_roll_secs,
             needs_frames,
@@ -1105,19 +1111,20 @@ impl VideoCapturePipeline {
         })
     }
 
-    /// Create a new capture pipeline that decodes source video to raw NV12 for encoding.
+    /// Create a new capture pipeline that decodes source video to raw pixels for encoding.
     ///
-    /// Supports any source codec: Raw (no decoder), MJPEG (jpegdec), VP8/VP9/AV1/FFV1 (appropriate decoder).
-    /// The decoded NV12 frames are then fed to AsyncVideoEncoder during recording.
+    /// Supports any source format: raw pixels (no decoder), MJPEG (jpegdec), VP8/VP9/AV1/FFV1/H264 (appropriate decoder).
+    /// The intermediate pixel format is chosen based on the target codec: P010_10LE (10-bit)
+    /// for AV1 (always) and FFV1 with video_bit_depth=10, NV12 (8-bit) for everything else.
     ///
-    /// - `source_codec`: The source codec the camera provides
+    /// - `source_format`: The source format string (e.g. "YUY2", "MJPEG", "H264")
     /// - `encoding_codec`: Target encoding codec (None = auto-detect)
     /// - `encoder_type_hint`: Hardware encoder to use (None = auto-detect)
     pub fn new_webcam_raw(
         device_index: u32,
         device_name_hint: &str,
         device_id: &str,
-        source_codec: crate::encoding::VideoCodec,
+        source_format: &str,
         source_width: u32,
         source_height: u32,
         source_fps: f64,
@@ -1125,6 +1132,7 @@ impl VideoCapturePipeline {
         encoding_codec: Option<crate::encoding::VideoCodec>,
         encoder_type_hint: Option<HardwareEncoderType>,
         preset_level: u8,
+        video_bit_depth: Option<u8>,
         encode_during_preroll: bool,
     ) -> Result<Self> {
         // Initialize GStreamer if not already done
@@ -1132,11 +1140,11 @@ impl VideoCapturePipeline {
 
         let pipeline = gst::Pipeline::new();
 
-        // Find exact caps AND the matching provider for the source codec.
-        let caps_name = source_codec.gst_caps_name();
-        let (input_caps, matched_device) = crate::devices::enumeration::get_device_for_caps(
+        // Find exact caps AND the matching provider for the source format.
+        let (gst_caps_name, format_field) = crate::encoding::format_to_gst_caps(source_format);
+        let (input_caps, matched_device) = crate::devices::enumeration::get_device_for_format(
             device_id,
-            caps_name,
+            source_format,
             source_width,
             source_height,
             source_fps,
@@ -1144,15 +1152,17 @@ impl VideoCapturePipeline {
         .map(|(caps, dev)| (caps, Some(dev)))
         .unwrap_or_else(|| {
             println!("[Video] Using fallback partial caps (no exact provider match available)");
-            let caps = gst::Caps::builder(caps_name)
+            let mut builder = gst::Caps::builder(gst_caps_name)
                 .field("width", source_width as i32)
                 .field("height", source_height as i32)
                 .field(
                     "framerate",
                     crate::encoding::encoder::fps_to_gst_fraction(source_fps),
-                )
-                .build();
-            (caps, None)
+                );
+            if let Some(fmt) = format_field {
+                builder = builder.field("format", fmt);
+            }
+            (builder.build(), None)
         });
 
         let (source, device_name) =
@@ -1162,7 +1172,7 @@ impl VideoCapturePipeline {
             "[Video] Creating encoding capture pipeline for {} (device {}, source: {})",
             device_name,
             device_index,
-            source_codec.display_name()
+            source_format
         );
 
         let capsfilter = gst::ElementFactory::make("capsfilter")
@@ -1174,7 +1184,7 @@ impl VideoCapturePipeline {
         let mut elements: Vec<gst::Element> = vec![source.clone(), capsfilter.clone()];
 
         // Insert decoder if source is not raw
-        if let Some(decoder_name) = source_codec.gst_decoder() {
+        if let Some(decoder_name) = crate::encoding::decoder_for_format(source_format) {
             // Workaround for GStreamer issue #1118: mfvideosrc (and ksvideosrc) may put
             // non-standard fields like colorimetry and pixel-aspect-ratio on image/jpeg
             // caps. jpegdec tries to preserve these in its output, causing colorimetry
@@ -1264,9 +1274,17 @@ impl VideoCapturePipeline {
             .map_err(|e| VideoError::Pipeline(format!("Failed to create videoconvert: {}", e)))?;
         elements.push(videoconvert);
 
-        // Force output to a format suitable for encoding
+        // Force output to a format suitable for encoding.
+        // AV1 always uses P010_10LE (10-bit); FFV1 uses it when user selects 10-bit;
+        // everything else uses NV12 (8-bit).
+        let effective_codec = encoding_codec.unwrap_or_else(|| crate::encoding::get_recommended_codec());
+        let intermediate_fmt = crate::encoding::intermediate_format_for_codec(effective_codec, video_bit_depth);
+        println!(
+            "[Video] source_format={}, intermediate_format={}, encoding_codec={:?}",
+            source_format, intermediate_fmt, effective_codec
+        );
         let output_caps = gst::Caps::builder("video/x-raw")
-            .field("format", "NV12") // NV12 is efficient for most hardware encoders
+            .field("format", intermediate_fmt)
             .build();
 
         let output_capsfilter = gst::ElementFactory::make("capsfilter")
@@ -1307,7 +1325,7 @@ impl VideoCapturePipeline {
             "[Video] Encoding capture pipeline created for {} (device {}, source: {})",
             device_name,
             device_index,
-            source_codec.display_name()
+            source_format
         );
 
         // Create pre-roll buffer for raw frames.
@@ -1391,7 +1409,7 @@ impl VideoCapturePipeline {
         Ok(Self {
             device_id: format!("webcam-{}", device_index),
             device_name,
-            codec: source_codec,
+            source_format: source_format.to_string(),
             pipeline,
             appsink,
             preroll_buffer,
@@ -1408,11 +1426,12 @@ impl VideoCapturePipeline {
             is_encoding: true,
             encoding_codec,
             encoder_type: encoder_type_hint,
-            pixel_format: Some("NV12".to_string()),
+            pixel_format: Some(intermediate_fmt.to_string()),
             consecutive_full_drops: 0,
             total_frames_dropped: 0,
             preset_level,
             custom_bitrate_kbps: None, // Set by caller via VideoManager
+            video_bit_depth,
             encode_during_preroll,
             pre_roll_secs,
             needs_frames,
@@ -1582,7 +1601,7 @@ impl VideoCapturePipeline {
 
             return Err(VideoError::Pipeline(format!(
                 "Pipeline for {} did not negotiate caps after 1000ms ({}x{} @ {:.2}fps, codec: {}). {}",
-                self.device_name, self.width, self.height, self.fps, self.codec.display_name(), error_details
+                self.device_name, self.width, self.height, self.fps, self.source_format, error_details
             )));
         }
 
@@ -1628,6 +1647,7 @@ impl VideoCapturePipeline {
                 target_codec,
                 self.preset_level,
                 self.custom_bitrate_kbps,
+                self.video_bit_depth,
                 self.pre_roll_secs,
                 pe_tw,
                 pe_th,
@@ -1681,14 +1701,14 @@ impl VideoCapturePipeline {
             println!(
                 "[Video] Starting recording to {:?} ({} -> {})",
                 output_path,
-                self.codec.display_name(),
+                self.source_format,
                 target_codec.display_name()
             );
         } else {
             println!(
-                "[Video] Starting recording to {:?} (codec: {})",
+                "[Video] Starting recording to {:?} (format: {})",
                 output_path,
-                self.codec.display_name()
+                self.source_format
             );
         }
 
@@ -1703,7 +1723,7 @@ impl VideoCapturePipeline {
 
         // H.264 uses I/P/B frames — the file must start at a keyframe.
         // Strip leading delta frames so the muxer gets a clean GOP start.
-        if self.codec == crate::encoding::VideoCodec::H264 {
+        if self.source_format == "H264" {
             let before = preroll_frames.len();
             while preroll_frames.first().map(|f| f.is_delta_unit).unwrap_or(false) {
                 preroll_frames.remove(0);
@@ -1837,6 +1857,7 @@ impl VideoCapturePipeline {
                 target_codec,
                 preset_level: self.preset_level,
                 custom_bitrate_kbps: self.custom_bitrate_kbps,
+                video_bit_depth: self.video_bit_depth,
                 target_width: use_target_w,
                 target_height: use_target_h,
                 target_fps: use_target_fps,
@@ -1895,8 +1916,12 @@ impl VideoCapturePipeline {
             self.file_writer = None;
         } else {
             // Pre-encoded video - use passthrough writer
+            // Map the source format string to the VideoCodec enum for the writer/muxer.
+            let (writer_caps_name, _) = crate::encoding::format_to_gst_caps(&self.source_format);
+            let writer_codec = crate::encoding::VideoCodec::from_gst_caps_name(writer_caps_name)
+                .unwrap_or(crate::encoding::VideoCodec::Mjpeg);
             let mut writer =
-                VideoWriter::new(&output_path, self.codec, self.width, self.height, self.fps)?;
+                VideoWriter::new(&output_path, writer_codec, self.width, self.height, self.fps)?;
 
             // Write pre-roll frames
             for frame in &preroll_frames {
@@ -2308,7 +2333,7 @@ impl VideoCaptureManager {
                 .and_then(|s| s.parse::<u32>().ok())
                 .unwrap_or(0);
 
-            let codec = dev_config.source_codec;
+            let source_format = &dev_config.source_format;
 
             // Create appropriate pipeline based on passthrough setting
             let pipeline_result = if dev_config.passthrough {
@@ -2317,7 +2342,7 @@ impl VideoCaptureManager {
                     index,
                     device_name,
                     device_id,
-                    codec,
+                    source_format,
                     dev_config.source_width,
                     dev_config.source_height,
                     dev_config.source_fps,
@@ -2329,7 +2354,7 @@ impl VideoCaptureManager {
                     index,
                     device_name,
                     device_id,
-                    codec,
+                    source_format,
                     dev_config.source_width,
                     dev_config.source_height,
                     dev_config.source_fps,
@@ -2337,6 +2362,7 @@ impl VideoCaptureManager {
                     dev_config.encoding_codec,
                     dev_config.encoder_type,
                     dev_config.preset_level,
+                    dev_config.video_bit_depth,
                     self.encode_during_preroll,
                 )
             };
@@ -2393,8 +2419,8 @@ impl VideoCaptureManager {
 
             let safe_name = crate::session::sanitize_device_name(&pipeline.device_name);
 
-            // Use the correct file extension for the codec's container
-            let extension = pipeline.codec.container().extension();
+            // All output goes to MKV container
+            let extension = "mkv";
             let filename = format!("video_{}.{}", safe_name, extension);
 
             let output_path = session_path.join(&filename);

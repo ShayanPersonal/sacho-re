@@ -39,7 +39,7 @@ export const ffv1WarningDevices = derived(
       if (!$selected.has(device.id)) continue;
       const cfg = $configs[device.id];
       if (!cfg) continue;
-      const outputCodec = cfg.passthrough ? cfg.source_codec : cfg.encoding_codec;
+      const outputCodec = cfg.passthrough ? cfg.source_format.toLowerCase() : cfg.encoding_codec;
       if (outputCodec === 'ffv1') warnings.push(device.name);
     }
     return warnings;

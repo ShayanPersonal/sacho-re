@@ -1,7 +1,7 @@
 // Device enumeration implementations
 
 use super::{AudioDevice, MidiDevice, VideoDevice, CodecCapability};
-use crate::encoding::{VideoCodec, has_av1_encoder, has_vp9_encoder, has_vp8_encoder};
+use crate::encoding::{has_av1_encoder, has_vp9_encoder, has_vp8_encoder};
 use cpal::traits::{DeviceTrait, HostTrait};
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -27,19 +27,57 @@ pub fn get_gst_device(device_id: &str) -> Option<gst::Device> {
 /// Validate that a video device configuration will produce a working pipeline.
 ///
 /// Checks whether ANY stored GStreamer provider for this device has exact caps
-/// matching the requested codec, resolution, and framerate. Returns true if at
+/// matching the requested format, resolution, and framerate. Returns true if at
 /// least one provider can handle the configuration.
-pub fn validate_video_config(device_id: &str, codec: &str, width: u32, height: u32, fps: f64) -> bool {
-    let caps_name = match codec {
-        "raw" => "video/x-raw",
-        "mjpeg" => "image/jpeg",
-        "av1" => "video/x-av1",
-        "vp8" => "video/x-vp8",
-        "vp9" => "video/x-vp9",
-        "h264" => "video/x-h264",
-        _ => return false,
-    };
-    get_device_for_caps(device_id, caps_name, width, height, fps).is_some()
+pub fn validate_video_config(device_id: &str, format: &str, width: u32, height: u32, fps: f64) -> bool {
+    get_device_for_format(device_id, format, width, height, fps).is_some()
+}
+
+/// Find the best GStreamer Device + exact caps for a given source format string.
+///
+/// Converts the format string (e.g. "YUY2", "MJPEG", "H264") to GStreamer caps
+/// and delegates to `get_device_for_caps`. For raw pixel formats, the caps include
+/// the format field (e.g. `video/x-raw,format=YUY2`).
+pub fn get_device_for_format(
+    device_id: &str,
+    format: &str,
+    width: u32,
+    height: u32,
+    fps: f64,
+) -> Option<(gst::Caps, gst::Device)> {
+    let (caps_name, format_field) = crate::encoding::format_to_gst_caps(format);
+
+    // For raw formats with a specific pixel format field, try the exact caps first
+    if let Some(fmt) = format_field {
+        let store = GST_DEVICE_STORE.lock().ok()?;
+        let devices = store.as_ref()?.get(device_id)?;
+        let target_fps = crate::encoding::encoder::fps_to_gst_fraction(fps);
+
+        let filter = gst::Caps::builder(caps_name)
+            .field("format", fmt)
+            .field("width", width as i32)
+            .field("height", height as i32)
+            .field("framerate", target_fps)
+            .build();
+
+        for gst_dev in devices {
+            if let Some(device_caps) = gst_dev.caps() {
+                let matched = device_caps.intersect_with_mode(&filter, gst::CapsIntersectMode::First);
+                if !matched.is_empty() {
+                    println!("[Video] Found exact caps for format '{}' via provider '{}': {}",
+                        format, gst_dev.device_class(), matched);
+                    return Some((matched, gst_dev.clone()));
+                }
+            }
+        }
+
+        println!("[Video] No provider has exact caps for format '{}' {}x{} @ {:.2}fps in device {}",
+            format, width, height, fps, device_id);
+        None
+    } else {
+        // Encoded format (MJPEG, H264, AV1, VP8, VP9) — delegate to existing caps-based lookup
+        get_device_for_caps(device_id, caps_name, width, height, fps)
+    }
 }
 
 /// Find the best GStreamer Device + exact caps that match the desired mode.
@@ -118,30 +156,30 @@ pub fn get_device_exact_caps(
     get_device_for_caps(device_id, caps_name, width, height, fps).map(|(caps, _)| caps)
 }
 
-/// Intermediate structure for collecting per-codec capabilities during enumeration
+/// Intermediate structure for collecting per-format capabilities during enumeration
 struct CapabilityCollector {
-    /// codec -> (width, height) -> set of framerates (f64 to preserve fractions like 29.97)
-    data: HashMap<VideoCodec, HashMap<(u32, u32), Vec<f64>>>,
+    /// format_string -> (width, height) -> set of framerates (f64 to preserve fractions like 29.97)
+    data: HashMap<String, HashMap<(u32, u32), Vec<f64>>>,
 }
 
 impl CapabilityCollector {
     fn new() -> Self {
         Self { data: HashMap::new() }
     }
-    
-    fn add(&mut self, codec: VideoCodec, width: u32, height: u32, fps: f64) {
-        let res_map = self.data.entry(codec).or_default();
+
+    fn add(&mut self, format: String, width: u32, height: u32, fps: f64) {
+        let res_map = self.data.entry(format).or_default();
         let fps_list = res_map.entry((width, height)).or_default();
         // Deduplicate: consider fps values within 0.01 as the same
         if !fps_list.iter().any(|&existing| (existing - fps).abs() < 0.01) {
             fps_list.push(fps);
         }
     }
-    
-    /// Finalize into sorted CodecCapability lists per codec
-    fn finalize(self) -> HashMap<VideoCodec, Vec<CodecCapability>> {
+
+    /// Finalize into sorted CodecCapability lists per format
+    fn finalize(self) -> HashMap<String, Vec<CodecCapability>> {
         let mut result = HashMap::new();
-        for (codec, res_map) in self.data {
+        for (format, res_map) in self.data {
             let mut caps: Vec<CodecCapability> = res_map.into_iter()
                 .map(|((w, h), mut fps_list)| {
                     fps_list.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)); // Descending
@@ -150,72 +188,69 @@ impl CapabilityCollector {
                 .collect();
             // Sort by resolution descending (highest pixel count first)
             caps.sort_by(|a, b| (b.width * b.height).cmp(&(a.width * a.height)));
-            result.insert(codec, caps);
+            result.insert(format, caps);
         }
         result
     }
 }
 
-/// Process GStreamer caps to extract per-codec capabilities
+/// Process GStreamer caps to extract per-format capabilities.
+///
+/// For `video/x-raw`, the format field (e.g. "YUY2", "NV12") becomes the key.
+/// For encoded formats, the codec display name (e.g. "MJPEG", "H264") is the key.
+/// Some capture cards advertise H.264 as `video/x-raw,format=H264` — these are
+/// detected and keyed as "H264".
 fn process_caps(
     caps: &gst::Caps,
-    detected_formats: &mut Vec<String>,
     collector: &mut CapabilityCollector,
     can_encode_raw: bool,
 ) {
     for i in 0..caps.size() {
         if let Some(structure) = caps.structure(i) {
-            let format_name = structure.name().as_str();
-            
-            // Track unique formats (use short names for display)
-            let display_name = format_display_name(format_name);
-            if !detected_formats.contains(&display_name) {
-                detected_formats.push(display_name.clone());
-            }
-            
-            // Try to match to a supported codec
-            let codec = match VideoCodec::from_gst_caps_name(format_name) {
-                Some(VideoCodec::Raw) => {
-                    // Some capture cards (e.g. Elgato HD60) advertise H.264 as
-                    // video/x-raw with format=H264. Detect and remap.
+            let caps_name = structure.name().as_str();
+
+            // Determine the format key string for this caps structure
+            let format_key: String = match caps_name {
+                "video/x-raw" => {
                     if let Ok(fmt) = structure.get::<&str>("format") {
-                        if fmt == "H264" {
-                            let h264_name = "H.264".to_string();
-                            if !detected_formats.contains(&h264_name) {
-                                detected_formats.push(h264_name);
-                            }
-                            VideoCodec::H264
+                        if fmt == "H264" || fmt == "X264" {
+                            // H.264-as-raw: capture cards advertise H.264 as video/x-raw,format=H264
+                            "H264".to_string()
                         } else if !can_encode_raw {
-                            continue
+                            continue; // Skip raw pixel formats when no encoder is available
                         } else {
-                            VideoCodec::Raw
+                            fmt.to_string() // Use actual pixel format name: "YUY2", "NV12", etc.
                         }
                     } else if !can_encode_raw {
                         continue
                     } else {
-                        VideoCodec::Raw
+                        "RAW".to_string() // Fallback if no format field
                     }
                 }
-                Some(c) => c,
-                None => continue,
+                "image/jpeg" => "MJPEG".to_string(),
+                "video/x-h264" => "H264".to_string(),
+                "video/x-av1" | "video/av1" => "AV1".to_string(),
+                "video/x-vp8" => "VP8".to_string(),
+                "video/x-vp9" => "VP9".to_string(),
+                _ => continue, // Skip unsupported caps types
             };
-            
+
             // Extract width (may be fixed int or IntRange)
             let widths = extract_int_values(&structure, "width");
             let heights = extract_int_values(&structure, "height");
             let framerates = extract_framerate_values(&structure);
-            
+
             // If we got nothing useful, use defaults
             let widths = if widths.is_empty() { vec![1280] } else { widths };
             let heights = if heights.is_empty() { vec![720] } else { heights };
             let framerates = if framerates.is_empty() { vec![30.0] } else { framerates };
-            
+
             // Add every combination
             for &w in &widths {
                 for &h in &heights {
                     for &fps in &framerates {
                         if fps > 0.0 {
-                            collector.add(codec, w, h, fps);
+                            collector.add(format_key.clone(), w, h, fps);
                         }
                     }
                 }
@@ -354,21 +389,6 @@ fn extract_framerate_values(structure: &gst::StructureRef) -> Vec<f64> {
     }
     
     Vec::new()
-}
-
-/// Convert GStreamer format name to a short display name
-fn format_display_name(gst_name: &str) -> String {
-    match gst_name {
-        "video/x-raw" => "RAW".to_string(),
-        "image/jpeg" => "MJPEG".to_string(),
-        "video/x-av1" | "video/av1" => "AV1".to_string(),
-        "video/x-vp8" => "VP8".to_string(),
-        "video/x-vp9" => "VP9".to_string(),
-        "video/x-h264" => "H.264".to_string(),
-        "video/x-dv" => "DV".to_string(),
-        "video/mpeg" => "MPEG".to_string(),
-        _ => gst_name.replace("video/x-", "").replace("video/", "").replace("image/", "").to_uppercase(),
-    }
 }
 
 
@@ -601,9 +621,8 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
             .to_lowercase();
         let device_id = format!("video-{}", safe_name);
         
-        let mut detected_formats: Vec<String> = Vec::new();
         let mut collector = CapabilityCollector::new();
-        
+
         // Store ALL GStreamer Device objects for this physical device so we can
         // pick the right provider at pipeline creation time. Process capabilities
         // from every provider — `get_device_for_caps` will match the exact provider
@@ -611,12 +630,12 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
         for gst_dev in &info.gst_devices {
             println!("[Sacho]   Processing provider '{}' for {} (caps: {})",
                 gst_dev.device_class(), device_id, gst_dev.caps().map(|c| c.size()).unwrap_or(0));
-            
+
             if let Some(caps) = gst_dev.caps() {
-                process_caps(&caps, &mut detected_formats, &mut collector, can_encode_raw);
+                process_caps(&caps, &mut collector, can_encode_raw);
             }
         }
-        
+
         // Save all providers for this device, sorted so that Media Foundation
         // ("Source/Video" → mfvideosrc) comes before Kernel Streaming
         // ("Video/Source" → ksvideosrc). MF is the modern Windows capture API and
@@ -635,40 +654,23 @@ pub fn enumerate_video_devices() -> Vec<VideoDevice> {
                 map.insert(device_id.clone(), sorted_devices);
             }
         }
-        
-        // Log all detected formats
-        println!("[Sacho]   All formats: {:?}", detected_formats);
-        
-        if detected_formats.is_empty() {
-            println!("[Sacho]   No caps available for device");
-        }
-        
+
         // Finalize capabilities
-        let mut capabilities = collector.finalize();
-        
-        // If no capabilities detected, add defaults for Raw
-        if capabilities.is_empty() && can_encode_raw {
-            capabilities.insert(VideoCodec::Raw, vec![
-                CodecCapability { width: 1920, height: 1080, framerates: vec![30.0] },
-                CodecCapability { width: 1280, height: 720, framerates: vec![30.0] },
-                CodecCapability { width: 640, height: 480, framerates: vec![30.0] },
-            ]);
-        }
-        
-        // Derive supported_codecs from capabilities keys
-        let supported_codecs: Vec<VideoCodec> = capabilities.keys().copied().collect();
-        
-        let codec_names: Vec<_> = supported_codecs.iter().map(|c| c.display_name()).collect();
+        let capabilities = collector.finalize();
+
+        let format_names: Vec<_> = capabilities.keys().collect();
         let total_modes: usize = capabilities.values().map(|v| v.iter().map(|c| c.framerates.len()).sum::<usize>()).sum();
-        println!("[Sacho] Video {}: {} ({} modes, codecs: {:?})", 
-            device_id, name, total_modes, codec_names);
-        
+        println!("[Sacho] Video {}: {} ({} modes, formats: {:?})",
+            device_id, name, total_modes, format_names);
+
+        if capabilities.is_empty() {
+            println!("[Sacho]   No supported formats for device");
+        }
+
         devices.push(VideoDevice {
             id: device_id,
             name,
-            supported_codecs,
             capabilities,
-            all_formats: detected_formats,
         });
     }
     

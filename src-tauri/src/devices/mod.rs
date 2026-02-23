@@ -5,7 +5,6 @@ pub mod health;
 
 pub use enumeration::*;
 
-use crate::encoding::VideoCodec;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -77,70 +76,60 @@ pub struct CodecCapability {
 pub struct VideoDevice {
     pub id: String,
     pub name: String,
-    /// Supported video codecs for this device (convenience list, derived from capabilities keys)
-    pub supported_codecs: Vec<VideoCodec>,
-    /// Per-codec capabilities: codec -> list of resolutions with available framerates
-    pub capabilities: HashMap<VideoCodec, Vec<CodecCapability>>,
-    /// All formats detected from the device (for display)
-    pub all_formats: Vec<String>,
+    /// Per-format capabilities: format string -> list of resolutions with available framerates.
+    /// Format strings are the actual pixel/codec names from GStreamer (e.g. "YUY2", "NV12", "MJPEG", "H264").
+    pub capabilities: HashMap<String, Vec<CodecCapability>>,
 }
 
 impl VideoDevice {
-    /// Check if this device supports any recording codec
+    /// Check if this device supports any recording format
     pub fn is_supported(&self) -> bool {
-        !self.supported_codecs.is_empty()
+        !self.capabilities.is_empty()
     }
-    
-    /// Get the preferred codec for recording.
-    /// 
-    /// Prefers Raw (highest quality, we encode ourselves) first,
-    /// then AV1 > VP9 > VP8 > MJPEG for pre-encoded passthrough.
-    pub fn preferred_codec(&self) -> Option<VideoCodec> {
-        const PRIORITY: &[VideoCodec] = &[
-            VideoCodec::Raw,
-            VideoCodec::Av1,
-            VideoCodec::Vp9,
-            VideoCodec::Vp8,
-            VideoCodec::Mjpeg,
+
+    /// Get the preferred source format for recording.
+    ///
+    /// Priority: YUY2 > NV12 > I420 > YV12 > BGR > MJPEG > H264 > AV1 > VP9 > VP8
+    /// Raw pixel formats first (highest quality, we encode ourselves),
+    /// then pre-encoded formats for passthrough.
+    pub fn preferred_format(&self) -> Option<&str> {
+        const PRIORITY: &[&str] = &[
+            "YUY2", "NV12", "I420", "YV12", "BGR", "BGRx",
+            "MJPEG", "H264", "AV1", "VP9", "VP8",
         ];
-        
-        for codec in PRIORITY {
-            if self.supported_codecs.contains(codec) {
-                return Some(*codec);
+
+        for fmt in PRIORITY {
+            if self.capabilities.contains_key(*fmt) {
+                return Some(fmt);
             }
         }
-        
-        // Fall back to first available codec
-        self.supported_codecs.first().copied()
+
+        // Fall back to first available format
+        self.capabilities.keys().next().map(|s| s.as_str())
     }
-    
-    /// Check if this device supports raw video (requires encoding)
-    pub fn supports_raw(&self) -> bool {
-        self.supported_codecs.contains(&VideoCodec::Raw)
-    }
-    
-    /// Get the best default resolution and fps for a given codec.
+
+    /// Get the best default resolution and fps for a given format.
     /// Returns (width, height, fps) picking the highest resolution then highest fps.
-    pub fn best_mode(&self, codec: &VideoCodec) -> Option<(u32, u32, f64)> {
-        let caps = self.capabilities.get(codec)?;
+    pub fn best_mode(&self, format: &str) -> Option<(u32, u32, f64)> {
+        let caps = self.capabilities.get(format)?;
         // Capabilities are sorted highest resolution first
         let best = caps.first()?;
         let fps = best.framerates.first().copied().unwrap_or(30.0);
         Some((best.width, best.height, fps))
     }
-    
+
     /// Compute the smart default configuration for this device.
     ///
     /// Defaults:
-    /// - Codec: Raw > AV1 > VP9 > VP8 > MJPEG
+    /// - Format: YUY2 > NV12 > I420 > YV12 > BGR > MJPEG > H264 > AV1 > VP9 > VP8
     /// - Resolution: min(highest available, 1080p)
-    /// - FPS: min(highest available at chosen resolution, 30)
+    /// - FPS: min(highest available at chosen resolution, ~30)
     /// - Target: "Match Source" (0/0/0.0 sentinel)
     pub fn default_config(&self) -> Option<crate::config::VideoDeviceConfig> {
-        let codec = self.preferred_codec()?;
-        let caps = self.capabilities.get(&codec)?;
+        let format = self.preferred_format()?.to_string();
+        let caps = self.capabilities.get(&format)?;
         if caps.is_empty() { return None; }
-        
+
         use crate::config::{DEFAULT_TARGET_HEIGHT, DEFAULT_TARGET_FPS, DEFAULT_TARGET_FPS_TOLERANCE};
 
         // Find best resolution: highest that's ≤ default target height, or smallest available
@@ -157,17 +146,20 @@ impl VideoDevice {
             .find(|&f| f <= DEFAULT_TARGET_FPS_TOLERANCE)
             .or_else(|| chosen_cap.framerates.last().copied())
             .unwrap_or(DEFAULT_TARGET_FPS);
-        
+
+        let is_raw = crate::encoding::is_raw_format(&format);
+
         Some(crate::config::VideoDeviceConfig {
-            source_codec: codec,
+            source_format: format,
             source_width: width,
             source_height: height,
             source_fps: fps,
-            passthrough: codec.is_preencoded(), // Default: passthrough for pre-encoded, encode for raw
+            passthrough: !is_raw, // Default: encode for raw, passthrough for pre-encoded
             encoding_codec: None,   // Auto-detect
             encoder_type: None,     // Auto-detect
             preset_level: crate::encoding::DEFAULT_PRESET,
             custom_bitrate_kbps: None,
+            video_bit_depth: None,
             target_width: 0,   // "Match Source"
             target_height: 0,  // "Match Source"
             target_fps: 0.0,   // "Match Source"

@@ -87,6 +87,8 @@ pub struct EncoderConfig {
     pub preset_level: u8,
     /// Custom bitrate override (kbps). None = use preset default.
     pub custom_bitrate_kbps: Option<u32>,
+    /// Encoding bit depth for lossless codecs (FFV1). None = 8-bit default.
+    pub video_bit_depth: Option<u8>,
     /// Target encoding width (if different from source, videoscale is inserted)
     pub target_width: Option<u32>,
     /// Target encoding height (if different from source, videoscale is inserted)
@@ -102,6 +104,7 @@ impl Default for EncoderConfig {
             target_codec: VideoCodec::Av1,
             preset_level: super::presets::DEFAULT_PRESET,
             custom_bitrate_kbps: None,
+            video_bit_depth: None,
             target_width: None,
             target_height: None,
             target_fps: None,
@@ -1160,21 +1163,22 @@ impl AsyncVideoEncoder {
         config: &EncoderConfig,
         hw_type: HardwareEncoderType,
     ) -> Result<gst::Pipeline> {
+        let pixel_format = super::intermediate_format_for_codec(config.target_codec, config.video_bit_depth);
         match config.target_codec {
             VideoCodec::Av1 => {
-                Self::create_av1_pipeline(output_path, width, height, fps, config, hw_type)
+                Self::create_av1_pipeline(output_path, width, height, fps, config, hw_type, pixel_format)
             }
             VideoCodec::Vp9 => {
-                Self::create_vp9_pipeline(output_path, width, height, fps, config, hw_type)
+                Self::create_vp9_pipeline(output_path, width, height, fps, config, hw_type, pixel_format)
             }
             VideoCodec::Vp8 => {
-                Self::create_vp8_pipeline(output_path, width, height, fps, config, hw_type)
+                Self::create_vp8_pipeline(output_path, width, height, fps, config, hw_type, pixel_format)
             }
             VideoCodec::H264 => {
-                Self::create_h264_pipeline(output_path, width, height, fps, config, hw_type)
+                Self::create_h264_pipeline(output_path, width, height, fps, config, hw_type, pixel_format)
             }
             VideoCodec::Ffv1 => {
-                Self::create_ffv1_pipeline(output_path, width, height, fps, config, hw_type)
+                Self::create_ffv1_pipeline(output_path, width, height, fps, config, hw_type, pixel_format)
             }
             _ => Err(EncoderError::NotAvailable(format!(
                 "Encoding not supported for codec: {:?}",
@@ -1200,13 +1204,14 @@ impl AsyncVideoEncoder {
         target_width: Option<u32>,
         target_height: Option<u32>,
         target_fps: Option<f64>,
+        pixel_format: &str,
     ) -> Result<(gst::Pipeline, gst_app::AppSrc, gst::Element)> {
         let pipeline = gst::Pipeline::new();
 
         // Create appsrc with raw video caps - must specify format for proper negotiation
-        // NV12 is the standard format we use for raw capture
+        // Format is determined by intermediate_format_for_codec() (NV12 or P010_10LE)
         let caps = gst::Caps::builder("video/x-raw")
-            .field("format", "NV12")
+            .field("format", pixel_format)
             .field("width", width as i32)
             .field("height", height as i32)
             .field("framerate", fps_to_gst_fraction(fps))
@@ -1325,6 +1330,7 @@ impl AsyncVideoEncoder {
         fps: f64,
         config: &EncoderConfig,
         hw_type: HardwareEncoderType,
+        pixel_format: &str,
     ) -> Result<gst::Pipeline> {
         let (pipeline, _appsrc, chain_tail) = Self::create_common_pipeline_start_with_target(
             width,
@@ -1333,6 +1339,7 @@ impl AsyncVideoEncoder {
             config.target_width,
             config.target_height,
             config.target_fps,
+            pixel_format,
         )?;
 
         // Create AV1 encoder
@@ -1418,6 +1425,7 @@ impl AsyncVideoEncoder {
         fps: f64,
         config: &EncoderConfig,
         hw_type: HardwareEncoderType,
+        pixel_format: &str,
     ) -> Result<gst::Pipeline> {
         let (pipeline, _appsrc, chain_tail) = Self::create_common_pipeline_start_with_target(
             width,
@@ -1426,6 +1434,7 @@ impl AsyncVideoEncoder {
             config.target_width,
             config.target_height,
             config.target_fps,
+            pixel_format,
         )?;
 
         // Create VP8 encoder
@@ -1520,6 +1529,7 @@ impl AsyncVideoEncoder {
         fps: f64,
         config: &EncoderConfig,
         hw_type: HardwareEncoderType,
+        pixel_format: &str,
     ) -> Result<gst::Pipeline> {
         let (pipeline, _appsrc, chain_tail) = Self::create_common_pipeline_start_with_target(
             width,
@@ -1528,6 +1538,7 @@ impl AsyncVideoEncoder {
             config.target_width,
             config.target_height,
             config.target_fps,
+            pixel_format,
         )?;
 
         // Create VP9 encoder
@@ -1625,6 +1636,7 @@ impl AsyncVideoEncoder {
         fps: f64,
         config: &EncoderConfig,
         hw_type: HardwareEncoderType,
+        pixel_format: &str,
     ) -> Result<gst::Pipeline> {
         let (pipeline, _appsrc, chain_tail) = Self::create_common_pipeline_start_with_target(
             width,
@@ -1633,6 +1645,7 @@ impl AsyncVideoEncoder {
             config.target_width,
             config.target_height,
             config.target_fps,
+            pixel_format,
         )?;
 
         // Create H264 encoder
@@ -1718,6 +1731,7 @@ impl AsyncVideoEncoder {
         fps: f64,
         config: &EncoderConfig,
         hw_type: HardwareEncoderType,
+        pixel_format: &str,
     ) -> Result<gst::Pipeline> {
         let (pipeline, _appsrc, chain_tail) = Self::create_common_pipeline_start_with_target(
             width,
@@ -1726,6 +1740,7 @@ impl AsyncVideoEncoder {
             config.target_width,
             config.target_height,
             config.target_fps,
+            pixel_format,
         )?;
 
         // Create FFV1 encoder
