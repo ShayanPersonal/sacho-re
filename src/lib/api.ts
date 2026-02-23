@@ -78,6 +78,8 @@ export interface VideoDeviceConfig {
   encoder_type: HardwareEncoderType | null;
   /** Quality preset 1-5 */
   preset_level: number;
+  /** Custom bitrate override in kbps (null = use preset default) */
+  custom_bitrate_kbps: number | null;
   target_width: number;
   target_height: number;
   target_fps: number;
@@ -177,6 +179,17 @@ export function formatFps(fps: number): string {
   return fps.toFixed(2);
 }
 
+/** Default maximum encoding height when the user hasn't chosen a specific target.
+ * This is just the initial selection — users can pick higher values in the UI. */
+export const DEFAULT_TARGET_HEIGHT = 1080;
+
+/** Default maximum encoding FPS when the user hasn't chosen a specific target.
+ * This is just the initial selection — users can pick higher values in the UI. */
+export const DEFAULT_TARGET_FPS = 30;
+
+/** Tolerance for comparing FPS to DEFAULT_TARGET_FPS (includes 30000/1001 ≈ 29.97). */
+export const DEFAULT_TARGET_FPS_TOLERANCE = 30.5;
+
 /** Codecs that only support passthrough (no encoding/decoding due to licensing) */
 export const PASSTHROUGH_ONLY_CODECS: VideoCodec[] = [];
 
@@ -207,18 +220,19 @@ export function computeDefaultConfig(
   const caps = device.capabilities[codec];
   if (!caps || caps.length === 0) return null;
 
-  // Find best resolution: highest that's ≤ 1080p, or smallest available
+  // Find best resolution: highest that's ≤ default target height, or smallest available
   // Caps are sorted by resolution descending
-  const chosenCap = caps.find((c) => c.height <= 1080) ?? caps[caps.length - 1];
+  const chosenCap =
+    caps.find((c) => c.height <= DEFAULT_TARGET_HEIGHT) ?? caps[caps.length - 1];
 
   const width = chosenCap.width;
   const height = chosenCap.height;
 
-  // Find best fps: highest that's ≤ ~30, or lowest available
+  // Find best fps: highest that's ≤ default target fps, or lowest available
   const fps =
-    chosenCap.framerates.find((f) => f <= 30.5) ??
+    chosenCap.framerates.find((f) => f <= DEFAULT_TARGET_FPS_TOLERANCE) ??
     chosenCap.framerates[chosenCap.framerates.length - 1] ??
-    30;
+    DEFAULT_TARGET_FPS;
 
   return {
     source_codec: codec,
@@ -229,6 +243,7 @@ export function computeDefaultConfig(
     encoding_codec: null,
     encoder_type: null,
     preset_level: 3,
+    custom_bitrate_kbps: null,
     target_width: 0, // Match Source
     target_height: 0, // Match Source
     target_fps: 0, // Match Source
@@ -460,6 +475,30 @@ export interface AutoSelectProgress {
   total_levels: number;
   /** Human-readable status message */
   message: string;
+}
+
+/** Get scaled bitrates (kbps) for all 5 preset levels in one call.
+ *  Returns array of 5 values (null for FFV1/unsupported). */
+export async function getPresetBitrates(
+  codec: VideoCodec,
+  hwType: HardwareEncoderType,
+  sourceWidth: number,
+  sourceHeight: number,
+  sourceFps: number,
+  targetWidth: number,
+  targetHeight: number,
+  targetFps: number,
+): Promise<(number | null)[]> {
+  return invoke("get_preset_bitrates", {
+    codec,
+    hwType,
+    sourceWidth,
+    sourceHeight,
+    sourceFps,
+    targetWidth,
+    targetHeight,
+    targetFps,
+  });
 }
 
 /** Run encoder auto-selection for a specific device.

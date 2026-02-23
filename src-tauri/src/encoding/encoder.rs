@@ -85,6 +85,8 @@ pub struct EncoderConfig {
     /// Quality preset level (1 = lightest, 5 = maximum quality)
     /// See [`super::presets`] for per-encoder parameter mappings.
     pub preset_level: u8,
+    /// Custom bitrate override (kbps). None = use preset default.
+    pub custom_bitrate_kbps: Option<u32>,
     /// Target encoding width (if different from source, videoscale is inserted)
     pub target_width: Option<u32>,
     /// Target encoding height (if different from source, videoscale is inserted)
@@ -99,6 +101,7 @@ impl Default for EncoderConfig {
             keyframe_interval: 60, // Every 2 seconds at 30fps
             target_codec: VideoCodec::Av1,
             preset_level: super::presets::DEFAULT_PRESET,
+            custom_bitrate_kbps: None,
             target_width: None,
             target_height: None,
             target_fps: None,
@@ -1401,6 +1404,7 @@ impl AsyncVideoEncoder {
             ew,
             eh,
             efps,
+            config.custom_bitrate_kbps,
         );
 
         Ok(encoder)
@@ -1502,6 +1506,7 @@ impl AsyncVideoEncoder {
             ew,
             eh,
             efps,
+            config.custom_bitrate_kbps,
         );
 
         Ok(encoder)
@@ -1603,6 +1608,7 @@ impl AsyncVideoEncoder {
             ew,
             eh,
             efps,
+            config.custom_bitrate_kbps,
         );
 
         Ok(encoder)
@@ -1698,6 +1704,7 @@ impl AsyncVideoEncoder {
             ew,
             eh,
             efps,
+            config.custom_bitrate_kbps,
         );
 
         Ok(encoder)
@@ -1775,6 +1782,7 @@ impl AsyncVideoEncoder {
             ew,
             eh,
             efps,
+            config.custom_bitrate_kbps,
         );
 
         Ok(encoder)

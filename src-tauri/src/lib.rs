@@ -210,6 +210,7 @@ pub fn run() {
             commands::get_video_frames_batch,
             commands::get_video_frame_timestamps,
             commands::get_encoder_availability,
+            commands::get_preset_bitrates,
             commands::auto_select_encoder_preset,
             commands::set_custom_sound,
             commands::clear_custom_sound,

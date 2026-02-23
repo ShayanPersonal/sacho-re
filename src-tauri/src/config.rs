@@ -7,6 +7,17 @@ use tauri::{AppHandle, Manager};
 
 use crate::encoding::{VideoCodec, HardwareEncoderType};
 
+/// Default maximum encoding height when the user hasn't chosen a specific target.
+/// This is just the initial selection — users can pick higher values in the UI.
+pub const DEFAULT_TARGET_HEIGHT: u32 = 1080;
+
+/// Default maximum encoding FPS when the user hasn't chosen a specific target.
+/// This is just the initial selection — users can pick higher values in the UI.
+pub const DEFAULT_TARGET_FPS: f64 = 30.0;
+
+/// Tolerance for comparing FPS to [`DEFAULT_TARGET_FPS`] (includes 30000/1001 ≈ 29.97).
+pub const DEFAULT_TARGET_FPS_TOLERANCE: f64 = 30.5;
+
 /// Application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -240,6 +251,10 @@ pub struct VideoDeviceConfig {
     /// Quality preset 1-5. Default: 3.
     #[serde(default = "default_preset_level")]
     pub preset_level: u8,
+    /// Custom bitrate override (kbps). None = use preset default.
+    /// When set, the encoder uses this bitrate instead of the preset's suggestion.
+    #[serde(default)]
+    pub custom_bitrate_kbps: Option<u32>,
 
     // ── Target resolution/fps ──────────────────────────────────────────
     /// Target encoding width. 0 = smart default (match source if ≤1080p, else 1080p).
@@ -260,6 +275,7 @@ impl PartialEq for VideoDeviceConfig {
             && self.encoding_codec == other.encoding_codec
             && self.encoder_type == other.encoder_type
             && self.preset_level == other.preset_level
+            && self.custom_bitrate_kbps == other.custom_bitrate_kbps
             && self.target_width == other.target_width
             && self.target_height == other.target_height
             && (self.target_fps - other.target_fps).abs() < 0.001
@@ -268,26 +284,28 @@ impl PartialEq for VideoDeviceConfig {
 
 impl VideoDeviceConfig {
     /// Resolve smart-default sentinel values (0 / 0.0) to concrete values.
-    /// - Resolution: if target == 0 and source ≤ 1080p → match source; else scale to 1080p
-    /// - FPS: if target == 0.0 and source ≤ 30.5 → match source; else 30.0
+    ///
+    /// When the user hasn't picked a specific target, the sentinel (0) resolves
+    /// to the source value when it's within the default limits, otherwise to the
+    /// default limit. See [`DEFAULT_TARGET_HEIGHT`] and [`DEFAULT_TARGET_FPS`].
     pub fn resolved(&self) -> Self {
         let resolved_height = if self.target_height == 0 {
-            if self.source_height <= 1080 {
+            if self.source_height <= DEFAULT_TARGET_HEIGHT {
                 self.source_height
             } else {
-                1080
+                DEFAULT_TARGET_HEIGHT
             }
         } else {
             self.target_height
         };
 
         let resolved_width = if self.target_width == 0 {
-            if self.source_height <= 1080 {
+            if self.source_height <= DEFAULT_TARGET_HEIGHT {
                 self.source_width
             } else {
-                // Scale to 1080p maintaining aspect ratio
+                // Scale to default height maintaining aspect ratio
                 let ratio = self.source_width as f64 / self.source_height as f64;
-                let w = (1080.0 * ratio).round() as u32;
+                let w = (DEFAULT_TARGET_HEIGHT as f64 * ratio).round() as u32;
                 // Ensure even width (required by encoders)
                 if w % 2 == 0 { w } else { w - 1 }
             }
@@ -296,10 +314,10 @@ impl VideoDeviceConfig {
         };
 
         let resolved_fps = if self.target_fps == 0.0 {
-            if self.source_fps <= 30.5 {
+            if self.source_fps <= DEFAULT_TARGET_FPS_TOLERANCE {
                 self.source_fps
             } else {
-                30.0
+                DEFAULT_TARGET_FPS
             }
         } else {
             self.target_fps

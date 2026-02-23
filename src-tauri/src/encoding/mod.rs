@@ -22,7 +22,7 @@ pub use encoder::{
     get_recommended_codec,
     available_encoders_for_codec,
 };
-pub use presets::{DEFAULT_PRESET, MIN_PRESET, MAX_PRESET};
+pub use presets::{DEFAULT_PRESET, MIN_PRESET, MAX_PRESET, scaled_bitrate_kbps};
 
 use serde::{Deserialize, Serialize};
 

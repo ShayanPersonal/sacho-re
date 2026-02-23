@@ -16,9 +16,13 @@
         computeDefaultConfig,
         validateVideoDeviceConfig,
         getEncoderAvailability,
+        getPresetBitrates,
         autoSelectEncoderPreset,
         PASSTHROUGH_ONLY_CODECS,
         ENCODE_ONLY_CODECS,
+        DEFAULT_TARGET_HEIGHT,
+        DEFAULT_TARGET_FPS,
+        DEFAULT_TARGET_FPS_TOLERANCE,
     } from "$lib/api";
     interface Props {
         device: VideoDevice;
@@ -60,6 +64,9 @@
         effectiveConfig?.encoder_type ?? null,
     );
     let presetLevel = $state<number>(effectiveConfig?.preset_level ?? 3);
+    let customBitrateKbps = $state<number | null>(
+        effectiveConfig?.custom_bitrate_kbps ?? null,
+    );
     let encoderAvailability = $state<EncoderAvailability | null>(null);
 
     // Auto-select state
@@ -72,6 +79,52 @@
 
     // Stream source help tooltip
     let showStreamSourceHelp = $state(false);
+
+    // Bitrate preview: cached array of 5 scaled bitrate values (one per preset level)
+    let presetBitrates = $state<(number | null)[]>([]);
+
+    function formatBitrate(kbps: number): string {
+        if (kbps >= 1000) return `${(kbps / 1000).toFixed(1)} Mbps`;
+        return `${kbps} kbps`;
+    }
+
+    // Fetch bitrates when codec, encoder, or resolution/fps changes
+    $effect(() => {
+        const codec = encodingCodec;
+        const encoder = encoderType;
+        // Track source and target dimensions so the effect re-runs on changes
+        const sw = selectedWidth,
+            sh = selectedHeight,
+            sf = selectedFps;
+        const tw = selectedTargetWidth,
+            th = selectedTargetHeight,
+            tf = selectedTargetFps;
+
+        // Reset custom bitrate — the bitrate landscape changed
+        customBitrateKbps = null;
+
+        if (!codec || !encoder || !isEncoding) {
+            presetBitrates = [];
+            return;
+        }
+
+        getPresetBitrates(codec, encoder, sw, sh, sf, tw, th, tf)
+            .then((result) => {
+                presetBitrates = result;
+            })
+            .catch(() => {
+                presetBitrates = [];
+            });
+    });
+
+    // Reset custom bitrate when the preset slider moves
+    let lastPresetLevelForBitrate = presetLevel;
+    $effect(() => {
+        if (presetLevel !== lastPresetLevelForBitrate) {
+            lastPresetLevelForBitrate = presetLevel;
+            customBitrateKbps = null;
+        }
+    });
 
     // Load encoder availability on mount, resolve null codec/encoder to recommended
     $effect(() => {
@@ -299,6 +352,26 @@
                 selectedTargetFps = 0;
             }
         }
+        // "Match Source" (0) doesn't truly match when the backend caps to defaults.
+        // Show the real resolved value so the user sees what will actually be used.
+        if (
+            isEncoding &&
+            selectedTargetFps === 0 &&
+            selectedFps > DEFAULT_TARGET_FPS_TOLERANCE
+        ) {
+            selectedTargetFps = DEFAULT_TARGET_FPS;
+        }
+        if (
+            isEncoding &&
+            selectedTargetWidth === 0 &&
+            selectedHeight > DEFAULT_TARGET_HEIGHT
+        ) {
+            const ratio = selectedWidth / selectedHeight;
+            let w = Math.round(DEFAULT_TARGET_HEIGHT * ratio);
+            if (w % 2 !== 0) w -= 1;
+            selectedTargetWidth = w;
+            selectedTargetHeight = DEFAULT_TARGET_HEIGHT;
+        }
     });
 
     function handleResolutionChange(value: string) {
@@ -339,6 +412,7 @@
             encoding_codec: encodingCodec,
             encoder_type: encoderType,
             preset_level: presetLevel,
+            custom_bitrate_kbps: isEncoding ? customBitrateKbps : null,
             target_width: isEncoding ? selectedTargetWidth : 0,
             target_height: isEncoding ? selectedTargetHeight : 0,
             target_fps: isEncoding ? selectedTargetFps : 0,
@@ -358,6 +432,8 @@
             current.encoding_codec !== effectiveConfig.encoding_codec ||
             current.encoder_type !== effectiveConfig.encoder_type ||
             current.preset_level !== effectiveConfig.preset_level ||
+            current.custom_bitrate_kbps !==
+                effectiveConfig.custom_bitrate_kbps ||
             current.target_width !== effectiveConfig.target_width ||
             current.target_height !== effectiveConfig.target_height ||
             Math.abs(current.target_fps - effectiveConfig.target_fps) > 0.01
@@ -618,7 +694,7 @@
                     class="advanced-toggle"
                     onclick={() => (showMoreEncoding = !showMoreEncoding)}
                 >
-                    More
+                    More options
                     <svg
                         class="toggle-chevron"
                         class:open={showMoreEncoding}
@@ -696,6 +772,69 @@
                             <span>Lightest</span>
                             <span>Heaviest</span>
                         </div>
+                        {#if presetBitrates[presetLevel - 1] != null}
+                            {@const suggestedKbps =
+                                presetBitrates[presetLevel - 1]!}
+                            {@const minKbps = Math.round(suggestedKbps * 0.5)}
+                            {@const maxKbps = Math.round(suggestedKbps * 1.5)}
+                            <div class="bitrate-row">
+                                <span class="bitrate-label">Bitrate</span>
+                                <div class="bitrate-input-group">
+                                    <input
+                                        type="text"
+                                        inputmode="numeric"
+                                        class="bitrate-input"
+                                        value={customBitrateKbps ??
+                                            suggestedKbps}
+                                        onchange={(e) => {
+                                            const val = parseInt(
+                                                (e.target as HTMLInputElement)
+                                                    .value,
+                                            );
+                                            if (isNaN(val)) {
+                                                customBitrateKbps = null;
+                                            } else {
+                                                const clamped = Math.round(
+                                                    Math.min(
+                                                        maxKbps,
+                                                        Math.max(minKbps, val),
+                                                    ),
+                                                );
+                                                customBitrateKbps =
+                                                    clamped === suggestedKbps
+                                                        ? null
+                                                        : clamped;
+                                            }
+                                            (
+                                                e.target as HTMLInputElement
+                                            ).value = String(
+                                                customBitrateKbps ??
+                                                    suggestedKbps,
+                                            );
+                                        }}
+                                    />
+                                    <span class="bitrate-unit">kbps</span>
+                                    {#if customBitrateKbps != null}
+                                        <button
+                                            class="bitrate-reset"
+                                            onclick={() => {
+                                                customBitrateKbps = null;
+                                            }}
+                                        >
+                                            Reset
+                                        </button>
+                                    {/if}
+                                </div>
+                                <span
+                                    class="field-hint"
+                                    style="margin-top: 0.125rem;"
+                                >
+                                    Accepted range: {formatBitrate(minKbps)} – {formatBitrate(
+                                        maxKbps,
+                                    )}
+                                </span>
+                            </div>
+                        {/if}
                         <span class="field-hint">
                             {#if encodingCodec === "ffv1"}
                                 {#if presetLevel <= 3}
@@ -709,7 +848,7 @@
                                 Smaller files. Smoother recordings on less
                                 powerful systems.
                             {:else if presetLevel > 3}
-                                Larger, higher quality files. Works best on more
+                                Higher quality files. Works best on more
                                 powerful systems.
                             {:else}
                                 Balanced quality and file size.
@@ -1010,6 +1149,71 @@
         color: #5a5a5a;
     }
 
+    .bitrate-row {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        margin-top: 0.375rem;
+    }
+
+    .bitrate-label {
+        font-size: 0.6875rem;
+        font-weight: 400;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #8a8a8a;
+    }
+
+    .bitrate-input-group {
+        display: flex;
+        align-items: center;
+        gap: 0.375rem;
+    }
+
+    .bitrate-input {
+        width: 5.5rem;
+        padding: 0.3rem 0.5rem;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 0.25rem;
+        color: #e8e6e3;
+        font-family: inherit;
+        font-size: 0.8125rem;
+        -moz-appearance: textfield;
+    }
+
+    .bitrate-input::-webkit-inner-spin-button,
+    .bitrate-input::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+
+    .bitrate-input:focus {
+        outline: none;
+        border-color: rgba(201, 169, 98, 0.4);
+    }
+
+    .bitrate-unit {
+        font-size: 0.75rem;
+        color: #5a5a5a;
+    }
+
+    .bitrate-reset {
+        background: none;
+        border: none;
+        color: #6a6a6a;
+        font-family: inherit;
+        font-size: 0.6875rem;
+        cursor: pointer;
+        padding: 0.125rem 0.25rem;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+    }
+
+    .bitrate-reset:hover {
+        color: #a8a8a8;
+    }
+
     .field-disabled {
         opacity: 0.5;
     }
@@ -1121,6 +1325,32 @@
 
     :global(body.light-mode) .preset-range-labels {
         color: #7a7a7a;
+    }
+
+    :global(body.light-mode) .bitrate-label {
+        color: #5a5a5a;
+    }
+
+    :global(body.light-mode) .bitrate-input {
+        background: rgba(255, 255, 255, 0.9);
+        border-color: rgba(0, 0, 0, 0.12);
+        color: #2a2a2a;
+    }
+
+    :global(body.light-mode) .bitrate-input:focus {
+        border-color: rgba(160, 128, 48, 0.5);
+    }
+
+    :global(body.light-mode) .bitrate-unit {
+        color: #7a7a7a;
+    }
+
+    :global(body.light-mode) .bitrate-reset {
+        color: #7a7a7a;
+    }
+
+    :global(body.light-mode) .bitrate-reset:hover {
+        color: #4a4a4a;
     }
 
     :global(body.light-mode) .divider {

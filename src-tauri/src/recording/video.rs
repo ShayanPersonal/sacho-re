@@ -247,6 +247,8 @@ pub struct VideoCapturePipeline {
     total_frames_dropped: u64,
     /// Encoder quality preset level (1–5)
     preset_level: u8,
+    /// Custom bitrate override (kbps). None = use preset default.
+    custom_bitrate_kbps: Option<u32>,
     /// Whether encode-during-preroll is active (raw video only)
     encode_during_preroll: bool,
     /// Configured pre-roll duration in seconds
@@ -628,6 +630,7 @@ impl PrerollVideoEncoder {
         fps: f64,
         target_codec: crate::encoding::VideoCodec,
         preset_level: u8,
+        custom_bitrate_kbps: Option<u32>,
         max_preroll_secs: u32,
         target_width: Option<u32>,
         target_height: Option<u32>,
@@ -649,6 +652,7 @@ impl PrerollVideoEncoder {
             keyframe_interval: (effective_fps * 2.0).round() as u32,
             target_codec,
             preset_level,
+            custom_bitrate_kbps,
             target_width,
             target_height,
             target_fps,
@@ -1085,6 +1089,7 @@ impl VideoCapturePipeline {
             consecutive_full_drops: 0,
             total_frames_dropped: 0,
             preset_level: crate::encoding::DEFAULT_PRESET,
+            custom_bitrate_kbps: None,
             encode_during_preroll: false,
             pre_roll_secs,
             needs_frames,
@@ -1407,6 +1412,7 @@ impl VideoCapturePipeline {
             consecutive_full_drops: 0,
             total_frames_dropped: 0,
             preset_level,
+            custom_bitrate_kbps: None, // Set by caller via VideoManager
             encode_during_preroll,
             pre_roll_secs,
             needs_frames,
@@ -1621,6 +1627,7 @@ impl VideoCapturePipeline {
                 self.fps,
                 target_codec,
                 self.preset_level,
+                self.custom_bitrate_kbps,
                 self.pre_roll_secs,
                 pe_tw,
                 pe_th,
@@ -1829,6 +1836,7 @@ impl VideoCapturePipeline {
                 keyframe_interval: (self.target_fps * 2.0).round() as u32, // Keyframe every 2 seconds at target fps
                 target_codec,
                 preset_level: self.preset_level,
+                custom_bitrate_kbps: self.custom_bitrate_kbps,
                 target_width: use_target_w,
                 target_height: use_target_h,
                 target_fps: use_target_fps,
@@ -2273,11 +2281,12 @@ impl VideoCaptureManager {
         self.encode_during_preroll = enabled;
     }
 
-    /// Update the encoder preset level for a specific device (in-place, no pipeline restart).
-    pub fn update_preset_for_device(&mut self, device_id: &str, level: u8) {
+    /// Update the encoder preset level and custom bitrate for a specific device (in-place, no pipeline restart).
+    pub fn update_preset_for_device(&mut self, device_id: &str, level: u8, custom_bitrate_kbps: Option<u32>) {
         let clamped = level.clamp(crate::encoding::MIN_PRESET, crate::encoding::MAX_PRESET);
         if let Some(pipeline) = self.pipelines.get_mut(device_id) {
             pipeline.preset_level = clamped;
+            pipeline.custom_bitrate_kbps = custom_bitrate_kbps;
         }
     }
 
@@ -2341,6 +2350,7 @@ impl VideoCaptureManager {
                         pipeline.target_width = resolved.target_width;
                         pipeline.target_height = resolved.target_height;
                         pipeline.target_fps = resolved.target_fps;
+                        pipeline.custom_bitrate_kbps = dev_config.custom_bitrate_kbps;
                     }
                     if let Err(e) = pipeline.start() {
                         println!("[Video] Failed to start pipeline for {}: {}", device_id, e);

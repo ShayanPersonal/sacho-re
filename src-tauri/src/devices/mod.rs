@@ -141,21 +141,22 @@ impl VideoDevice {
         let caps = self.capabilities.get(&codec)?;
         if caps.is_empty() { return None; }
         
-        // Find best resolution: highest that's ≤ 1080p, or smallest available
+        use crate::config::{DEFAULT_TARGET_HEIGHT, DEFAULT_TARGET_FPS, DEFAULT_TARGET_FPS_TOLERANCE};
+
+        // Find best resolution: highest that's ≤ default target height, or smallest available
         let chosen_cap = caps.iter()
-            .find(|c| c.height <= 1080)
+            .find(|c| c.height <= DEFAULT_TARGET_HEIGHT)
             .or_else(|| caps.last())?;
-        
+
         let width = chosen_cap.width;
         let height = chosen_cap.height;
-        
-        // Find best fps at this resolution: highest that's ≤ ~30, or lowest available
-        // Use 30.5 tolerance to include 30000/1001 ≈ 29.97
+
+        // Find best fps at this resolution: highest that's ≤ default target fps, or lowest available
         let fps = chosen_cap.framerates.iter()
             .copied()
-            .find(|&f| f <= 30.5)
+            .find(|&f| f <= DEFAULT_TARGET_FPS_TOLERANCE)
             .or_else(|| chosen_cap.framerates.last().copied())
-            .unwrap_or(30.0);
+            .unwrap_or(DEFAULT_TARGET_FPS);
         
         Some(crate::config::VideoDeviceConfig {
             source_codec: codec,
@@ -166,6 +167,7 @@ impl VideoDevice {
             encoding_codec: None,   // Auto-detect
             encoder_type: None,     // Auto-detect
             preset_level: crate::encoding::DEFAULT_PRESET,
+            custom_bitrate_kbps: None,
             target_width: 0,   // "Match Source"
             target_height: 0,  // "Match Source"
             target_fps: 0.0,   // "Match Source"

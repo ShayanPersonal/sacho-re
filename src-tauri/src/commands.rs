@@ -479,9 +479,11 @@ pub fn update_config(
         let preroll = current.pre_roll_secs != new_config.pre_roll_secs
             || current.encode_during_preroll != new_config.encode_during_preroll;
 
-        // Preset-only change: device configs differ only by preset_level (no pipeline restart needed)
+        // Preset-only change: device configs differ only by preset_level/custom_bitrate (no pipeline restart needed)
         let preset_only = !video && current.video_device_configs.iter().any(|(k, v)| {
-            new_config.video_device_configs.get(k).map_or(false, |nv| v.preset_level != nv.preset_level)
+            new_config.video_device_configs.get(k).map_or(false, |nv| {
+                v.preset_level != nv.preset_level || v.custom_bitrate_kbps != nv.custom_bitrate_kbps
+            })
         });
 
         (midi, audio, video, preroll, preset_only)
@@ -524,7 +526,7 @@ pub fn update_config(
         let video_mgr = monitor.lock().video_manager();
         let mut mgr = video_mgr.lock();
         for (device_id, dev_config) in &new_config.video_device_configs {
-            mgr.update_preset_for_device(device_id, dev_config.preset_level);
+            mgr.update_preset_for_device(device_id, dev_config.preset_level, dev_config.custom_bitrate_kbps);
         }
     }
 
@@ -1350,6 +1352,61 @@ pub fn get_encoder_availability() -> EncoderAvailability {
 }
 
 // ============================================================================
+// Preset Bitrate Preview
+// ============================================================================
+
+/// Return the scaled bitrate (kbps) for all 5 preset levels in one call.
+/// The frontend caches this array and indexes into it on slider movement
+/// for instant feedback (no per-level IPC round-trip).
+///
+/// Returns `Vec` of 5 `Option<u32>` — `None` for FFV1 / unsupported combos.
+#[tauri::command]
+pub fn get_preset_bitrates(
+    codec: crate::encoding::VideoCodec,
+    hw_type: crate::encoding::HardwareEncoderType,
+    source_width: u32,
+    source_height: u32,
+    source_fps: f64,
+    target_width: u32,
+    target_height: u32,
+    target_fps: f64,
+) -> Vec<Option<u32>> {
+    use crate::config::{DEFAULT_TARGET_HEIGHT, DEFAULT_TARGET_FPS, DEFAULT_TARGET_FPS_TOLERANCE};
+
+    // Resolve 0-sentinels using the same logic as VideoDeviceConfig::resolved()
+    let resolved_height = if target_height == 0 {
+        if source_height <= DEFAULT_TARGET_HEIGHT { source_height } else { DEFAULT_TARGET_HEIGHT }
+    } else {
+        target_height
+    };
+    let resolved_width = if target_width == 0 {
+        if source_height <= DEFAULT_TARGET_HEIGHT {
+            source_width
+        } else {
+            let ratio = source_width as f64 / source_height as f64;
+            let w = (DEFAULT_TARGET_HEIGHT as f64 * ratio).round() as u32;
+            if w % 2 == 0 { w } else { w - 1 }
+        }
+    } else {
+        target_width
+    };
+    let resolved_fps = if target_fps == 0.0 {
+        if source_fps <= DEFAULT_TARGET_FPS_TOLERANCE { source_fps } else { DEFAULT_TARGET_FPS }
+    } else {
+        target_fps
+    };
+
+    (1..=5)
+        .map(|level| {
+            crate::encoding::scaled_bitrate_kbps(
+                codec, hw_type, level,
+                resolved_width, resolved_height, resolved_fps,
+            )
+        })
+        .collect()
+}
+
+// ============================================================================
 // Auto-select Encoder Preset
 // ============================================================================
 
@@ -1588,6 +1645,7 @@ async fn run_auto_select_test(
             keyframe_interval: (capture.fps * 2.0).round() as u32,
             target_codec,
             preset_level: level,
+            custom_bitrate_kbps: None,
             target_width: None,
             target_height: None,
             target_fps: None,
