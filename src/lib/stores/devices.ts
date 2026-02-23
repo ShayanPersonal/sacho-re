@@ -439,6 +439,16 @@ export function setVideoDeviceConfig(deviceId: string, deviceConfig: VideoDevice
   autoSaveDevices();
 }
 
+/** Remove the saved configuration for a video device */
+export function deleteVideoDeviceConfig(deviceId: string) {
+  videoDeviceConfigs.update(configs => {
+    const { [deviceId]: _, ...rest } = configs;
+    return rest;
+  });
+  autoSaveDevices();
+}
+
+
 // Initialize
 async function initialize() {
   await loadDevices();

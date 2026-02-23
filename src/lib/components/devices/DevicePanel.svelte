@@ -26,11 +26,14 @@
         setAudioTriggerThreshold,
         toggleVideoDevice,
         setVideoDeviceConfig,
+        deleteVideoDeviceConfig,
     } from "$lib/stores/devices";
     import { settings } from "$lib/stores/settings";
     import type {
         VideoDevice,
         VideoDeviceConfig,
+        VideoCodec,
+        HardwareEncoderType,
         EncoderAvailability,
     } from "$lib/api";
     import {
@@ -609,16 +612,27 @@
                                         {#if isDisconnected}<span class="disconnect-warning" title="Device disconnected">⚠</span>{/if}
                                         {device.name}
                                     </span>
-                                    <div class="device-meta">
-                                        <span class="meta-tag config-summary"
-                                            >{getConfigSummary(device)}</span
-                                        >
-                                    </div>
+                                    {#if $videoDeviceConfigs[device.id]}
+                                        <div class="device-meta">
+                                            <span class="meta-tag config-summary"
+                                                >{getConfigSummary(device)}</span
+                                            >{#if !$selectedVideoDevices.has(device.id)}<button
+                                                    class="config-clear-btn"
+                                                    title="Clear configuration"
+                                                    onclick={(e) => {
+                                                        e.stopPropagation();
+                                                        deleteVideoDeviceConfig(device.id);
+                                                    }}
+                                                >&times;</button
+                                            >{/if}
+                                        </div>
+                                    {/if}
                                 </div>
                                 <div class="config-cell">
                                     {#if isSupported}
                                         <button
                                             class="configure-btn"
+                                            class:configure-btn-muted={!$selectedVideoDevices.has(device.id)}
                                             onclick={() =>
                                                 (configuringDevice = device)}
                                         >
@@ -636,8 +650,26 @@
                                         checked={$selectedVideoDevices.has(
                                             device.id,
                                         )}
-                                        onchange={() =>
-                                            toggleVideoDevice(device.id)}
+                                        onchange={() => {
+                                            const wasSelected = $selectedVideoDevices.has(device.id);
+                                            if (!wasSelected && !$videoDeviceConfigs[device.id]) {
+                                                const defaultCfg = computeDefaultConfig(device);
+                                                if (defaultCfg && encoderAvailability) {
+                                                    const rec = encoderAvailability.recommended_codec as VideoCodec;
+                                                    if (rec) {
+                                                        defaultCfg.encoding_codec = rec;
+                                                        const info = encoderAvailability[rec as keyof Pick<EncoderAvailability, "av1" | "vp9" | "vp8" | "h264" | "ffv1">];
+                                                        if (info?.recommended) {
+                                                            defaultCfg.encoder_type = info.recommended as HardwareEncoderType;
+                                                        }
+                                                    }
+                                                    setVideoDeviceConfig(device.id, defaultCfg);
+                                                } else if (defaultCfg) {
+                                                    setVideoDeviceConfig(device.id, defaultCfg);
+                                                }
+                                            }
+                                            toggleVideoDevice(device.id);
+                                        }}
                                         disabled={!isSupported}
                                     />
                                 </label>
@@ -1088,9 +1120,33 @@
         color: #c9a962;
     }
 
+    .configure-btn-muted {
+        opacity: 0.4;
+    }
+
+    .configure-btn-muted:hover {
+        opacity: 1;
+    }
+
     .config-summary {
         font-size: 0.625rem;
         white-space: nowrap;
+    }
+
+    .config-clear-btn {
+        background: none;
+        border: none;
+        color: #4a4a4a;
+        font-size: 0.75rem;
+        line-height: 1;
+        padding: 0 0.125rem;
+        margin-left: 0.25rem;
+        cursor: pointer;
+        transition: color 0.15s ease;
+    }
+
+    .config-clear-btn:hover {
+        color: #e85454;
     }
 
     .help-btn {
@@ -1419,6 +1475,14 @@
         color: #8a6a20;
         background: rgba(160, 128, 48, 0.1);
         border-color: rgba(160, 128, 48, 0.3);
+    }
+
+    :global(body.light-mode) .config-clear-btn {
+        color: #b0b0b0;
+    }
+
+    :global(body.light-mode) .config-clear-btn:hover {
+        color: #d04040;
     }
 
     :global(body.light-mode) .configure-btn {

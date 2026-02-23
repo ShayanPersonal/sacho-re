@@ -201,14 +201,34 @@ export const DEFAULT_TARGET_FPS = 30;
 /** Tolerance for comparing FPS to DEFAULT_TARGET_FPS (includes 30000/1001 ≈ 29.97). */
 export const DEFAULT_TARGET_FPS_TOLERANCE = 30.5;
 
-/** Format preference order for defaults: raw pixel formats first, then pre-encoded */
-const FORMAT_PRIORITY: string[] = [
-  "YUY2", "NV12", "I420", "YV12", "BGR", "BGRx",
-  "MJPEG", "H264", "AV1", "VP9", "VP8",
+/** Whether a format should default to passthrough (no re-encoding).
+ * Used by both computeDefaultConfig and the Configure modal to stay in sync. */
+export function defaultPassthrough(format: string): boolean {
+  if (isRawFormat(format)) return false;
+  if (format === "MJPEG") return false; // Large file sizes, re-encode by default
+  return true;
+}
+
+/** Format preference order: modern compressed first, then raw by ecosystem compatibility.
+ * Used by both computeDefaultConfig and the Configure modal to stay in sync. */
+export const FORMAT_PRIORITY: string[] = [
+  "AV1", "VP9", "H264", "VP8", "MJPEG",
+  "NV12", "I420", "YV12", "YUY2", "BGR", "BGRx",
 ];
 
+/** Sort an array of format strings by FORMAT_PRIORITY order. */
+export function sortFormatsByPriority(formats: string[]): string[] {
+  return [...formats].sort((a, b) => {
+    const ai = FORMAT_PRIORITY.indexOf(a);
+    const bi = FORMAT_PRIORITY.indexOf(b);
+    const pa = ai !== -1 ? ai : FORMAT_PRIORITY.length;
+    const pb = bi !== -1 ? bi : FORMAT_PRIORITY.length;
+    return pa - pb;
+  });
+}
+
 /** Compute a smart default configuration for a device.
- * - Format: YUY2 > NV12 > I420 > YV12 > BGR > MJPEG > H264 > AV1 > VP9 > VP8
+ * - Format: AV1 > VP9 > H264 > VP8 > MJPEG > NV12 > I420 > YV12 > YUY2 > BGR > BGRx
  * - Resolution: min(highest available, 1080p)
  * - FPS: min(highest available at chosen resolution, ~30)
  * - Target: "Match Source" (0/0/0) */
@@ -247,14 +267,12 @@ export function computeDefaultConfig(
     chosenCap.framerates[chosenCap.framerates.length - 1] ??
     DEFAULT_TARGET_FPS;
 
-  const raw = isRawFormat(format);
-
   return {
     source_format: format,
     source_width: width,
     source_height: height,
     source_fps: fps,
-    passthrough: !raw, // Raw formats require encoding, pre-encoded can passthrough
+    passthrough: defaultPassthrough(format),
     encoding_codec: null,
     encoder_type: null,
     preset_level: 3,

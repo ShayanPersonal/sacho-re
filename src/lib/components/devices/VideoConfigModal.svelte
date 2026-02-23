@@ -20,6 +20,8 @@
         getEncoderAvailability,
         getPresetBitrates,
         autoSelectEncoderPreset,
+        sortFormatsByPriority,
+        defaultPassthrough,
         DEFAULT_TARGET_HEIGHT,
         DEFAULT_TARGET_FPS,
         DEFAULT_TARGET_FPS_TOLERANCE,
@@ -86,7 +88,6 @@
     let presetBitrates = $state<(number | null)[]>([]);
 
     function formatBitrate(kbps: number): string {
-        if (kbps >= 1000) return `${(kbps / 1000).toFixed(1)} Mbps`;
         return `${kbps} kbps`;
     }
 
@@ -208,17 +209,7 @@
                 result.push(format);
             }
         }
-        // Sort: H264 first, then MJPEG, then the rest
-        const priority = ["H264", "MJPEG"];
-        result.sort((a, b) => {
-            const ai = priority.indexOf(a);
-            const bi = priority.indexOf(b);
-            if (ai !== -1 && bi !== -1) return ai - bi;
-            if (ai !== -1) return -1;
-            if (bi !== -1) return 1;
-            return 0;
-        });
-        return result;
+        return sortFormatsByPriority(result);
     });
 
     // Whether the selected format is a raw pixel format (requires encoding)
@@ -363,14 +354,7 @@
     $effect(() => {
         if (selectedFormat !== lastFormatForPassthrough) {
             lastFormatForPassthrough = selectedFormat;
-            const raw = isRawFormat(selectedFormat);
-            if (raw) {
-                passthrough = false; // Raw formats must be encoded
-            } else if (selectedFormat === "MJPEG") {
-                passthrough = false; // MJPEG should be re-encoded by default
-            } else {
-                passthrough = true; // Pre-encoded formats default to passthrough
-            }
+            passthrough = defaultPassthrough(selectedFormat);
         }
     });
 
@@ -531,30 +515,36 @@
             <!-- Source Resolution -->
             <div class="field">
                 <label for="resolution-select">Source Resolution</label>
-                <select
-                    id="resolution-select"
-                    value="{selectedWidth}x{selectedHeight}"
-                    onchange={(e) =>
-                        handleResolutionChange(
-                            (e.target as HTMLSelectElement).value,
-                        )}
-                >
-                    {#each allResolutions as res}
-                        <option value="{res.width}x{res.height}"
-                            >{res.label}</option
-                        >
-                    {/each}
-                </select>
+                <div class="select-wrapper">
+                    <select
+                        id="resolution-select"
+                        value="{selectedWidth}x{selectedHeight}"
+                        onchange={(e) =>
+                            handleResolutionChange(
+                                (e.target as HTMLSelectElement).value,
+                            )}
+                    >
+                        {#each allResolutions as res}
+                            <option value="{res.width}x{res.height}"
+                                >{res.label}</option
+                            >
+                        {/each}
+                    </select>
+                    <span class="select-count">{allResolutions.length} {allResolutions.length === 1 ? 'option' : 'options'}</span>
+                </div>
             </div>
 
             <!-- Source FPS -->
             <div class="field">
                 <label for="fps-select">Source Framerate</label>
-                <select id="fps-select" bind:value={selectedFps}>
-                    {#each availableFps as fps}
-                        <option value={fps}>{formatFps(fps)} fps</option>
-                    {/each}
-                </select>
+                <div class="select-wrapper">
+                    <select id="fps-select" bind:value={selectedFps}>
+                        {#each availableFps as fps}
+                            <option value={fps}>{formatFps(fps)} fps</option>
+                        {/each}
+                    </select>
+                    <span class="select-count">{availableFps.length} {availableFps.length === 1 ? 'option' : 'options'}</span>
+                </div>
             </div>
 
             <!-- Source Format -->
@@ -582,15 +572,18 @@
                         {/if}
                     </span>
                 </label>
-                <select id="format-select" bind:value={selectedFormat}>
-                    {#each availableFormats as fmt}
-                        <option value={fmt}
-                            >{fmt}{fmt === "H264"
-                                ? " (supports passthrough)"
-                                : ""}</option
-                        >
-                    {/each}
-                </select>
+                <div class="select-wrapper">
+                    <select id="format-select" bind:value={selectedFormat}>
+                        {#each availableFormats as fmt}
+                            <option value={fmt}
+                                >{fmt}{fmt === "H264"
+                                    ? " (supports passthrough)"
+                                    : ""}</option
+                            >
+                        {/each}
+                    </select>
+                    <span class="select-count">{availableFormats.length} {availableFormats.length === 1 ? 'option' : 'options'}</span>
+                </div>
             </div>
 
             <div class="divider"></div>
@@ -608,10 +601,10 @@
                             onchange={() => (passthrough = false)}
                         />
                         {isSelectedRaw
-                            ? "Encode (Recommended)"
-                            : selectedFormat === "MJPEG"
-                              ? "Re-encode (Recommended)"
-                              : "Re-encode"}
+                            ? "Encode"
+                            : "Re-encode"}{!defaultPassthrough(selectedFormat)
+                            ? " (Recommended)"
+                            : ""}
                     </label>
                     <label
                         class="radio-label"
@@ -625,7 +618,7 @@
                             disabled={isEncodeOnly}
                             onchange={() => (passthrough = true)}
                         />
-                        Passthrough{!isSelectedRaw && selectedFormat !== "MJPEG"
+                        Passthrough{defaultPassthrough(selectedFormat)
                             ? " (Recommended)"
                             : ""}
                     </label>
@@ -738,7 +731,7 @@
                     class="advanced-toggle"
                     onclick={() => (showMoreEncoding = !showMoreEncoding)}
                 >
-                    More options
+                    More
                     <svg
                         class="toggle-chevron"
                         class:open={showMoreEncoding}
@@ -816,6 +809,25 @@
                             <span>Lightest</span>
                             <span>Heaviest</span>
                         </div>
+                        <span class="field-hint">
+                            {#if encodingCodec === "ffv1"}
+                                {#if presetLevel <= 3}
+                                    Faster encoding, larger files. FFV1 quality
+                                    is always lossless.
+                                {:else}
+                                    Slower encoding, smaller files. FFV1 quality
+                                    is always lossless.
+                                {/if}
+                            {:else if presetLevel < 3}
+                                Smaller files. Smoother recordings on less
+                                powerful systems.
+                            {:else if presetLevel > 3}
+                                Higher quality files. Works best on more
+                                powerful systems.
+                            {:else}
+                                Balanced quality and file size.
+                            {/if}
+                        </span>
                         {#if presetBitrates[presetLevel - 1] != null}
                             {@const suggestedKbps =
                                 presetBitrates[presetLevel - 1]!}
@@ -868,36 +880,16 @@
                                             Reset
                                         </button>
                                     {/if}
+                                    <!--
+                                    <span class="bitrate-range-hint">
+                                        Range: {formatBitrate(minKbps)} – {formatBitrate(
+                                            maxKbps,
+                                        )}
+                                    </span>
+                                    -->
                                 </div>
-                                <span
-                                    class="field-hint"
-                                    style="margin-top: 0.125rem;"
-                                >
-                                    Accepted range: {formatBitrate(minKbps)} – {formatBitrate(
-                                        maxKbps,
-                                    )}
-                                </span>
                             </div>
                         {/if}
-                        <span class="field-hint">
-                            {#if encodingCodec === "ffv1"}
-                                {#if presetLevel <= 3}
-                                    Faster encoding, larger files. FFV1 quality
-                                    is always lossless.
-                                {:else}
-                                    Slower encoding, smaller files. FFV1 quality
-                                    is always lossless.
-                                {/if}
-                            {:else if presetLevel < 3}
-                                Smaller files. Smoother recordings on less
-                                powerful systems.
-                            {:else if presetLevel > 3}
-                                Higher quality files. Works best on more
-                                powerful systems.
-                            {:else}
-                                Balanced quality and file size.
-                            {/if}
-                        </span>
                     </div>
                     {#if encodingCodec === "ffv1"}
                         <div class="field">
@@ -1122,6 +1114,24 @@
         gap: 0.5rem;
     }
 
+    .select-wrapper {
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+
+    .select-wrapper select {
+        flex: 1;
+    }
+
+    .select-count {
+        position: absolute;
+        right: 1.5rem;
+        font-size: 0.6875rem;
+        color: #4a4a4a;
+        pointer-events: none;
+    }
+
     .field select {
         padding: 0.5rem 0.625rem;
         background: rgba(0, 0, 0, 0.3);
@@ -1276,6 +1286,12 @@
         color: #5a5a5a;
     }
 
+    .bitrate-range-hint {
+        font-size: 0.6875rem;
+        color: #5a5a5a;
+        margin-left: 0.25rem;
+    }
+
     .bitrate-reset {
         background: none;
         border: none;
@@ -1365,6 +1381,10 @@
         color: #5a5a5a;
     }
 
+    :global(body.light-mode) .select-count {
+        color: #b0b0b0;
+    }
+
     :global(body.light-mode) .field select {
         background: rgba(255, 255, 255, 0.9);
         border-color: rgba(0, 0, 0, 0.12);
@@ -1421,6 +1441,10 @@
 
     :global(body.light-mode) .bitrate-unit {
         color: #7a7a7a;
+    }
+
+    :global(body.light-mode) .bitrate-range-hint {
+        color: #8a8a8a;
     }
 
     :global(body.light-mode) .bitrate-reset {
