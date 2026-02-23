@@ -62,6 +62,7 @@
     }> = [];
 
     // Per-track volume in dB (-12 to +12, default 0)
+    // svelte-ignore state_referenced_locally
     let audioVolumes = $state<number[]>(
         new Array(session.audio_files.length).fill(0),
     );
@@ -144,12 +145,14 @@
     // Non-standard folders (no valid timestamp prefix) are not renamable
     const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/;
     let isRenamable = $derived(TIMESTAMP_RE.test(session.id));
+    // svelte-ignore state_referenced_locally
     let titleValue = $state(session.title ?? "");
     let isRenaming = $state(false);
     let titleMeasure: HTMLSpanElement | null = $state(null);
     let titleWidth = $state("4ch");
 
     // Notes editing state
+    // svelte-ignore state_referenced_locally
     let notesValue = $state(session.notes);
     let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -1641,24 +1644,6 @@
         gap: 1rem;
     }
 
-    .detail-section h3 {
-        font-size: 0.75rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: #6b6b6b;
-        margin-bottom: 0.5rem;
-    }
-
-    .notes {
-        padding: 0.75rem;
-        background: rgba(0, 0, 0, 0.2);
-        border-radius: 0.25rem;
-        font-size: 0.875rem;
-        color: #8a8a8a;
-        line-height: 1.5;
-    }
-
     /* Actions */
     .detail-actions {
         display: flex;
@@ -1936,15 +1921,6 @@
     :global(body.light-mode) .notes-input:focus {
         background: rgba(255, 255, 255, 0.8);
         border-color: rgba(0, 0, 0, 0.12);
-    }
-
-    :global(body.light-mode) .detail-section h3 {
-        color: #5a5a5a;
-    }
-
-    :global(body.light-mode) .notes {
-        background: rgba(0, 0, 0, 0.03);
-        color: #5a5a5a;
     }
 
     :global(body.light-mode) .detail-actions {

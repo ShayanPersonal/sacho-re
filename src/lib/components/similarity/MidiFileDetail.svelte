@@ -18,12 +18,12 @@
   // MIDI playback state
   let synth: Tone.PolySynth | null = null;
   let midiData: Midi | null = $state(null);
-  let midiNotes: Array<{
+  let midiNotes = $state<Array<{
     time: number;
     note: string;
     duration: number;
     velocity: number;
-  }> = [];
+  }>>([]);
 
   let isPlaying = $state(false);
   let currentTime = $state(0);

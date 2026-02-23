@@ -201,10 +201,15 @@ export const DEFAULT_TARGET_FPS = 30;
 /** Tolerance for comparing FPS to DEFAULT_TARGET_FPS (includes 30000/1001 ≈ 29.97). */
 export const DEFAULT_TARGET_FPS_TOLERANCE = 30.5;
 
+/** Whether a format supports passthrough (can be stored without re-encoding). */
+export function supportsPassthrough(format: string): boolean {
+  return !isRawFormat(format);
+}
+
 /** Whether a format should default to passthrough (no re-encoding).
  * Used by both computeDefaultConfig and the Configure modal to stay in sync. */
 export function defaultPassthrough(format: string): boolean {
-  if (isRawFormat(format)) return false;
+  if (!supportsPassthrough(format)) return false;
   if (format === "MJPEG") return false; // Large file sizes, re-encode by default
   return true;
 }
@@ -496,6 +501,30 @@ export interface EncoderAvailability {
 
 export async function getEncoderAvailability(): Promise<EncoderAvailability> {
   return invoke("get_encoder_availability");
+}
+
+/** Look up the CodecEncoderInfo for a given codec from the availability object. */
+export function getCodecInfo(availability: EncoderAvailability, codec: VideoCodec): CodecEncoderInfo | null {
+  return availability[codec as keyof Pick<EncoderAvailability, "av1" | "vp9" | "vp8" | "h264" | "ffv1">] ?? null;
+}
+
+/** Resolve null codec/encoder fields in a config to the backend's recommended values.
+ * Returns a new config object (does not mutate the input). */
+export function resolveEncoderDefaults(
+  config: VideoDeviceConfig,
+  availability: EncoderAvailability,
+): VideoDeviceConfig {
+  const resolved = { ...config };
+  if (!resolved.encoding_codec) {
+    resolved.encoding_codec = availability.recommended_codec as VideoCodec;
+  }
+  if (!resolved.encoder_type && resolved.encoding_codec) {
+    const info = getCodecInfo(availability, resolved.encoding_codec);
+    if (info?.recommended) {
+      resolved.encoder_type = info.recommended as HardwareEncoderType;
+    }
+  }
+  return resolved;
 }
 
 // ============================================================================

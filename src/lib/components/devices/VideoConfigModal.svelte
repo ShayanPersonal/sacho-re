@@ -22,6 +22,8 @@
         autoSelectEncoderPreset,
         sortFormatsByPriority,
         defaultPassthrough,
+        supportsPassthrough,
+        getCodecInfo,
         DEFAULT_TARGET_HEIGHT,
         DEFAULT_TARGET_FPS,
         DEFAULT_TARGET_FPS_TOLERANCE,
@@ -36,12 +38,14 @@
     let { device, currentConfig, onSave, onClose }: Props = $props();
 
     // Compute effective config: saved config or smart defaults
+    // svelte-ignore state_referenced_locally
     const effectiveConfig = currentConfig ?? computeDefaultConfig(device);
 
     // State for selections — cascade: Resolution → Framerate → Format
     let selectedWidth = $state<number>(effectiveConfig?.source_width ?? 0);
     let selectedHeight = $state<number>(effectiveConfig?.source_height ?? 0);
     let selectedFps = $state<number>(effectiveConfig?.source_fps ?? 0);
+    // svelte-ignore state_referenced_locally
     let selectedFormat = $state<string>(
         effectiveConfig?.source_format ??
             Object.keys(device.capabilities)[0] ??
@@ -121,6 +125,7 @@
     });
 
     // Reset custom bitrate when the preset slider moves
+    // svelte-ignore state_referenced_locally
     let lastPresetLevelForBitrate = presetLevel;
     $effect(() => {
         if (presetLevel !== lastPresetLevelForBitrate) {
@@ -140,13 +145,7 @@
                 }
                 // Resolve null encoder type to the recommended for current codec
                 if (encoderType === null && encodingCodec) {
-                    const info =
-                        a[
-                            encodingCodec as keyof Pick<
-                                EncoderAvailability,
-                                "av1" | "vp9" | "vp8" | "h264" | "ffv1"
-                            >
-                        ];
+                    const info = getCodecInfo(a, encodingCodec);
                     if (info?.recommended) {
                         encoderType = info.recommended as HardwareEncoderType;
                     }
@@ -258,30 +257,19 @@
     // Available encoder backends for the selected encoding codec
     const availableEncoders = $derived.by(() => {
         if (!encoderAvailability || !encodingCodec) return [];
-        const info =
-            encoderAvailability[
-                encodingCodec as keyof Pick<
-                    EncoderAvailability,
-                    "av1" | "vp9" | "vp8" | "h264" | "ffv1"
-                >
-            ];
+        const info = getCodecInfo(encoderAvailability, encodingCodec);
         return info?.encoders ?? [];
     });
 
     // When encoding codec changes, always select the recommended encoder for that codec.
+    // svelte-ignore state_referenced_locally
     let lastCodecForEncoder = encodingCodec;
     $effect(() => {
         const codec = encodingCodec;
         if (!codec || !encoderAvailability) return;
         if (codec !== lastCodecForEncoder) {
             lastCodecForEncoder = codec;
-            const info =
-                encoderAvailability[
-                    codec as keyof Pick<
-                        EncoderAvailability,
-                        "av1" | "vp9" | "vp8" | "h264" | "ffv1"
-                    >
-                ];
+            const info = getCodecInfo(encoderAvailability, codec);
             if (info?.recommended) {
                 const rec = info.recommended as HardwareEncoderType;
                 encoderType = null;
@@ -300,13 +288,7 @@
     );
     const recommendedEncoder = $derived.by(() => {
         if (!encoderAvailability || !encodingCodec) return null;
-        const info =
-            encoderAvailability[
-                encodingCodec as keyof Pick<
-                    EncoderAvailability,
-                    "av1" | "vp9" | "vp8" | "h264" | "ffv1"
-                >
-            ];
+        const info = getCodecInfo(encoderAvailability, encodingCodec);
         return info?.recommended ?? null;
     });
 
@@ -350,6 +332,7 @@
     });
 
     // When format changes: update passthrough/encode defaults
+    // svelte-ignore state_referenced_locally
     let lastFormatForPassthrough = selectedFormat;
     $effect(() => {
         if (selectedFormat !== lastFormatForPassthrough) {
@@ -502,7 +485,7 @@
     onclick={saveAndClose}
     onkeydown={(e) => e.key === "Escape" && saveAndClose()}
 >
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div class="modal-content" onclick={(e) => e.stopPropagation()}>
         <div class="modal-header">
             <div class="header-left">
@@ -530,7 +513,12 @@
                             >
                         {/each}
                     </select>
-                    <span class="select-count">{allResolutions.length} {allResolutions.length === 1 ? 'option' : 'options'}</span>
+                    <span class="select-count"
+                        >{allResolutions.length}
+                        {allResolutions.length === 1
+                            ? "option"
+                            : "options"}</span
+                    >
                 </div>
             </div>
 
@@ -543,7 +531,10 @@
                             <option value={fps}>{formatFps(fps)} fps</option>
                         {/each}
                     </select>
-                    <span class="select-count">{availableFps.length} {availableFps.length === 1 ? 'option' : 'options'}</span>
+                    <span class="select-count"
+                        >{availableFps.length}
+                        {availableFps.length === 1 ? "option" : "options"}</span
+                    >
                 </div>
             </div>
 
@@ -576,13 +567,18 @@
                     <select id="format-select" bind:value={selectedFormat}>
                         {#each availableFormats as fmt}
                             <option value={fmt}
-                                >{fmt}{fmt === "H264"
+                                >{fmt}{defaultPassthrough(fmt)
                                     ? " (supports passthrough)"
                                     : ""}</option
                             >
                         {/each}
                     </select>
-                    <span class="select-count">{availableFormats.length} {availableFormats.length === 1 ? 'option' : 'options'}</span>
+                    <span class="select-count"
+                        >{availableFormats.length}
+                        {availableFormats.length === 1
+                            ? "option"
+                            : "options"}</span
+                    >
                 </div>
             </div>
 
@@ -893,7 +889,7 @@
                     </div>
                     {#if encodingCodec === "ffv1"}
                         <div class="field">
-                            <label>Bit Depth</label>
+                            <span class="field-label">Bit Depth</span>
                             <div class="radio-group">
                                 <label class="radio-label">
                                     <input
@@ -909,7 +905,7 @@
                                     class="radio-label"
                                     class:radio-disabled={!sourceIs10Bit}
                                     title={!sourceIs10Bit
-                                        ? "10-bit requires a 10-bit source format."
+                                        ? "10-bit requires a 10-bit source format"
                                         : ""}
                                 >
                                     <input
@@ -1103,7 +1099,8 @@
         gap: 0.375rem;
     }
 
-    .field label {
+    .field label,
+    .field-label {
         font-size: 0.6875rem;
         font-weight: 400;
         text-transform: uppercase;
@@ -1161,10 +1158,6 @@
     }
 
     .field-hint.warning {
-        color: #c9a962;
-    }
-
-    .warning-icon {
         color: #c9a962;
     }
 
@@ -1268,6 +1261,7 @@
         font-family: inherit;
         font-size: 0.8125rem;
         -moz-appearance: textfield;
+        appearance: textfield;
     }
 
     .bitrate-input::-webkit-inner-spin-button,
@@ -1286,12 +1280,6 @@
         color: #5a5a5a;
     }
 
-    .bitrate-range-hint {
-        font-size: 0.6875rem;
-        color: #5a5a5a;
-        margin-left: 0.25rem;
-    }
-
     .bitrate-reset {
         background: none;
         border: none;
@@ -1306,22 +1294,6 @@
 
     .bitrate-reset:hover {
         color: #a8a8a8;
-    }
-
-    .field-disabled {
-        opacity: 0.5;
-    }
-
-    .badge {
-        display: inline-block;
-        padding: 0.0625rem 0.375rem;
-        background: rgba(201, 169, 98, 0.12);
-        border-radius: 0.125rem;
-        font-size: 0.5625rem;
-        color: #c9a962;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        font-weight: 500;
     }
 
     .validation-error {
@@ -1377,7 +1349,8 @@
         color: #7a7a7a;
     }
 
-    :global(body.light-mode) .field label {
+    :global(body.light-mode) .field label,
+    :global(body.light-mode) .field-label {
         color: #5a5a5a;
     }
 
@@ -1401,10 +1374,6 @@
 
     :global(body.light-mode) .field-hint.warning {
         color: #8a6a20;
-    }
-
-    :global(body.light-mode) .checkbox-label input {
-        accent-color: #a08030;
     }
 
     :global(body.light-mode) .field input[type="range"] {
@@ -1441,10 +1410,6 @@
 
     :global(body.light-mode) .bitrate-unit {
         color: #7a7a7a;
-    }
-
-    :global(body.light-mode) .bitrate-range-hint {
-        color: #8a8a8a;
     }
 
     :global(body.light-mode) .bitrate-reset {
@@ -1508,8 +1473,4 @@
         color: #5a5a5a;
     }
 
-    :global(body.light-mode) .badge {
-        background: rgba(160, 128, 48, 0.12);
-        color: #8a6a20;
-    }
 </style>

@@ -32,8 +32,6 @@
     import type {
         VideoDevice,
         VideoDeviceConfig,
-        VideoCodec,
-        HardwareEncoderType,
         EncoderAvailability,
     } from "$lib/api";
     import {
@@ -42,6 +40,7 @@
         getResolutionLabel,
         formatFps,
         computeDefaultConfig,
+        resolveEncoderDefaults,
         isRawFormat,
     } from "$lib/api";
     import VideoConfigModal from "./VideoConfigModal.svelte";
@@ -654,18 +653,11 @@
                                             const wasSelected = $selectedVideoDevices.has(device.id);
                                             if (!wasSelected && !$videoDeviceConfigs[device.id]) {
                                                 const defaultCfg = computeDefaultConfig(device);
-                                                if (defaultCfg && encoderAvailability) {
-                                                    const rec = encoderAvailability.recommended_codec as VideoCodec;
-                                                    if (rec) {
-                                                        defaultCfg.encoding_codec = rec;
-                                                        const info = encoderAvailability[rec as keyof Pick<EncoderAvailability, "av1" | "vp9" | "vp8" | "h264" | "ffv1">];
-                                                        if (info?.recommended) {
-                                                            defaultCfg.encoder_type = info.recommended as HardwareEncoderType;
-                                                        }
-                                                    }
-                                                    setVideoDeviceConfig(device.id, defaultCfg);
-                                                } else if (defaultCfg) {
-                                                    setVideoDeviceConfig(device.id, defaultCfg);
+                                                if (defaultCfg) {
+                                                    const resolved = encoderAvailability
+                                                        ? resolveEncoderDefaults(defaultCfg, encoderAvailability)
+                                                        : defaultCfg;
+                                                    setVideoDeviceConfig(device.id, resolved);
                                                 }
                                             }
                                             toggleVideoDevice(device.id);
@@ -999,10 +991,6 @@
         scrollbar-gutter: stable;
     }
 
-    .midi-col-device {
-        /* left aligned by default */
-    }
-
     .midi-col-trigger {
         display: flex;
         align-items: center;
@@ -1064,10 +1052,6 @@
         color: #4a4a4a;
         align-items: center;
         scrollbar-gutter: stable;
-    }
-
-    .video-col-device {
-        /* left aligned by default */
     }
 
     .video-col-format {
@@ -1209,10 +1193,6 @@
         min-width: 0;
     }
 
-    .placeholder-cell {
-        /* Empty cell to maintain grid alignment */
-    }
-
     .audio-device-row {
         display: grid;
         grid-template-columns: 1fr 70px 70px;
@@ -1227,13 +1207,6 @@
         align-items: center;
         gap: 0.375rem;
         padding: 0 0.5rem;
-    }
-
-    .trigger-label {
-        font-size: 0.5625rem;
-        color: #5a5a5a;
-        letter-spacing: 0.02em;
-        white-space: nowrap;
     }
 
     .meter-container {
@@ -1513,10 +1486,6 @@
 
     :global(body.light-mode) .empty-message {
         color: #8a8a8a;
-    }
-
-    :global(body.light-mode) .trigger-label {
-        color: #7a7a7a;
     }
 
     :global(body.light-mode) .meter-track {

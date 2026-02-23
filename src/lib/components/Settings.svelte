@@ -310,7 +310,7 @@
                     {/if}
                 </div>
                 <div class="setting-row">
-                    <label>
+                    <label for="idle-timeout">
                         <span class="setting-label">Auto-recording timeout</span
                         >
                         <span class="setting-description"
@@ -320,6 +320,7 @@
                     </label>
                     <div class="input-with-suffix">
                         <input
+                            id="idle-timeout"
                             type="number"
                             min="2"
                             max="30"
@@ -331,7 +332,7 @@
                 </div>
 
                 <div class="setting-row">
-                    <label>
+                    <label for="pre-roll">
                         <span class="setting-label">Pre-roll Length</span>
                         <span class="setting-description"
                             >How much of the moments before playing to
@@ -340,6 +341,7 @@
                     </label>
                     <div class="input-with-suffix">
                         <input
+                            id="pre-roll"
                             type="number"
                             min="0"
                             max={localSettings.encode_during_preroll ? 30 : 5}
@@ -417,7 +419,7 @@
                     {/if}
                 </div>
                 <div class="setting-row">
-                    <label>
+                    <label for="storage-path">
                         <span class="setting-label">Recording Location</span>
                         <span class="setting-description"
                             >Where to save and load recorded sessions</span
@@ -425,6 +427,7 @@
                     </label>
                     <div class="path-input">
                         <input
+                            id="storage-path"
                             type="text"
                             bind:value={localSettings.storage_path}
                             readonly
@@ -439,13 +442,14 @@
                     </p>
                 </div>
                 <div class="setting-row">
-                    <label>
+                    <label for="audio-format">
                         <span class="setting-label">Audio Format</span>
                         <span class="setting-description"
                             >Format for recorded audio files</span
                         >
                     </label>
                     <select
+                        id="audio-format"
                         bind:value={localSettings.audio_format}
                         onchange={autoSave}
                     >
@@ -1218,11 +1222,6 @@
         margin: 0;
     }
 
-    .advanced-audio-divider {
-        height: 1px;
-        background: rgba(255, 255, 255, 0.04);
-    }
-
     .setting-row input[type="number"],
     .setting-row input[type="text"],
     .setting-row select {
@@ -1300,12 +1299,6 @@
     .browse-btn:hover {
         color: #a8a8a8;
         border-color: rgba(255, 255, 255, 0.1);
-    }
-
-    .checkbox-row-with-help {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
     }
 
     .checkbox-row {
@@ -1405,15 +1398,6 @@
         vertical-align: -1px;
     }
 
-    .custom-sound-name {
-        font-size: 0.6875rem;
-        color: #c9a962;
-        max-width: 72px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
     .custom-sound-clear {
         background: none;
         border: none;
@@ -1447,10 +1431,6 @@
     .customize-btn:hover {
         color: #a8a8a8;
         border-color: rgba(255, 255, 255, 0.1);
-    }
-
-    :global(body.light-mode) .custom-sound-name {
-        color: #8a6a20;
     }
 
     :global(body.light-mode) .custom-sound-clear {
@@ -1503,11 +1483,6 @@
         position: relative;
     }
 
-    .setting-label-with-help > span:first-child {
-        font-size: 0.875rem;
-        color: #a8a8a8;
-    }
-
     .help-btn {
         width: 13px;
         height: 13px;
@@ -1547,15 +1522,6 @@
         width: 280px;
         line-height: 1.5;
         z-index: 100;
-    }
-
-    .help-tooltip-right {
-        left: auto;
-        right: 0;
-    }
-
-    .help-tooltip strong {
-        color: #e8e6e3;
     }
 
     /* Light mode overrides */
@@ -1629,10 +1595,6 @@
         color: #7a7a7a;
     }
 
-    :global(body.light-mode) .advanced-audio-divider {
-        background: rgba(0, 0, 0, 0.08);
-    }
-
     :global(body.light-mode) .setting-row input[type="number"],
     :global(body.light-mode) .setting-row input[type="text"],
     :global(body.light-mode) .setting-row select {
@@ -1693,7 +1655,4 @@
         color: #8a8a8a;
     }
 
-    :global(body.light-mode) .setting-label-with-help > span:first-child {
-        color: #3a3a3a;
-    }
 </style>

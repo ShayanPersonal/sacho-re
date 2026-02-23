@@ -77,7 +77,7 @@
         bind:value={searchQuery}
         onkeydown={(e) => e.key === 'Enter' && handleSearch()}
       />
-      <button class="search-btn" onclick={handleSearch}>
+      <button class="search-btn" aria-label="Search" onclick={handleSearch}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
       </button>
     </div>
@@ -96,6 +96,7 @@
       </button>
       
       {#if filterMenuOpen}
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <div class="filter-menu" onclick={(e) => e.stopPropagation()}>
           <label class="filter-option">
             <input 

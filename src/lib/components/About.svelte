@@ -353,27 +353,6 @@
         color: #5a5a5a;
     }
 
-    .about-credits {
-        margin-top: 0.75rem;
-        width: 100%;
-    }
-
-    .about-credits p {
-        margin: 0;
-    }
-
-    .tech-stack {
-        font-size: 0.75rem;
-        color: #5a5a5a;
-    }
-
-    .tagline {
-        margin-top: 0.5rem !important;
-        font-size: 0.75rem;
-        font-style: italic;
-        color: #4a4a4a;
-    }
-
     .open-source-notice {
         margin-top: 0.75rem;
         padding-top: 1.25rem;
@@ -422,11 +401,6 @@
         font-size: 0.5625rem;
         color: #4a4a4a;
         word-break: break-all;
-    }
-
-    .notice-muted {
-        color: #4a4a4a;
-        font-style: italic;
     }
 
     .disclaimer {
@@ -492,14 +466,6 @@
         color: #6a6a6a;
     }
 
-    :global(body.light-mode) .tech-stack {
-        color: #6a6a6a;
-    }
-
-    :global(body.light-mode) .tagline {
-        color: #7a7a7a;
-    }
-
     :global(body.light-mode) .open-source-notice {
         border-top-color: rgba(0, 0, 0, 0.08);
     }
@@ -518,10 +484,6 @@
 
     :global(body.light-mode) .notice-code {
         color: #7a7a7a;
-    }
-
-    :global(body.light-mode) .notice-muted {
-        color: #8a8a8a;
     }
 
     :global(body.light-mode) .disclaimer {
