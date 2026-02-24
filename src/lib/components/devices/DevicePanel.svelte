@@ -42,6 +42,7 @@
         computeDefaultConfig,
         resolveEncoderDefaults,
         isRawFormat,
+        formatDisplayName,
     } from "$lib/api";
     import VideoConfigModal from "./VideoConfigModal.svelte";
 
@@ -85,7 +86,7 @@
             $videoDeviceConfigs[device.id] ?? computeDefaultConfig(device);
         if (!cfg) return "No supported formats";
 
-        const codec = cfg.source_format;
+        const codec = formatDisplayName(cfg.source_format);
         const resLabel = getResolutionLabel(
             cfg.source_width,
             cfg.source_height,

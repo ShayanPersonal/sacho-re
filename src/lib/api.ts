@@ -110,6 +110,13 @@ export function getCodecDisplayName(codec: VideoCodec): string {
   }
 }
 
+/** Returns a UI-friendly display name for a format string.
+ * E.g. "H264" → "H.264". All other formats are returned as-is. */
+export function formatDisplayName(format: string): string {
+  if (format === "H264") return "H.264";
+  return format;
+}
+
 /** Returns true for raw pixel formats that require encoding.
  * Returns false for known pre-encoded formats (MJPEG, H264, AV1, VP8, VP9). */
 export function isRawFormat(format: string): boolean {

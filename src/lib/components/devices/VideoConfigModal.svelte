@@ -24,6 +24,7 @@
         defaultPassthrough,
         supportsPassthrough,
         getCodecInfo,
+        formatDisplayName,
         DEFAULT_TARGET_HEIGHT,
         DEFAULT_TARGET_FPS,
         DEFAULT_TARGET_FPS_TOLERANCE,
@@ -555,10 +556,16 @@
                         </button>
                         {#if showStreamSourceHelp}
                             <span class="help-tooltip">
-                                Video devices can send their video streams in
+                                Video devices can send their video stream in
                                 various "pixel formats" which you can select
-                                here.<br /><br /> Compressed formats such as H264
-                                can be recorded in passthrough mode.
+                                here.
+                                <br /><br />Compressed formats such as H.264 can
+                                be recorded in passthrough mode, which is less
+                                taxing on your system.
+                                <br /><br />Formats marked as (raw) may be
+                                higher quality but require that the video source
+                                has a good connection (E.G. use USB 3 over USB
+                                2).
                             </span>
                         {/if}
                     </span>
@@ -567,9 +574,11 @@
                     <select id="format-select" bind:value={selectedFormat}>
                         {#each availableFormats as fmt}
                             <option value={fmt}
-                                >{fmt}{defaultPassthrough(fmt)
-                                    ? " (supports passthrough)"
-                                    : ""}</option
+                                >{formatDisplayName(fmt)}{isRawFormat(fmt)
+                                    ? " (raw)"
+                                    : defaultPassthrough(fmt)
+                                      ? " (supports passthrough)"
+                                      : ""}</option
                             >
                         {/each}
                     </select>
@@ -1472,5 +1481,4 @@
         border-color: rgba(0, 0, 0, 0.12);
         color: #5a5a5a;
     }
-
 </style>
