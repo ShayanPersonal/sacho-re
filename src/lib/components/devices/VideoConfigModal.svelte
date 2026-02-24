@@ -6,6 +6,7 @@
         HardwareEncoderType,
         CodecCapability,
         EncoderAvailability,
+        EncoderTestResult,
     } from "$lib/api";
     import {
         isRawFormat,
@@ -18,7 +19,7 @@
         computeDefaultConfig,
         validateVideoDeviceConfig,
         getEncoderAvailability,
-        getPresetBitrates,
+        testEncoderPreset,
         autoSelectEncoderPreset,
         sortFormatsByPriority,
         defaultPassthrough,
@@ -70,9 +71,7 @@
         effectiveConfig?.encoder_type ?? null,
     );
     let presetLevel = $state<number>(effectiveConfig?.preset_level ?? 3);
-    let customBitrateKbps = $state<number | null>(
-        effectiveConfig?.custom_bitrate_kbps ?? null,
-    );
+    let effortLevel = $state<number>(effectiveConfig?.effort_level ?? 3);
     let videoBitDepth = $state<number | null>(
         effectiveConfig?.video_bit_depth ?? null,
     );
@@ -88,52 +87,12 @@
 
     // Stream source help tooltip
     let showStreamSourceHelp = $state(false);
+    let tooltipStyle = $state("");
 
-    // Bitrate preview: cached array of 5 scaled bitrate values (one per preset level)
-    let presetBitrates = $state<(number | null)[]>([]);
-
-    function formatBitrate(kbps: number): string {
-        return `${kbps} kbps`;
-    }
-
-    // Fetch bitrates when codec, encoder, or resolution/fps changes
-    $effect(() => {
-        const codec = encodingCodec;
-        const encoder = encoderType;
-        // Track source and target dimensions so the effect re-runs on changes
-        const sw = selectedWidth,
-            sh = selectedHeight,
-            sf = selectedFps;
-        const tw = selectedTargetWidth,
-            th = selectedTargetHeight,
-            tf = selectedTargetFps;
-
-        // Reset custom bitrate — the bitrate landscape changed
-        customBitrateKbps = null;
-
-        if (!codec || !encoder || !isEncoding) {
-            presetBitrates = [];
-            return;
-        }
-
-        getPresetBitrates(codec, encoder, sw, sh, sf, tw, th, tf)
-            .then((result) => {
-                presetBitrates = result;
-            })
-            .catch(() => {
-                presetBitrates = [];
-            });
-    });
-
-    // Reset custom bitrate when the preset slider moves
-    // svelte-ignore state_referenced_locally
-    let lastPresetLevelForBitrate = presetLevel;
-    $effect(() => {
-        if (presetLevel !== lastPresetLevelForBitrate) {
-            lastPresetLevelForBitrate = presetLevel;
-            customBitrateKbps = null;
-        }
-    });
+    // Encoder test state
+    let testRunning = $state(false);
+    let testResult = $state<EncoderTestResult | null>(null);
+    let testError = $state("");
 
     // Load encoder availability on mount, resolve null codec/encoder to recommended
     $effect(() => {
@@ -293,12 +252,12 @@
         return info?.recommended ?? null;
     });
 
-    const presetLabels: Record<number, string> = {
-        1: "Lightest",
-        2: "Light",
+    const levelLabels: Record<number, string> = {
+        1: "Lowest",
+        2: "Low",
         3: "Balanced",
-        4: "Heavy",
-        5: "Heaviest",
+        4: "High",
+        5: "Highest",
     };
 
     // ── Cascade effects ──────────────────────────────────────────────
@@ -429,7 +388,7 @@
             encoding_codec: encodingCodec,
             encoder_type: encoderType,
             preset_level: presetLevel,
-            custom_bitrate_kbps: isEncoding ? customBitrateKbps : null,
+            effort_level: effortLevel,
             video_bit_depth: encodingCodec === "ffv1" ? videoBitDepth : null,
             target_width: isEncoding ? selectedTargetWidth : 0,
             target_height: isEncoding ? selectedTargetHeight : 0,
@@ -450,8 +409,7 @@
             current.encoding_codec !== effectiveConfig.encoding_codec ||
             current.encoder_type !== effectiveConfig.encoder_type ||
             current.preset_level !== effectiveConfig.preset_level ||
-            current.custom_bitrate_kbps !==
-                effectiveConfig.custom_bitrate_kbps ||
+            current.effort_level !== effectiveConfig.effort_level ||
             current.video_bit_depth !== effectiveConfig.video_bit_depth ||
             current.target_width !== effectiveConfig.target_width ||
             current.target_height !== effectiveConfig.target_height ||
@@ -461,6 +419,7 @@
 
     /** Save (if changed) and close the modal */
     async function saveAndClose() {
+        if (testRunning) return;
         if (hasChanges()) {
             validationError = null;
             const valid = await validateVideoDeviceConfig(
@@ -549,13 +508,29 @@
                             onclick={(e) => {
                                 e.stopPropagation();
                                 showStreamSourceHelp = !showStreamSourceHelp;
+                                if (showStreamSourceHelp) {
+                                    const btn = e.currentTarget as HTMLElement;
+                                    const rect = btn.getBoundingClientRect();
+                                    const tooltipWidth = 240;
+                                    let left = rect.left + rect.width / 2 - tooltipWidth / 2;
+                                    // Keep within viewport
+                                    left = Math.max(8, Math.min(left, window.innerWidth - tooltipWidth - 8));
+                                    let top = rect.bottom + 6;
+                                    // If it would go off the bottom, show above instead
+                                    if (top + 200 > window.innerHeight) {
+                                        top = rect.top - 6;
+                                        tooltipStyle = `left:${left}px;bottom:${window.innerHeight - top}px;`;
+                                    } else {
+                                        tooltipStyle = `left:${left}px;top:${top}px;`;
+                                    }
+                                }
                             }}
                             onblur={() => (showStreamSourceHelp = false)}
                         >
                             ?
                         </button>
                         {#if showStreamSourceHelp}
-                            <span class="help-tooltip">
+                            <span class="help-tooltip" style={tooltipStyle}>
                                 Video devices can send their video stream in
                                 various "pixel formats" which you can select
                                 here.
@@ -563,9 +538,12 @@
                                 be recorded in passthrough mode, which is less
                                 taxing on your system.
                                 <br /><br />Formats marked as (raw) may be
-                                higher quality but require that the video source
-                                has a good connection (E.G. use USB 3 over USB
-                                2).
+                                higher quality, but require that the video source
+                                has a good connection (E.G. use USB 3, not
+                                USB 2).
+                                <br /><br />If not sure what to pick,
+                                just pick the first format in the list.
+                                If there's an issue, try the next format and repeat.
                             </span>
                         {/if}
                     </span>
@@ -650,7 +628,7 @@
                     >
                 {:else if !passthrough && !isSelectedRaw}
                     <span class="field-hint warning"
-                        >&#9888; This source is already encoded. Re-encoding may
+                        >&#9888; The source is compressed. Re-encoding may
                         cause quality loss.</span
                     >
                 {:else}
@@ -796,11 +774,10 @@
                         </select>
                     </div>
 
-                    <!-- Preset Level -->
+                    <!-- Quality & Effort -->
                     <div class="field">
                         <label for="preset-slider">
-                            Quality Preset: {presetLabels[presetLevel] ??
-                                presetLevel}
+                            Quality: {levelLabels[presetLevel] ?? presetLevel}
                         </label>
                         <input
                             id="preset-slider"
@@ -810,91 +787,29 @@
                             step="1"
                             bind:value={presetLevel}
                         />
-                        <div class="preset-range-labels">
-                            <span>Lightest</span>
-                            <span>Heaviest</span>
-                        </div>
+                        {#if encoderType === "software" && encodingCodec !== "ffv1"}
+                            <label for="effort-slider" class="effort-label">
+                                Effort: {levelLabels[effortLevel] ?? effortLevel}
+                            </label>
+                            <input
+                                id="effort-slider"
+                                type="range"
+                                min="1"
+                                max="5"
+                                step="1"
+                                bind:value={effortLevel}
+                            />
+                        {/if}
                         <span class="field-hint">
                             {#if encodingCodec === "ffv1"}
-                                {#if presetLevel <= 3}
-                                    Faster encoding, larger files. FFV1 quality
-                                    is always lossless.
-                                {:else}
-                                    Slower encoding, smaller files. FFV1 quality
-                                    is always lossless.
-                                {/if}
-                            {:else if presetLevel < 3}
-                                Smaller files. Smoother recordings on less
-                                powerful systems.
-                            {:else if presetLevel > 3}
-                                Higher quality files. Works best on more
-                                powerful systems.
+                                Higher quality levels compress better but
+                                encode slower. FFV1 is always lossless.
                             {:else}
-                                Balanced quality and file size.
+                                Increasing quality can produce better video but
+                                increase file size.{#if encoderType === "software"}
+                                {" "}<br />Increasing effort can improve compression and quality.{/if}
                             {/if}
                         </span>
-                        {#if presetBitrates[presetLevel - 1] != null}
-                            {@const suggestedKbps =
-                                presetBitrates[presetLevel - 1]!}
-                            {@const minKbps = Math.round(suggestedKbps * 0.5)}
-                            {@const maxKbps = Math.round(suggestedKbps * 1.5)}
-                            <div class="bitrate-row">
-                                <span class="bitrate-label">Bitrate</span>
-                                <div class="bitrate-input-group">
-                                    <input
-                                        type="text"
-                                        inputmode="numeric"
-                                        class="bitrate-input"
-                                        value={customBitrateKbps ??
-                                            suggestedKbps}
-                                        onchange={(e) => {
-                                            const val = parseInt(
-                                                (e.target as HTMLInputElement)
-                                                    .value,
-                                            );
-                                            if (isNaN(val)) {
-                                                customBitrateKbps = null;
-                                            } else {
-                                                const clamped = Math.round(
-                                                    Math.min(
-                                                        maxKbps,
-                                                        Math.max(minKbps, val),
-                                                    ),
-                                                );
-                                                customBitrateKbps =
-                                                    clamped === suggestedKbps
-                                                        ? null
-                                                        : clamped;
-                                            }
-                                            (
-                                                e.target as HTMLInputElement
-                                            ).value = String(
-                                                customBitrateKbps ??
-                                                    suggestedKbps,
-                                            );
-                                        }}
-                                    />
-                                    <span class="bitrate-unit">kbps</span>
-                                    {#if customBitrateKbps != null}
-                                        <button
-                                            class="bitrate-reset"
-                                            onclick={() => {
-                                                customBitrateKbps = null;
-                                            }}
-                                        >
-                                            Reset
-                                        </button>
-                                    {/if}
-                                    <!--
-                                    <span class="bitrate-range-hint">
-                                        Range: {formatBitrate(minKbps)} – {formatBitrate(
-                                            maxKbps,
-                                        )}
-                                    </span>
-                                    -->
-                                </div>
-                            </div>
-                        {/if}
                     </div>
                     {#if encodingCodec === "ffv1"}
                         <div class="field">
@@ -938,8 +853,47 @@
             <div class="validation-error">{validationError}</div>
         {/if}
 
+        {#if testResult}
+            <div
+                class="test-result"
+                class:test-pass={testResult.success}
+                class:test-fail={!testResult.success}
+            >
+                {testResult.message}
+            </div>
+        {/if}
+        {#if testError}
+            <div class="test-result test-fail">{testError}</div>
+        {/if}
+
         <div class="modal-footer">
-            <button class="btn-close" onclick={saveAndClose}> Close </button>
+            <button
+                class="btn-test"
+                disabled={testRunning}
+                onclick={async () => {
+                    testRunning = true;
+                    testResult = null;
+                    testError = "";
+                    try {
+                        // Save config first if changed
+                        const current = buildConfig();
+                        if (current && hasChanges()) {
+                            onSave(current);
+                            // Brief delay for config to propagate
+                            await new Promise((r) => setTimeout(r, 100));
+                        }
+                        testResult = await testEncoderPreset(device.id);
+                    } catch (e: any) {
+                        testError =
+                            e?.message ?? e?.toString() ?? "Test failed";
+                    } finally {
+                        testRunning = false;
+                    }
+                }}
+            >
+                {testRunning ? "Testing..." : "Test"}
+            </button>
+            <button class="btn-close" disabled={testRunning} onclick={saveAndClose}> Close </button>
         </div>
     </div>
 </div>
@@ -1036,11 +990,7 @@
     }
 
     .help-tooltip {
-        position: absolute;
-        top: 100%;
-        left: 50%;
-        transform: translateX(-50%);
-        margin-top: 0.5rem;
+        position: fixed;
         padding: 0.625rem 0.75rem;
         background: #1a1a1a;
         border: 1px solid rgba(255, 255, 255, 0.1);
@@ -1051,7 +1001,7 @@
         line-height: 1.5;
         white-space: normal;
         width: 240px;
-        z-index: 10;
+        z-index: 1000;
         text-transform: none;
         letter-spacing: normal;
         font-weight: normal;
@@ -1232,77 +1182,48 @@
         border: 2px solid rgba(0, 0, 0, 0.3);
     }
 
-    .preset-range-labels {
-        display: flex;
-        justify-content: space-between;
-        font-size: 0.625rem;
-        color: #5a5a5a;
+    .effort-label {
+        margin-top: 0.5rem;
     }
 
-    .bitrate-row {
-        display: flex;
-        flex-direction: column;
-        gap: 0.25rem;
-        margin-top: 0.375rem;
+    .test-result {
+        margin: 0 1.5rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        line-height: 1.4;
     }
 
-    .bitrate-label {
-        font-size: 0.6875rem;
-        font-weight: 400;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-        color: #8a8a8a;
+    .test-pass {
+        background: rgba(34, 197, 94, 0.12);
+        color: #4ade80;
     }
 
-    .bitrate-input-group {
-        display: flex;
-        align-items: center;
-        gap: 0.375rem;
+    .test-fail {
+        background: rgba(220, 38, 38, 0.12);
+        color: #f87171;
     }
 
-    .bitrate-input {
-        width: 5.5rem;
-        padding: 0.3rem 0.5rem;
-        background: rgba(0, 0, 0, 0.3);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 0.25rem;
-        color: #e8e6e3;
+    .btn-test {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #b0b0b0;
+        padding: 0.5rem 1rem;
+        border-radius: 0.375rem;
         font-family: inherit;
         font-size: 0.8125rem;
-        -moz-appearance: textfield;
-        appearance: textfield;
-    }
-
-    .bitrate-input::-webkit-inner-spin-button,
-    .bitrate-input::-webkit-outer-spin-button {
-        -webkit-appearance: none;
-        margin: 0;
-    }
-
-    .bitrate-input:focus {
-        outline: none;
-        border-color: rgba(201, 169, 98, 0.4);
-    }
-
-    .bitrate-unit {
-        font-size: 0.75rem;
-        color: #5a5a5a;
-    }
-
-    .bitrate-reset {
-        background: none;
-        border: none;
-        color: #6a6a6a;
-        font-family: inherit;
-        font-size: 0.6875rem;
         cursor: pointer;
-        padding: 0.125rem 0.25rem;
-        text-decoration: underline;
-        text-underline-offset: 2px;
+        transition: all 0.15s;
     }
 
-    .bitrate-reset:hover {
-        color: #a8a8a8;
+    .btn-test:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.1);
+        color: #e0e0e0;
+    }
+
+    .btn-test:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
     }
 
     .validation-error {
@@ -1319,6 +1240,7 @@
         padding: 0.75rem 1.5rem 1.25rem;
         display: flex;
         justify-content: flex-end;
+        gap: 0.5rem;
         border-top: 1px solid rgba(255, 255, 255, 0.04);
     }
 
@@ -1399,34 +1321,25 @@
         border-color: rgba(255, 255, 255, 0.5);
     }
 
-    :global(body.light-mode) .preset-range-labels {
-        color: #7a7a7a;
+    :global(body.light-mode) .test-pass {
+        background: rgba(34, 197, 94, 0.1);
+        color: #16a34a;
     }
 
-    :global(body.light-mode) .bitrate-label {
+    :global(body.light-mode) .test-fail {
+        background: rgba(220, 38, 38, 0.08);
+        color: #dc2626;
+    }
+
+    :global(body.light-mode) .btn-test {
+        background: rgba(0, 0, 0, 0.04);
+        border-color: rgba(0, 0, 0, 0.12);
         color: #5a5a5a;
     }
 
-    :global(body.light-mode) .bitrate-input {
-        background: rgba(255, 255, 255, 0.9);
-        border-color: rgba(0, 0, 0, 0.12);
-        color: #2a2a2a;
-    }
-
-    :global(body.light-mode) .bitrate-input:focus {
-        border-color: rgba(160, 128, 48, 0.5);
-    }
-
-    :global(body.light-mode) .bitrate-unit {
-        color: #7a7a7a;
-    }
-
-    :global(body.light-mode) .bitrate-reset {
-        color: #7a7a7a;
-    }
-
-    :global(body.light-mode) .bitrate-reset:hover {
-        color: #4a4a4a;
+    :global(body.light-mode) .btn-test:hover:not(:disabled) {
+        background: rgba(0, 0, 0, 0.08);
+        color: #3a3a3a;
     }
 
     :global(body.light-mode) .divider {

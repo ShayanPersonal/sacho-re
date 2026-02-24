@@ -158,7 +158,7 @@ impl VideoDevice {
             encoding_codec: None,   // Auto-detect
             encoder_type: None,     // Auto-detect
             preset_level: crate::encoding::DEFAULT_PRESET,
-            custom_bitrate_kbps: None,
+            effort_level: crate::encoding::DEFAULT_PRESET,
             video_bit_depth: None,
             target_width: 0,   // "Match Source"
             target_height: 0,  // "Match Source"

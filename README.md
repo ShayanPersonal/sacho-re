@@ -96,6 +96,10 @@ Recordings are saved by default to:
 - **macOS**: `~/Music/Sacho`
 - **Linux**: `~/Music/Sacho`
 
+## Debugging
+
+The gstreamer CLI tools are installed on the development system. Use them to diagnose video pipeline issues.
+
 ## License
 
 All rights reserved.

@@ -85,8 +85,9 @@ pub struct EncoderConfig {
     /// Quality preset level (1 = lightest, 5 = maximum quality)
     /// See [`super::presets`] for per-encoder parameter mappings.
     pub preset_level: u8,
-    /// Custom bitrate override (kbps). None = use preset default.
-    pub custom_bitrate_kbps: Option<u32>,
+    /// Compute effort level (1 = fastest, 5 = best compression).
+    /// Only affects software encoders (SVT-AV1, libvpx VP9/VP8).
+    pub effort_level: u8,
     /// Encoding bit depth for lossless codecs (FFV1). None = 8-bit default.
     pub video_bit_depth: Option<u8>,
     /// Target encoding width (if different from source, videoscale is inserted)
@@ -103,7 +104,7 @@ impl Default for EncoderConfig {
             keyframe_interval: 60, // Every 2 seconds at 30fps
             target_codec: VideoCodec::Av1,
             preset_level: super::presets::DEFAULT_PRESET,
-            custom_bitrate_kbps: None,
+            effort_level: super::presets::DEFAULT_PRESET,
             video_bit_depth: None,
             target_width: None,
             target_height: None,
@@ -1343,7 +1344,7 @@ impl AsyncVideoEncoder {
         )?;
 
         // Create AV1 encoder
-        let encoder = Self::create_av1_encoder(hw_type, config, width, height, fps)?;
+        let encoder = Self::create_av1_encoder(hw_type, config)?;
 
         // AV1 parser
         let parser = gst::ElementFactory::make("av1parse")
@@ -1381,9 +1382,6 @@ impl AsyncVideoEncoder {
     pub(crate) fn create_av1_encoder(
         hw_type: HardwareEncoderType,
         config: &EncoderConfig,
-        source_width: u32,
-        source_height: u32,
-        source_fps: f64,
     ) -> Result<gst::Element> {
         let encoder_name = hw_type.av1_encoder_element().ok_or_else(|| {
             EncoderError::NotAvailable(format!(
@@ -1398,20 +1396,13 @@ impl AsyncVideoEncoder {
                 EncoderError::NotAvailable(format!("Failed to create {}: {}", encoder_name, e))
             })?;
 
-        // Apply preset-based parameters with resolution/fps-aware bitrate scaling
-        let ew = config.target_width.unwrap_or(source_width);
-        let eh = config.target_height.unwrap_or(source_height);
-        let efps = config.target_fps.unwrap_or(source_fps);
         super::presets::apply_preset(
             &encoder,
             VideoCodec::Av1,
             hw_type,
             config.preset_level,
+            config.effort_level,
             config.keyframe_interval,
-            ew,
-            eh,
-            efps,
-            config.custom_bitrate_kbps,
         );
 
         Ok(encoder)
@@ -1438,7 +1429,7 @@ impl AsyncVideoEncoder {
         )?;
 
         // Create VP8 encoder
-        let encoder = Self::create_vp8_encoder(hw_type, config, width, height, fps)?;
+        let encoder = Self::create_vp8_encoder(hw_type, config)?;
 
         // MKV muxer for VP8
         let muxer = gst::ElementFactory::make("matroskamux")
@@ -1472,9 +1463,6 @@ impl AsyncVideoEncoder {
     pub(crate) fn create_vp8_encoder(
         hw_type: HardwareEncoderType,
         config: &EncoderConfig,
-        source_width: u32,
-        source_height: u32,
-        source_fps: f64,
     ) -> Result<gst::Element> {
         let encoder_name = hw_type.vp8_encoder_element().ok_or_else(|| {
             EncoderError::NotAvailable(format!(
@@ -1502,20 +1490,13 @@ impl AsyncVideoEncoder {
             }
         }
 
-        // Apply preset-based parameters with resolution/fps-aware bitrate scaling
-        let ew = config.target_width.unwrap_or(source_width);
-        let eh = config.target_height.unwrap_or(source_height);
-        let efps = config.target_fps.unwrap_or(source_fps);
         super::presets::apply_preset(
             &encoder,
             VideoCodec::Vp8,
             hw_type,
             config.preset_level,
+            config.effort_level,
             config.keyframe_interval,
-            ew,
-            eh,
-            efps,
-            config.custom_bitrate_kbps,
         );
 
         Ok(encoder)
@@ -1542,7 +1523,7 @@ impl AsyncVideoEncoder {
         )?;
 
         // Create VP9 encoder
-        let encoder = Self::create_vp9_encoder(hw_type, config, width, height, fps)?;
+        let encoder = Self::create_vp9_encoder(hw_type, config)?;
 
         // MKV muxer for VP9
         let muxer = gst::ElementFactory::make("matroskamux")
@@ -1576,9 +1557,6 @@ impl AsyncVideoEncoder {
     pub(crate) fn create_vp9_encoder(
         hw_type: HardwareEncoderType,
         config: &EncoderConfig,
-        source_width: u32,
-        source_height: u32,
-        source_fps: f64,
     ) -> Result<gst::Element> {
         let encoder_name = hw_type.vp9_encoder_element().ok_or_else(|| {
             EncoderError::NotAvailable(format!(
@@ -1606,20 +1584,13 @@ impl AsyncVideoEncoder {
             }
         }
 
-        // Apply preset-based parameters with resolution/fps-aware bitrate scaling
-        let ew = config.target_width.unwrap_or(source_width);
-        let eh = config.target_height.unwrap_or(source_height);
-        let efps = config.target_fps.unwrap_or(source_fps);
         super::presets::apply_preset(
             &encoder,
             VideoCodec::Vp9,
             hw_type,
             config.preset_level,
+            config.effort_level,
             config.keyframe_interval,
-            ew,
-            eh,
-            efps,
-            config.custom_bitrate_kbps,
         );
 
         Ok(encoder)
@@ -1649,7 +1620,7 @@ impl AsyncVideoEncoder {
         )?;
 
         // Create H264 encoder
-        let encoder = Self::create_h264_encoder(hw_type, config, width, height, fps)?;
+        let encoder = Self::create_h264_encoder(hw_type, config)?;
 
         // H264 parser for NAL unit framing before muxing
         let parser = gst::ElementFactory::make("h264parse")
@@ -1687,9 +1658,6 @@ impl AsyncVideoEncoder {
     pub(crate) fn create_h264_encoder(
         hw_type: HardwareEncoderType,
         config: &EncoderConfig,
-        source_width: u32,
-        source_height: u32,
-        source_fps: f64,
     ) -> Result<gst::Element> {
         let encoder_name = hw_type.h264_encoder_element().ok_or_else(|| {
             EncoderError::NotAvailable(format!(
@@ -1704,20 +1672,13 @@ impl AsyncVideoEncoder {
                 EncoderError::NotAvailable(format!("Failed to create {}: {}", encoder_name, e))
             })?;
 
-        // Apply preset-based parameters with resolution/fps-aware bitrate scaling
-        let ew = config.target_width.unwrap_or(source_width);
-        let eh = config.target_height.unwrap_or(source_height);
-        let efps = config.target_fps.unwrap_or(source_fps);
         super::presets::apply_preset(
             &encoder,
             VideoCodec::H264,
             hw_type,
             config.preset_level,
+            config.effort_level,
             config.keyframe_interval,
-            ew,
-            eh,
-            efps,
-            config.custom_bitrate_kbps,
         );
 
         Ok(encoder)
@@ -1744,7 +1705,7 @@ impl AsyncVideoEncoder {
         )?;
 
         // Create FFV1 encoder
-        let encoder = Self::create_ffv1_encoder(hw_type, config, width, height, fps)?;
+        let encoder = Self::create_ffv1_encoder(hw_type, config)?;
 
         // MKV muxer
         let muxer = gst::ElementFactory::make("matroskamux")
@@ -1773,9 +1734,6 @@ impl AsyncVideoEncoder {
     pub(crate) fn create_ffv1_encoder(
         hw_type: HardwareEncoderType,
         config: &EncoderConfig,
-        source_width: u32,
-        source_height: u32,
-        source_fps: f64,
     ) -> Result<gst::Element> {
         let encoder = gst::ElementFactory::make("avenc_ffv1")
             .build()
@@ -1783,21 +1741,13 @@ impl AsyncVideoEncoder {
                 EncoderError::NotAvailable(format!("Failed to create avenc_ffv1: {}", e))
             })?;
 
-        // FFV1 is lossless — no bitrate scaling, but apply_preset still
-        // configures compression parameters (context, coder, slices).
-        let ew = config.target_width.unwrap_or(source_width);
-        let eh = config.target_height.unwrap_or(source_height);
-        let efps = config.target_fps.unwrap_or(source_fps);
         super::presets::apply_preset(
             &encoder,
             VideoCodec::Ffv1,
             hw_type,
             config.preset_level,
+            config.effort_level,
             config.keyframe_interval,
-            ew,
-            eh,
-            efps,
-            config.custom_bitrate_kbps,
         );
 
         Ok(encoder)

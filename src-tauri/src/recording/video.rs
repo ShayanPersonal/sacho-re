@@ -247,8 +247,8 @@ pub struct VideoCapturePipeline {
     total_frames_dropped: u64,
     /// Encoder quality preset level (1–5)
     preset_level: u8,
-    /// Custom bitrate override (kbps). None = use preset default.
-    custom_bitrate_kbps: Option<u32>,
+    /// Compute effort level (1–5) for software encoders
+    effort_level: u8,
     /// Encoding bit depth for lossless codecs (FFV1). None = 8-bit default.
     video_bit_depth: Option<u8>,
     /// Whether encode-during-preroll is active (raw video only)
@@ -632,7 +632,7 @@ impl PrerollVideoEncoder {
         fps: f64,
         target_codec: crate::encoding::VideoCodec,
         preset_level: u8,
-        custom_bitrate_kbps: Option<u32>,
+        effort_level: u8,
         video_bit_depth: Option<u8>,
         max_preroll_secs: u32,
         target_width: Option<u32>,
@@ -655,7 +655,7 @@ impl PrerollVideoEncoder {
             keyframe_interval: (effective_fps * 2.0).round() as u32,
             target_codec,
             preset_level,
-            custom_bitrate_kbps,
+            effort_level,
             video_bit_depth,
             target_width,
             target_height,
@@ -679,20 +679,20 @@ impl PrerollVideoEncoder {
         // Create encoder element based on target codec
         let encoder = match target_codec {
             crate::encoding::VideoCodec::Av1 => {
-                AsyncVideoEncoder::create_av1_encoder(hw_type, &config, width, height, fps)
+                AsyncVideoEncoder::create_av1_encoder(hw_type, &config)
             }
             crate::encoding::VideoCodec::Vp8 => {
-                AsyncVideoEncoder::create_vp8_encoder(hw_type, &config, width, height, fps)
+                AsyncVideoEncoder::create_vp8_encoder(hw_type, &config)
             }
             crate::encoding::VideoCodec::Vp9 => {
-                AsyncVideoEncoder::create_vp9_encoder(hw_type, &config, width, height, fps)
+                AsyncVideoEncoder::create_vp9_encoder(hw_type, &config)
             }
 
             crate::encoding::VideoCodec::Ffv1 => {
-                AsyncVideoEncoder::create_ffv1_encoder(hw_type, &config, width, height, fps)
+                AsyncVideoEncoder::create_ffv1_encoder(hw_type, &config)
             }
             crate::encoding::VideoCodec::H264 => {
-                AsyncVideoEncoder::create_h264_encoder(hw_type, &config, width, height, fps)
+                AsyncVideoEncoder::create_h264_encoder(hw_type, &config)
             }
             _ => {
                 return Err(VideoError::Pipeline(format!(
@@ -1094,7 +1094,7 @@ impl VideoCapturePipeline {
             consecutive_full_drops: 0,
             total_frames_dropped: 0,
             preset_level: crate::encoding::DEFAULT_PRESET,
-            custom_bitrate_kbps: None,
+            effort_level: crate::encoding::DEFAULT_PRESET,
             video_bit_depth: None,
             encode_during_preroll: false,
             pre_roll_secs,
@@ -1226,6 +1226,38 @@ impl VideoCapturePipeline {
                         gst::PadProbeReturn::Ok
                     },
                 );
+            }
+
+            // H.264-as-raw workaround: some capture cards (e.g. Elgato) advertise
+            // H.264 streams as video/x-raw,format=H264 via ksvideosrc. The decoder
+            // expects video/x-h264 caps. Insert capssetter to rewrite the media type
+            // and h264parse to properly parse the byte stream before the decoder.
+            let is_h264_as_raw = source_format == "H264"
+                && input_caps
+                    .structure(0)
+                    .map(|s| s.name().as_str() == "video/x-raw")
+                    .unwrap_or(false);
+
+            if is_h264_as_raw {
+                let h264_caps = gst::Caps::builder("video/x-h264")
+                    .field("stream-format", "byte-stream")
+                    .build();
+                let capssetter = gst::ElementFactory::make("capssetter")
+                    .property("caps", &h264_caps)
+                    .property("join", false)
+                    .property("replace", true)
+                    .build()
+                    .map_err(|e| {
+                        VideoError::Pipeline(format!("Failed to create capssetter: {}", e))
+                    })?;
+                let h264parse = gst::ElementFactory::make("h264parse")
+                    .build()
+                    .map_err(|e| {
+                        VideoError::Pipeline(format!("Failed to create h264parse: {}", e))
+                    })?;
+                println!("[Video]   Inserting capssetter + h264parse for H.264-as-raw source");
+                elements.push(capssetter);
+                elements.push(h264parse);
             }
 
             let decoder = gst::ElementFactory::make(decoder_name)
@@ -1430,7 +1462,7 @@ impl VideoCapturePipeline {
             consecutive_full_drops: 0,
             total_frames_dropped: 0,
             preset_level,
-            custom_bitrate_kbps: None, // Set by caller via VideoManager
+            effort_level: crate::encoding::DEFAULT_PRESET, // Set by caller via VideoManager
             video_bit_depth,
             encode_during_preroll,
             pre_roll_secs,
@@ -1475,10 +1507,32 @@ impl VideoCapturePipeline {
                             })
                             .unwrap_or(30.0);
 
+                        let negotiated_fps = self.fps;
                         println!(
-                            "[Video]   Negotiated: {}x{} @ {:.2}fps (attempt {})",
+                            "[Video]   Negotiated caps: {}x{} @ {:.2}fps (attempt {})",
                             self.width, self.height, self.fps, attempt
                         );
+
+                        // Measure actual frame delivery rate over 1 second.
+                        // Some sources (e.g. capture cards via ksvideosrc) advertise
+                        // framerate ranges and ignore the capsfilter constraint,
+                        // delivering at whatever rate their input provides.
+                        let count_before = self.frame_counter.load(Ordering::Relaxed);
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                        let count_after = self.frame_counter.load(Ordering::Relaxed);
+                        let measured_frames = count_after - count_before;
+                        if measured_frames > 0 {
+                            let measured_fps = measured_frames as f64;
+                            let ratio = measured_fps / negotiated_fps;
+                            if ratio > 1.25 || ratio < 0.75 {
+                                println!(
+                                    "[Video]   Actual framerate: {:.1}fps (caps said {:.1}fps) — using measured rate",
+                                    measured_fps, negotiated_fps
+                                );
+                                self.fps = measured_fps;
+                            }
+                        }
+
                         negotiated = true;
                         break;
                     }
@@ -1600,7 +1654,7 @@ impl VideoCapturePipeline {
             }
 
             return Err(VideoError::Pipeline(format!(
-                "Pipeline for {} did not negotiate caps after 1000ms ({}x{} @ {:.2}fps, codec: {}). {}",
+                "Pipeline for {} did not negotiate caps after 5000ms ({}x{} @ {:.2}fps, codec: {}). {}",
                 self.device_name, self.width, self.height, self.fps, self.source_format, error_details
             )));
         }
@@ -1646,7 +1700,7 @@ impl VideoCapturePipeline {
                 self.fps,
                 target_codec,
                 self.preset_level,
-                self.custom_bitrate_kbps,
+                self.effort_level,
                 self.video_bit_depth,
                 self.pre_roll_secs,
                 pe_tw,
@@ -1856,7 +1910,7 @@ impl VideoCapturePipeline {
                 keyframe_interval: (self.target_fps * 2.0).round() as u32, // Keyframe every 2 seconds at target fps
                 target_codec,
                 preset_level: self.preset_level,
-                custom_bitrate_kbps: self.custom_bitrate_kbps,
+                effort_level: self.effort_level,
                 video_bit_depth: self.video_bit_depth,
                 target_width: use_target_w,
                 target_height: use_target_h,
@@ -2306,12 +2360,13 @@ impl VideoCaptureManager {
         self.encode_during_preroll = enabled;
     }
 
-    /// Update the encoder preset level and custom bitrate for a specific device (in-place, no pipeline restart).
-    pub fn update_preset_for_device(&mut self, device_id: &str, level: u8, custom_bitrate_kbps: Option<u32>) {
+    /// Update the encoder preset level and effort level for a specific device (in-place, no pipeline restart).
+    pub fn update_preset_for_device(&mut self, device_id: &str, level: u8, effort_level: u8) {
         let clamped = level.clamp(crate::encoding::MIN_PRESET, crate::encoding::MAX_PRESET);
+        let effort_clamped = effort_level.clamp(crate::encoding::MIN_PRESET, crate::encoding::MAX_PRESET);
         if let Some(pipeline) = self.pipelines.get_mut(device_id) {
             pipeline.preset_level = clamped;
-            pipeline.custom_bitrate_kbps = custom_bitrate_kbps;
+            pipeline.effort_level = effort_clamped;
         }
     }
 
@@ -2376,7 +2431,7 @@ impl VideoCaptureManager {
                         pipeline.target_width = resolved.target_width;
                         pipeline.target_height = resolved.target_height;
                         pipeline.target_fps = resolved.target_fps;
-                        pipeline.custom_bitrate_kbps = dev_config.custom_bitrate_kbps;
+                        pipeline.effort_level = dev_config.effort_level;
                     }
                     if let Err(e) = pipeline.start() {
                         println!("[Video] Failed to start pipeline for {}: {}", device_id, e);

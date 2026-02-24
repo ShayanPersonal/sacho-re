@@ -256,8 +256,20 @@ pub fn health_check_loop(
         // Check MIDI + audio via enumeration
         let mut current_disconnected = check_active_device_health(&app);
 
+        // Skip video stall detection while pipelines are intentionally stopped
+        // (e.g. during encoder test or auto-select). The test commands set status
+        // to Initializing before stopping pipelines and reset to Idle afterward.
+        let is_initializing = {
+            let rs = app.state::<RwLock<crate::recording::RecordingState>>();
+            let status = rs.read().status.clone();
+            status == crate::recording::RecordingStatus::Initializing
+        };
+
         // Check video via frame counter stall detection
-        {
+        if is_initializing {
+            // Reset stall state so restarted pipelines get a clean slate
+            video_stall.clear();
+        } else {
             let config = app.state::<RwLock<Config>>();
             let config = config.read();
             let active_video_ids: HashSet<String> =

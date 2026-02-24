@@ -561,7 +561,8 @@
                             {#each visibleFpsWarnings as warning}
                                 <p>
                                     ⚠️{warning.device_name} delivering {warning.actual_fps}fps
-                                    instead of requested {warning.expected_fps}fps
+                                    instead of requested {warning.expected_fps}fps.
+                                    This can sometimes happen if a camera reports incorrect framerates.
                                     <button
                                         class="warning-dismiss"
                                         onclick={() => { dismissedFps = new Set([...dismissedFps, warning.device_name]); }}

@@ -10,6 +10,21 @@
 //! - **Level 4** — Quality: higher resource usage, very good quality
 //! - **Level 5** — Maximum: highest quality feasible in real-time
 //!
+//! ## Quality-based encoding
+//!
+//! All encoders use quality-based rate control (CRF/CQ/CQP) instead of
+//! bitrate-based. This lets the encoder automatically adapt bitrate to
+//! content complexity — static scenes use fewer bits, complex motion gets
+//! more — producing smaller files at the same visual quality with no
+//! resolution/fps scaling needed.
+//!
+//! ## Effort slider (software encoders only)
+//!
+//! Software encoders (SVT-AV1, libvpx VP9/VP8) have independent quality
+//! and compute-effort axes. The `effort_level` parameter (1–5) controls
+//! how much CPU time the encoder spends per frame (more effort = better
+//! compression at the same quality, but slower encoding).
+//!
 //! ## Adding presets for a new encoder
 //!
 //! When a new encoder backend is added (e.g., a new hardware vendor):
@@ -20,16 +35,6 @@
 //! 3. Each level must produce output suitable for real-time encoding at
 //!    common resolutions (720p–1080p, 30 fps).
 //! 4. Document which GStreamer element properties you set and why.
-//!
-//! ## Bitrate scaling
-//!
-//! Base bitrates are calibrated for **1080p @ 30 fps** (the reference point).
-//! At runtime, [`apply_preset()`] scales them by the actual source resolution
-//! and framerate using per-codec spatial exponents and a shared temporal
-//! exponent. See the constants and helpers below `DEFAULT_PRESET` for details.
-//!
-//! The auto-select system ([`crate::commands::auto_select_encoder_preset`])
-//! will automatically test your new presets at runtime.
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -80,79 +85,6 @@ pub const MAX_PRESET: u8 = 5;
 /// Default preset level (balanced)
 pub const DEFAULT_PRESET: u8 = 3;
 
-// ── Base bitrate constants (kbps @ 1080p30) ──────────────────────────────
-//
-// Single source of truth for per-codec, per-backend bitrates.
-// Indexed by `(level - 1)`, so level 1 → index 0, level 5 → index 4.
-
-const AV1_HW_BITRATES_KBPS: [u32; 5] = [1_500, 2_000, 3_000, 4_000, 5_000];
-const AV1_SW_BITRATES_KBPS: [u32; 5] = [1_200, 1_800, 2_500, 3_500, 4_500];
-const VP9_BITRATES_KBPS:    [u32; 5] = [2_000, 2_500, 3_500, 4_500, 5_500];
-const VP8_BITRATES_KBPS:    [u32; 5] = [2_500, 3_500, 5_000, 6_500, 8_000];
-const H264_BITRATES_KBPS:   [u32; 5] = [2_500, 3_500, 5_000, 7_000, 9_000];
-
-// ── Resolution/FPS-aware bitrate scaling ─────────────────────────────────
-//
-// Base bitrates are calibrated for 1080p@30fps (the reference point).
-// At runtime they are scaled by the actual source resolution and framerate
-// so that a 480p15 webcam gets a proportionally lower bitrate while a
-// 4K60 camera gets proportionally more.
-
-/// Reference resolution: 1920 × 1080 = 2 073 600 pixels
-const REFERENCE_PIXELS: f64 = 2_073_600.0;
-/// Reference framerate: 30 fps
-const REFERENCE_FPS: f64 = 30.0;
-/// Minimum scale factor (floor) — prevents absurdly low bitrates
-const MIN_SCALE: f64 = 0.25;
-/// Maximum scale factor (ceiling) — prevents absurdly high bitrates
-const MAX_SCALE: f64 = 6.0;
-/// Temporal exponent (β): doubling fps → ~41% more bitrate
-const TEMPORAL_EXPONENT: f64 = 0.5;
-
-/// Per-codec spatial exponent (α).
-///
-/// More efficient codecs exploit spatial redundancy better and therefore
-/// need a smaller bitrate increase per additional pixel.
-fn spatial_exponent(codec: VideoCodec) -> f64 {
-    match codec {
-        VideoCodec::Av1 => 0.70,
-        VideoCodec::Vp9 => 0.75,
-        VideoCodec::H264 => 0.80,
-        VideoCodec::Vp8 => 0.85,
-        _ => 0.80, // sensible default
-    }
-}
-
-/// Compute the bitrate scale factor for the given codec, resolution, and fps.
-///
-/// ```text
-/// pixel_ratio = (width * height) / (1920 * 1080)
-/// fps_ratio   = fps / 30.0
-/// scale       = pixel_ratio^α * fps_ratio^β
-/// ```
-///
-/// The result is clamped to [`MIN_SCALE`]..=[`MAX_SCALE`].
-pub(super) fn bitrate_scale(codec: VideoCodec, width: u32, height: u32, fps: f64) -> f64 {
-    let pixels = (width as f64) * (height as f64);
-    let pixel_ratio = pixels / REFERENCE_PIXELS;
-    let fps_ratio = fps / REFERENCE_FPS;
-
-    let alpha = spatial_exponent(codec);
-    let scale = pixel_ratio.powf(alpha) * fps_ratio.powf(TEMPORAL_EXPONENT);
-
-    scale.clamp(MIN_SCALE, MAX_SCALE)
-}
-
-/// Scale a u32 base bitrate (kbps) by the given factor, rounding to nearest.
-fn scale_bitrate_u32(base: u32, scale: f64) -> u32 {
-    ((base as f64) * scale).round() as u32
-}
-
-/// Scale an i32 base bitrate (bps) by the given factor, rounding to nearest.
-fn scale_bitrate_i32(base: i32, scale: f64) -> i32 {
-    ((base as f64) * scale).round() as i32
-}
-
 /// Get a human-readable label for a preset level.
 pub fn preset_label(level: u8) -> &'static str {
     match level.clamp(MIN_PRESET, MAX_PRESET) {
@@ -165,161 +97,84 @@ pub fn preset_label(level: u8) -> &'static str {
     }
 }
 
-/// Get the base bitrate (kbps, calibrated for 1080p@30fps) for a given
-/// codec + hardware backend + preset level. Returns `None` for FFV1 or
-/// unsupported codec/backend combinations.
-pub fn base_bitrate_kbps(
-    codec: VideoCodec,
-    hw_type: HardwareEncoderType,
-    level: u8,
-) -> Option<u32> {
-    let level = level.clamp(MIN_PRESET, MAX_PRESET);
-    let idx = (level - 1) as usize;
-
-    let arr: &[u32; 5] = match (codec, hw_type) {
-        // AV1
-        (VideoCodec::Av1, HardwareEncoderType::Software) => &AV1_SW_BITRATES_KBPS,
-        (VideoCodec::Av1, _) => &AV1_HW_BITRATES_KBPS,
-        // VP9
-        (VideoCodec::Vp9, _) => &VP9_BITRATES_KBPS,
-        // VP8
-        (VideoCodec::Vp8, _) => &VP8_BITRATES_KBPS,
-        // H264
-        (VideoCodec::H264, _) => &H264_BITRATES_KBPS,
-        // FFV1 is lossless — no meaningful bitrate
-        _ => return None,
-    };
-
-    Some(arr[idx])
-}
-
-/// Get the bitrate (kbps) scaled for the actual encoding resolution and fps.
-/// Returns `None` for FFV1 or unsupported codec/backend combinations.
-pub fn scaled_bitrate_kbps(
-    codec: VideoCodec,
-    hw_type: HardwareEncoderType,
-    level: u8,
-    width: u32,
-    height: u32,
-    fps: f64,
-) -> Option<u32> {
-    let base = base_bitrate_kbps(codec, hw_type, level)?;
-    let scale = bitrate_scale(codec, width, height, fps);
-    Some(((base as f64) * scale).round() as u32)
-}
-
 /// Apply encoder-specific parameters for the given preset level.
 ///
 /// This is the **main extension point** for the preset system. When adding a
 /// new encoder, add a match arm here that dispatches to your preset function.
 ///
-/// Base bitrates are calibrated for 1080p@30fps. The `width`, `height`, and
-/// `fps` parameters describe the *effective* encoding resolution/framerate
-/// (after any target scaling) and are used to scale bitrates accordingly.
-///
-/// When `bitrate_override_kbps` is `Some`, the effective bitrate scale is
-/// adjusted so that `base_kbps * scale ≈ override_kbps`. All `apply_*`
-/// functions continue to use `scale_bitrate_*()` unchanged.
+/// All encoders use quality-based rate control (CRF/CQ/CQP). The `level`
+/// parameter (1–5) controls visual quality, while `effort_level` (1–5)
+/// controls compute effort for software encoders (ignored by hardware encoders).
 ///
 /// # Arguments
 /// * `encoder` — the GStreamer encoder element to configure
 /// * `codec` — the target video codec
 /// * `hw_type` — the hardware encoder type being used
-/// * `level` — preset level (1–5; clamped internally)
+/// * `level` — quality preset level (1–5; clamped internally)
+/// * `effort_level` — compute effort for software encoders (1–5; clamped internally)
 /// * `keyframe_interval` — keyframe interval in frames (0 = encoder default)
-/// * `width` — effective encoding width in pixels
-/// * `height` — effective encoding height in pixels
-/// * `fps` — effective encoding framerate
-/// * `bitrate_override_kbps` — custom bitrate override; `None` = use preset default
 pub fn apply_preset(
     encoder: &gst::Element,
     codec: VideoCodec,
     hw_type: HardwareEncoderType,
     level: u8,
+    effort_level: u8,
     keyframe_interval: u32,
-    width: u32,
-    height: u32,
-    fps: f64,
-    bitrate_override_kbps: Option<u32>,
 ) {
     let level = level.clamp(MIN_PRESET, MAX_PRESET);
+    let effort_level = effort_level.clamp(MIN_PRESET, MAX_PRESET);
 
-    // Compute resolution/fps scale factor (skip for lossless FFV1)
-    let scale = if codec == VideoCodec::Ffv1 {
-        1.0
-    } else {
-        let resolution_scale = bitrate_scale(codec, width, height, fps);
-
-        // If the user specified a custom bitrate, compute a synthetic scale
-        // factor so that `base_kbps * scale ≈ override_kbps`.
-        let s = if let Some(override_kbps) = bitrate_override_kbps {
-            if let Some(base) = base_bitrate_kbps(codec, hw_type, level) {
-                if base > 0 {
-                    (override_kbps as f64) / (base as f64)
-                } else {
-                    resolution_scale
-                }
-            } else {
-                resolution_scale
-            }
-        } else {
-            resolution_scale
-        };
-
-        println!(
-            "[Preset] {:?} {:?} level={} {}x{}@{:.1}fps → scale={:.3}{}",
-            codec, hw_type, level, width, height, fps, s,
-            if bitrate_override_kbps.is_some() { " (custom bitrate)" } else { "" }
-        );
-        s
-    };
+    println!(
+        "[Preset] {:?} {:?} quality={} effort={}",
+        codec, hw_type, level, effort_level,
+    );
 
     match (codec, hw_type) {
         // ── AV1 encoders ────────────────────────────────────────────────
         (VideoCodec::Av1, HardwareEncoderType::Nvenc) => {
-            apply_nvenc_av1(encoder, level, keyframe_interval, scale);
+            apply_nvenc_av1(encoder, level, keyframe_interval);
         }
         (VideoCodec::Av1, HardwareEncoderType::Amf) => {
-            apply_amf_av1(encoder, level, scale);
+            apply_amf_av1(encoder, level);
         }
         (VideoCodec::Av1, HardwareEncoderType::Qsv) => {
-            apply_qsv_av1(encoder, level, scale);
+            apply_qsv_av1(encoder, level);
         }
         (VideoCodec::Av1, HardwareEncoderType::VaApi) => {
-            apply_vaapi_av1(encoder, level, scale);
+            apply_vaapi_av1(encoder, level);
         }
         (VideoCodec::Av1, HardwareEncoderType::Software) => {
-            apply_software_av1(encoder, level, keyframe_interval, scale);
+            apply_software_av1(encoder, level, effort_level, keyframe_interval);
         }
 
         // ── VP9 encoders ────────────────────────────────────────────────
         (VideoCodec::Vp9, HardwareEncoderType::Qsv) => {
-            apply_qsv_vp9(encoder, level, scale);
+            apply_qsv_vp9(encoder, level);
         }
         (VideoCodec::Vp9, HardwareEncoderType::VaApi) => {
-            apply_vaapi_vp9(encoder, level, scale);
+            apply_vaapi_vp9(encoder, level);
         }
         (VideoCodec::Vp9, HardwareEncoderType::Software) => {
-            apply_software_vp9(encoder, level, keyframe_interval, scale);
+            apply_software_vp9(encoder, level, effort_level, keyframe_interval);
         }
 
         // ── VP8 encoders ────────────────────────────────────────────────
         (VideoCodec::Vp8, HardwareEncoderType::Qsv) => {
-            apply_qsv_vp8(encoder, level, scale);
+            apply_qsv_vp8(encoder, level);
         }
         (VideoCodec::Vp8, HardwareEncoderType::VaApi) => {
-            apply_vaapi_vp8(encoder, level, scale);
+            apply_vaapi_vp8(encoder, level);
         }
         (VideoCodec::Vp8, HardwareEncoderType::Software) => {
-            apply_software_vp8(encoder, level, keyframe_interval, scale);
+            apply_software_vp8(encoder, level, effort_level, keyframe_interval);
         }
 
         // ── H264 encoders (platform-native only) ────────────────────────
         (VideoCodec::H264, HardwareEncoderType::MediaFoundation) => {
-            apply_mf_h264(encoder, level, keyframe_interval, scale);
+            apply_mf_h264(encoder, level, keyframe_interval);
         }
         (VideoCodec::H264, HardwareEncoderType::VideoToolbox) => {
-            apply_vtb_h264(encoder, level, keyframe_interval, scale);
+            apply_vtb_h264(encoder, level, keyframe_interval);
         }
 
         // ── FFV1 encoder ────────────────────────────────────────────────
@@ -344,22 +199,32 @@ pub fn apply_preset(
 
 /// NVIDIA NVENC AV1 (nvav1enc) — RTX 40 series+
 ///
+/// Quality-based: `rc-mode=vbr` + `const-quality` with always-on AQ.
+/// Spatial and temporal AQ run on the NVENC ASIC (zero CPU cost) and
+/// always improve quality distribution — especially for static scenes
+/// where they redirect bits from flat backgrounds to moving subjects.
+///
 /// Properties used:
 /// - `preset`: p1 (fastest) to p7 (best quality)
-/// - `bitrate`: target bitrate in kbps
+/// - `rc-mode`: VBR (enables const-quality)
+/// - `const-quality`: CQ level (lower = better quality)
+/// - `spatial-aq`: adaptive quantization across spatial blocks
+/// - `temporal-aq`: adaptive quantization across frames
 /// - `gop-size`: keyframe interval
-fn apply_nvenc_av1(encoder: &gst::Element, level: u8, keyframe_interval: u32, scale: f64) {
-    let idx = (level - 1) as usize;
-    let preset = match level {
-        1 => "p1",
-        2 => "p2",
-        3 => "p4",
-        4 => "p5",
-        _ => "p7",
+fn apply_nvenc_av1(encoder: &gst::Element, level: u8, keyframe_interval: u32) {
+    let (const_quality, preset) = match level {
+        1 => (38.0f64, "p1"),
+        2 => (32.0, "p3"),
+        3 => (28.0, "p4"),
+        4 => (24.0, "p5"),
+        _ => (20.0, "p7"),
     };
 
+    encoder.set_property_from_str("rc-mode", "vbr");
+    encoder.set_property("const-quality", const_quality);
     encoder.set_property_from_str("preset", preset);
-    encoder.set_property("bitrate", scale_bitrate_u32(AV1_HW_BITRATES_KBPS[idx], scale));
+    encoder.set_property("spatial-aq", true);
+    encoder.set_property("temporal-aq", true);
     if keyframe_interval > 0 {
         encoder.set_property("gop-size", keyframe_interval as i32);
     }
@@ -367,49 +232,112 @@ fn apply_nvenc_av1(encoder: &gst::Element, level: u8, keyframe_interval: u32, sc
 
 /// AMD AMF AV1 (amfav1enc) — RX 7000 series+
 ///
+/// Quality-based: `rate-control=cqp` + `qp-i`/`qp-p` with always-on pre-analysis.
+/// Pre-analysis runs content analysis on the media engine, improving quality
+/// at the same bitrate with negligible GPU cost.
+///
 /// Properties used:
-/// - `bitrate`: target bitrate in kbps
-fn apply_amf_av1(encoder: &gst::Element, level: u8, scale: f64) {
-    let idx = (level - 1) as usize;
-    encoder.set_property("bitrate", scale_bitrate_u32(AV1_HW_BITRATES_KBPS[idx], scale));
+/// - `rate-control`: CQP (constant quantization parameter)
+/// - `qp-i` / `qp-p`: quantization parameters for I/P frames
+/// - `preset`: speed (100) to high-quality (0)
+/// - `pre-analysis`: AMD content analysis
+fn apply_amf_av1(encoder: &gst::Element, level: u8) {
+    let (qp, preset) = match level {
+        1 => (180u32, "speed"),
+        2 => (150, "balanced"),
+        3 => (128, "balanced"),
+        4 => (100, "quality"),
+        _ => (70, "high-quality"),
+    };
+
+    if encoder.find_property("rate-control").is_some() {
+        encoder.set_property_from_str("rate-control", "cqp");
+    }
+    try_set_u32_clamped(encoder, "qp-i", qp);
+    try_set_u32_clamped(encoder, "qp-p", qp);
+    if encoder.find_property("preset").is_some() {
+        encoder.set_property_from_str("preset", preset);
+    }
+    if encoder.find_property("pre-analysis").is_some() {
+        encoder.set_property("pre-analysis", true);
+    }
 }
 
 /// Intel QuickSync AV1 (qsvav1enc)
 ///
+/// Quality-based: `rate-control=cqp` + `qp-i`/`qp-p`.
+///
 /// Properties used:
-/// - `bitrate`: target bitrate in kbps
-fn apply_qsv_av1(encoder: &gst::Element, level: u8, scale: f64) {
-    let idx = (level - 1) as usize;
-    encoder.set_property("bitrate", scale_bitrate_u32(AV1_HW_BITRATES_KBPS[idx], scale));
+/// - `rate-control`: CQP
+/// - `qp-i` / `qp-p`: quantization parameters (offset for P-frames)
+fn apply_qsv_av1(encoder: &gst::Element, level: u8) {
+    let (qp_i, qp_p) = match level {
+        1 => (38u32, 40u32),
+        2 => (32, 34),
+        3 => (28, 30),
+        4 => (24, 26),
+        _ => (18, 20),
+    };
+
+    if encoder.find_property("rate-control").is_some() {
+        encoder.set_property_from_str("rate-control", "cqp");
+    }
+    try_set_u32_clamped(encoder, "qp-i", qp_i);
+    try_set_u32_clamped(encoder, "qp-p", qp_p);
 }
 
 /// VA-API AV1 (vaav1enc / vaapiav1enc) — Linux
 ///
-/// Properties used:
-/// - `bitrate`: target bitrate in kbps
-fn apply_vaapi_av1(encoder: &gst::Element, level: u8, scale: f64) {
-    let idx = (level - 1) as usize;
-    encoder.set_property("bitrate", scale_bitrate_u32(AV1_HW_BITRATES_KBPS[idx], scale));
-}
-
-/// Software AV1 via SVT-AV1 (svtav1enc)
+/// Quality-based: `rate-control=cqp` + `qp` + `target-usage`.
 ///
 /// Properties used:
-/// - `preset`: 0 (best quality) to 13 (fastest); 8+ needed for real-time
-/// - `target-bitrate`: kbps (enables CBR mode)
-/// - `intra-period-length`: keyframe interval (-2 = auto, -1 = no updates)
-fn apply_software_av1(encoder: &gst::Element, level: u8, keyframe_interval: u32, scale: f64) {
-    let idx = (level - 1) as usize;
-    let preset = match level {
-        1 => 12u32,
+/// - `rate-control`: CQP
+/// - `qp`: quantization parameter
+/// - `target-usage`: speed/quality tradeoff (1=quality, 7=speed)
+fn apply_vaapi_av1(encoder: &gst::Element, level: u8) {
+    let (qp, target_usage) = match level {
+        1 => (180u32, 7u32),
+        2 => (150, 6),
+        3 => (128, 4),
+        4 => (100, 2),
+        _ => (70, 1),
+    };
+
+    if encoder.find_property("rate-control").is_some() {
+        encoder.set_property_from_str("rate-control", "cqp");
+    }
+    try_set_u32_clamped(encoder, "qp", qp);
+    try_set_u32_clamped(encoder, "target-usage", target_usage);
+}
+
+/// Software AV1 via SVT-AV1 (svtav1enc) — 2 sliders
+///
+/// Quality: CRF mode (do NOT set target-bitrate).
+/// Effort: preset (12=fastest, 8=slowest feasible for real-time).
+///
+/// Properties used:
+/// - `crf`: constant rate factor (lower = better quality)
+/// - `preset`: speed preset (higher = faster, lower = better compression)
+/// - `intra-period-length`: keyframe interval
+fn apply_software_av1(encoder: &gst::Element, level: u8, effort_level: u8, keyframe_interval: u32) {
+    let crf: i32 = match level {
+        1 => 45,
+        2 => 38,
+        3 => 33,
+        4 => 28,
+        _ => 23,
+    };
+
+    let preset: u32 = match effort_level {
+        1 => 12,
         2 => 11,
         3 => 10,
-        4 => 8,
+        4 => 9,
         _ => 8,
     };
 
+    encoder.set_property("crf", crf);
     encoder.set_property("preset", preset);
-    encoder.set_property("target-bitrate", scale_bitrate_u32(AV1_SW_BITRATES_KBPS[idx], scale));
 
     if keyframe_interval > 0 {
         encoder.set_property("intra-period-length", keyframe_interval as i32);
@@ -422,59 +350,93 @@ fn apply_software_av1(encoder: &gst::Element, level: u8, keyframe_interval: u32,
 
 /// Intel QuickSync VP9 (qsvvp9enc)
 ///
+/// Quality-based: `rate-control=icq` + `icq-quality`.
+///
 /// Properties used:
-/// - `bitrate`: target bitrate in kbps
-fn apply_qsv_vp9(encoder: &gst::Element, level: u8, scale: f64) {
-    let idx = (level - 1) as usize;
-    encoder.set_property("bitrate", scale_bitrate_u32(VP9_BITRATES_KBPS[idx], scale));
+/// - `rate-control`: ICQ (intelligent constant quality)
+/// - `icq-quality`: quality level (lower = better quality)
+fn apply_qsv_vp9(encoder: &gst::Element, level: u8) {
+    let icq_quality = match level {
+        1 => 38u32,
+        2 => 32,
+        3 => 26,
+        4 => 22,
+        _ => 16,
+    };
+
+    if encoder.find_property("rate-control").is_some() {
+        encoder.set_property_from_str("rate-control", "icq");
+    }
+    try_set_u32_clamped(encoder, "icq-quality", icq_quality);
 }
 
 /// VA-API VP9 (vavp9enc / vaapivp9enc) — Linux
 ///
+/// Quality-based: `rate-control=cqp` + `qp`.
+///
 /// Properties used:
-/// - `bitrate`: target bitrate in kbps
-fn apply_vaapi_vp9(encoder: &gst::Element, level: u8, scale: f64) {
-    let idx = (level - 1) as usize;
-    encoder.set_property("bitrate", scale_bitrate_u32(VP9_BITRATES_KBPS[idx], scale));
+/// - `rate-control`: CQP
+/// - `qp`: quantization parameter
+fn apply_vaapi_vp9(encoder: &gst::Element, level: u8) {
+    let qp = match level {
+        1 => 180u32,
+        2 => 150,
+        3 => 128,
+        4 => 100,
+        _ => 70,
+    };
+
+    if encoder.find_property("rate-control").is_some() {
+        encoder.set_property_from_str("rate-control", "cqp");
+    }
+    try_set_u32_clamped(encoder, "qp", qp);
 }
 
-/// Software VP9 via libvpx (vp9enc)
+/// Software VP9 via libvpx (vp9enc) — 2 sliders
+///
+/// Quality: CQ mode (`end-usage=cq`) + `cq-level` with generous bitrate ceiling.
+/// Effort: `cpu-used`, `threads`, `row-mt`, `static-threshold`.
 ///
 /// Properties used:
 /// - `deadline`: 1 = realtime (always)
-/// - `cpu-used`: 0–8 (higher = faster; VP9 max is 8)
+/// - `end-usage`: CQ (constrained quality)
+/// - `cq-level`: quality level (lower = better quality)
+/// - `target-bitrate`: generous ceiling for CQ mode (prevents runaway)
+/// - `cpu-used`: 0–8 (higher = faster)
 /// - `threads`: thread count
 /// - `row-mt`: row-based multi-threading
-/// - `target-bitrate`: bits per second
-/// - `keyframe-max-dist`: keyframe interval
-/// - `end-usage`: rate control (CBR for low latency)
-/// - `buffer-size`, `buffer-initial-size`, `buffer-optimal-size`: latency
 /// - `static-threshold`: skip encoding unchanged blocks
-fn apply_software_vp9(encoder: &gst::Element, level: u8, keyframe_interval: u32, scale: f64) {
+/// - `keyframe-max-dist`: keyframe interval
+fn apply_software_vp9(encoder: &gst::Element, level: u8, effort_level: u8, keyframe_interval: u32) {
     let num_cpus = std::thread::available_parallelism()
         .map(|p| p.get() as i32)
         .unwrap_or(4)
         .min(16);
 
-    let idx = (level - 1) as usize;
-    let (cpu_used, threads, static_threshold, row_mt) = match level {
-        1 => (8i32, num_cpus.min(2), 200i32, false),
-        2 => (8, num_cpus.min(4), 150, true),
-        3 => (7, (num_cpus / 2).max(2), 100, true),
-        4 => (6, num_cpus, 50, true),
-        _ => (4, num_cpus, 0, true),
+    let cq_level = match level {
+        1 => 42i32,
+        2 => 36,
+        3 => 31,
+        4 => 26,
+        _ => 20,
     };
-    let bitrate_bps = (VP9_BITRATES_KBPS[idx] as i32) * 1000;
+
+    let (cpu_used, threads, row_mt, static_threshold) = match effort_level {
+        1 => (8i32, num_cpus.min(2), false, 200i32),
+        2 => (8, num_cpus.min(4), true, 150),
+        3 => (7, (num_cpus / 2).max(2), true, 100),
+        4 => (6, num_cpus, true, 50),
+        _ => (4, num_cpus, true, 0),
+    };
 
     encoder.set_property_from_str("deadline", "1");
+    encoder.set_property_from_str("end-usage", "cq");
+    encoder.set_property("cq-level", cq_level);
+    // Generous ceiling for CQ mode to prevent runaway on complex scenes
+    encoder.set_property("target-bitrate", 50_000_000i32);
     encoder.set_property("cpu-used", cpu_used);
     encoder.set_property("threads", threads);
     encoder.set_property("row-mt", row_mt);
-    encoder.set_property("target-bitrate", scale_bitrate_i32(bitrate_bps, scale));
-    encoder.set_property_from_str("end-usage", "cbr");
-    encoder.set_property("buffer-size", 500i32);
-    encoder.set_property("buffer-initial-size", 300i32);
-    encoder.set_property("buffer-optimal-size", 400i32);
     encoder.set_property("static-threshold", static_threshold);
 
     if keyframe_interval > 0 {
@@ -488,57 +450,87 @@ fn apply_software_vp9(encoder: &gst::Element, level: u8, keyframe_interval: u32,
 
 /// Intel QuickSync VP8 (qsvvp8enc)
 ///
+/// Bitrate fallback — rare/nonexistent encoder, no CQ mode available.
+///
 /// Properties used:
 /// - `bitrate`: target bitrate in kbps
-fn apply_qsv_vp8(encoder: &gst::Element, level: u8, scale: f64) {
-    let idx = (level - 1) as usize;
-    encoder.set_property("bitrate", scale_bitrate_u32(VP8_BITRATES_KBPS[idx], scale));
+fn apply_qsv_vp8(encoder: &gst::Element, level: u8) {
+    let bitrate = match level {
+        1 => 2_500u32,
+        2 => 3_500,
+        3 => 5_000,
+        4 => 6_500,
+        _ => 8_000,
+    };
+
+    encoder.set_property("bitrate", bitrate);
 }
 
 /// VA-API VP8 (vavp8enc / vaapivp8enc) — Linux
 ///
+/// Quality-based: `rate-control=cqp` + `qp`.
+///
 /// Properties used:
-/// - `bitrate`: target bitrate in kbps
-fn apply_vaapi_vp8(encoder: &gst::Element, level: u8, scale: f64) {
-    let idx = (level - 1) as usize;
-    encoder.set_property("bitrate", scale_bitrate_u32(VP8_BITRATES_KBPS[idx], scale));
+/// - `rate-control`: CQP
+/// - `qp`: quantization parameter
+fn apply_vaapi_vp8(encoder: &gst::Element, level: u8) {
+    let qp = match level {
+        1 => 180u32,
+        2 => 150,
+        3 => 128,
+        4 => 100,
+        _ => 70,
+    };
+
+    if encoder.find_property("rate-control").is_some() {
+        encoder.set_property_from_str("rate-control", "cqp");
+    }
+    try_set_u32_clamped(encoder, "qp", qp);
 }
 
-/// Software VP8 via libvpx (vp8enc)
+/// Software VP8 via libvpx (vp8enc) — 2 sliders
+///
+/// Quality: CQ mode (`end-usage=cq`) + `cq-level` with generous bitrate ceiling.
+/// Effort: `cpu-used`, `threads`, `static-threshold`.
 ///
 /// Properties used:
 /// - `deadline`: 1 = realtime (always)
+/// - `end-usage`: CQ (constrained quality)
+/// - `cq-level`: quality level (lower = better quality)
+/// - `target-bitrate`: generous ceiling for CQ mode (prevents runaway)
 /// - `cpu-used`: 0–16 (higher = faster)
 /// - `threads`: thread count (max 16 for libvpx)
-/// - `target-bitrate`: bits per second
-/// - `keyframe-max-dist`: keyframe interval
-/// - `end-usage`: rate control (CBR for low latency)
-/// - `buffer-size`, `buffer-initial-size`, `buffer-optimal-size`: latency
 /// - `static-threshold`: skip encoding unchanged blocks
-fn apply_software_vp8(encoder: &gst::Element, level: u8, keyframe_interval: u32, scale: f64) {
+/// - `keyframe-max-dist`: keyframe interval
+fn apply_software_vp8(encoder: &gst::Element, level: u8, effort_level: u8, keyframe_interval: u32) {
     let num_cpus = std::thread::available_parallelism()
         .map(|p| p.get() as i32)
         .unwrap_or(4)
         .min(16);
 
-    let idx = (level - 1) as usize;
-    let (cpu_used, threads, static_threshold) = match level {
+    let cq_level = match level {
+        1 => 42i32,
+        2 => 36,
+        3 => 31,
+        4 => 26,
+        _ => 20,
+    };
+
+    let (cpu_used, threads, static_threshold) = match effort_level {
         1 => (16i32, num_cpus.min(2), 200i32),
         2 => (14, num_cpus.min(4), 150),
         3 => (12, (num_cpus / 2).max(2), 100),
         4 => (8, num_cpus, 50),
         _ => (4, num_cpus, 0),
     };
-    let bitrate_bps = (VP8_BITRATES_KBPS[idx] as i32) * 1000;
 
     encoder.set_property_from_str("deadline", "1");
+    encoder.set_property_from_str("end-usage", "cq");
+    encoder.set_property("cq-level", cq_level);
+    // Generous ceiling for CQ mode to prevent runaway on complex scenes
+    encoder.set_property("target-bitrate", 50_000_000i32);
     encoder.set_property("cpu-used", cpu_used);
     encoder.set_property("threads", threads);
-    encoder.set_property("target-bitrate", scale_bitrate_i32(bitrate_bps, scale));
-    encoder.set_property_from_str("end-usage", "cbr");
-    encoder.set_property("buffer-size", 500i32);
-    encoder.set_property("buffer-initial-size", 300i32);
-    encoder.set_property("buffer-optimal-size", 400i32);
     encoder.set_property("static-threshold", static_threshold);
 
     if keyframe_interval > 0 {
@@ -585,44 +577,38 @@ fn apply_software_ffv1(encoder: &gst::Element, level: u8) {
 
 /// Windows Media Foundation H264 (mfh264enc)
 ///
-/// Most properties are "conditionally available" — their presence depends on
-/// the underlying MFT (e.g., NVIDIA MF vs Intel MF vs software MF). We guard
-/// each with `find_property()` to avoid panics on hardware that doesn't expose them.
+/// Quality-based: `rc-mode=qvbr` + `qp` with bitrate fallback if QVBR
+/// is unavailable on the underlying MFT.
 ///
 /// Properties used (when available):
-/// - `bitrate`: target bitrate in kbps (guint, always available)
+/// - `rc-mode`: QVBR (quality variable bitrate) — falls back to CBR if unavailable
+/// - `qp`: target quantization parameter
 /// - `quality-vs-speed`: 0 (quality) to 100 (speed) (guint)
 /// - `low-latency`: enable low-latency mode (gboolean)
-/// - `bframes`: number of B-frames (guint, 0 for low-latency; not all MFTs expose this)
+/// - `bframes`: number of B-frames (guint, 0 for low-latency)
 /// - `ref`: number of reference frames (guint)
-/// - `rc-mode`: rate control mode (enum, CBR for predictable output)
 /// - `gop-size`: keyframe interval (gint)
-fn apply_mf_h264(encoder: &gst::Element, level: u8, keyframe_interval: u32, scale: f64) {
-    let idx = (level - 1) as usize;
-    let (quality_vs_speed, low_latency, bframes, ref_frames) = match level {
-        1 => (100u32, true, 0u32, 1u32),
-        2 => (75, true, 0, 1),
-        3 => (50, true, 0, 2),
-        4 => (25, false, 2, 2),
-        _ => (0, false, 3, 4),
+fn apply_mf_h264(encoder: &gst::Element, level: u8, keyframe_interval: u32) {
+    let (qp, quality_vs_speed, low_latency, bframes, ref_frames) = match level {
+        1 => (32u32, 100u32, true, 0u32, 1u32),
+        2 => (28, 75, true, 0, 1),
+        3 => (24, 50, true, 0, 2),
+        4 => (20, 25, false, 2, 2),
+        _ => (16, 0, false, 3, 4),
     };
 
-    // bitrate is always available
-    encoder.set_property("bitrate", scale_bitrate_u32(H264_BITRATES_KBPS[idx], scale));
+    // Try QVBR first; fall back to CBR with a reasonable bitrate if unavailable
+    if encoder.find_property("rc-mode").is_some() {
+        encoder.set_property_from_str("rc-mode", "qvbr");
+    }
+    try_set_u32_clamped(encoder, "qp", qp);
 
-    // Conditionally-available properties — guard each to avoid panics
-    // on MFTs that don't expose them (e.g., NVIDIA MF lacks bframes).
-    // Use try_set_u32_clamped for u32 props since some MFTs accept the
-    // property name but restrict the range (e.g., bframes max=2).
     try_set_u32_clamped(encoder, "quality-vs-speed", quality_vs_speed);
     if encoder.find_property("low-latency").is_some() {
         encoder.set_property("low-latency", low_latency);
     }
     try_set_u32_clamped(encoder, "bframes", bframes);
     try_set_u32_clamped(encoder, "ref", ref_frames);
-    if encoder.find_property("rc-mode").is_some() {
-        encoder.set_property_from_str("rc-mode", "cbr");
-    }
     if keyframe_interval > 0 {
         if encoder.find_property("gop-size").is_some() {
             encoder.set_property("gop-size", keyframe_interval as i32);
@@ -632,14 +618,15 @@ fn apply_mf_h264(encoder: &gst::Element, level: u8, keyframe_interval: u32, scal
 
 /// Apple VideoToolbox H264 (vtenc_h264)
 ///
+/// Quality-based: `bitrate=0` (auto) + `quality` slider.
+///
 /// Properties used:
-/// - `bitrate`: target bitrate in kbps (guint, 0 = auto)
+/// - `bitrate`: 0 = auto (let quality parameter drive)
 /// - `quality`: compression quality 0.0–1.0 (gdouble)
 /// - `realtime`: enable realtime encoding (gboolean)
 /// - `allow-frame-reordering`: enable B-frames (gboolean, levels 4–5 only)
 /// - `max-keyframe-interval`: keyframe interval (gint, 0 = auto)
-fn apply_vtb_h264(encoder: &gst::Element, level: u8, keyframe_interval: u32, scale: f64) {
-    let idx = (level - 1) as usize;
+fn apply_vtb_h264(encoder: &gst::Element, level: u8, keyframe_interval: u32) {
     let (quality, realtime, allow_reorder) = match level {
         1 => (0.25f64, true, false),
         2 => (0.40, true, false),
@@ -648,7 +635,7 @@ fn apply_vtb_h264(encoder: &gst::Element, level: u8, keyframe_interval: u32, sca
         _ => (0.85, false, true),
     };
 
-    encoder.set_property("bitrate", scale_bitrate_u32(H264_BITRATES_KBPS[idx], scale));
+    encoder.set_property("bitrate", 0u32);
     encoder.set_property("quality", quality);
     encoder.set_property("realtime", realtime);
     encoder.set_property("allow-frame-reordering", allow_reorder);

@@ -23,7 +23,11 @@
       "WebFetch(domain:archives.ismir.net)",
       "Bash(timeout 8 gst-launch-1.0:*)",
       "Bash(timeout 5 gst-launch-1.0:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:gitlab.freedesktop.org)",
+      "Bash(gst-launch-1.0:*)",
+      "Bash(gst-device-monitor-1.0:*)"
     ]
   }
 }

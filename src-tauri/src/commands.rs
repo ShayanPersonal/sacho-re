@@ -479,10 +479,10 @@ pub fn update_config(
         let preroll = current.pre_roll_secs != new_config.pre_roll_secs
             || current.encode_during_preroll != new_config.encode_during_preroll;
 
-        // Preset-only change: device configs differ only by preset_level/custom_bitrate (no pipeline restart needed)
+        // Preset-only change: device configs differ only by preset_level/effort_level (no pipeline restart needed)
         let preset_only = !video && current.video_device_configs.iter().any(|(k, v)| {
             new_config.video_device_configs.get(k).map_or(false, |nv| {
-                v.preset_level != nv.preset_level || v.custom_bitrate_kbps != nv.custom_bitrate_kbps
+                v.preset_level != nv.preset_level || v.effort_level != nv.effort_level
             })
         });
 
@@ -526,7 +526,7 @@ pub fn update_config(
         let video_mgr = monitor.lock().video_manager();
         let mut mgr = video_mgr.lock();
         for (device_id, dev_config) in &new_config.video_device_configs {
-            mgr.update_preset_for_device(device_id, dev_config.preset_level, dev_config.custom_bitrate_kbps);
+            mgr.update_preset_for_device(device_id, dev_config.preset_level, dev_config.effort_level);
         }
     }
 
@@ -1358,52 +1358,311 @@ pub fn get_encoder_availability() -> EncoderAvailability {
 /// Return the scaled bitrate (kbps) for all 5 preset levels in one call.
 /// The frontend caches this array and indexes into it on slider movement
 /// for instant feedback (no per-level IPC round-trip).
-///
-/// Returns `Vec` of 5 `Option<u32>` — `None` for FFV1 / unsupported combos.
-#[tauri::command]
-pub fn get_preset_bitrates(
-    codec: crate::encoding::VideoCodec,
-    hw_type: crate::encoding::HardwareEncoderType,
-    source_width: u32,
-    source_height: u32,
-    source_fps: f64,
-    target_width: u32,
-    target_height: u32,
-    target_fps: f64,
-) -> Vec<Option<u32>> {
-    use crate::config::{DEFAULT_TARGET_HEIGHT, DEFAULT_TARGET_FPS, DEFAULT_TARGET_FPS_TOLERANCE};
+/// Result of an encoder preset test.
+#[derive(Debug, Clone, Serialize)]
+pub struct EncoderTestResult {
+    pub success: bool,
+    pub frames_sent: u64,
+    pub frames_dropped: u64,
+    pub message: String,
+}
 
-    // Resolve 0-sentinels using the same logic as VideoDeviceConfig::resolved()
-    let resolved_height = if target_height == 0 {
-        if source_height <= DEFAULT_TARGET_HEIGHT { source_height } else { DEFAULT_TARGET_HEIGHT }
-    } else {
-        target_height
+/// Test the current encoder preset for a specific video device.
+///
+/// Runs a 3-second encoding test with the device's current preset settings
+/// and returns whether the encoder can keep up in real-time.
+///
+/// This command temporarily stops video capture pipelines to gain exclusive
+/// access to the camera device, then restarts them when done.
+#[tauri::command]
+pub async fn test_encoder_preset(
+    app: tauri::AppHandle,
+    device_id: String,
+    config: State<'_, RwLock<Config>>,
+    recording_state: State<'_, RwLock<RecordingState>>,
+    monitor: State<'_, Arc<Mutex<MidiMonitor>>>,
+    device_manager: State<'_, RwLock<DeviceManager>>,
+) -> Result<EncoderTestResult, String> {
+    // 1. Check we're not recording
+    {
+        let state = recording_state.read();
+        if state.status == RecordingStatus::Recording {
+            return Err("Cannot test while recording".to_string());
+        }
+        if state.status == RecordingStatus::Stopping {
+            return Err("Recording is stopping, please wait".to_string());
+        }
+    }
+
+    // 2. Read per-device encoding config
+    let (device_name, dev_config) = {
+        let cfg = config.read();
+        let devices = device_manager.read();
+
+        let device = devices.video_devices.iter()
+            .find(|d| d.id == device_id)
+            .ok_or_else(|| format!("Device {} not found", device_id))?;
+
+        let name = device.name.clone();
+
+        let dev_cfg = cfg.video_device_configs.get(&device_id)
+            .cloned()
+            .or_else(|| device.default_config())
+            .ok_or_else(|| format!("No config available for device {}", device_id))?;
+
+        (name, dev_cfg)
     };
-    let resolved_width = if target_width == 0 {
-        if source_height <= DEFAULT_TARGET_HEIGHT {
-            source_width
-        } else {
-            let ratio = source_width as f64 / source_height as f64;
-            let w = (DEFAULT_TARGET_HEIGHT as f64 * ratio).round() as u32;
-            if w % 2 == 0 { w } else { w - 1 }
+
+    let target_codec = if dev_config.passthrough {
+        None
+    } else {
+        Some(dev_config.encoding_codec.unwrap_or_else(|| {
+            crate::encoding::get_recommended_codec()
+        }))
+    };
+
+    // 3. Set status to initializing
+    {
+        let mut state = recording_state.write();
+        state.status = RecordingStatus::Initializing;
+    }
+    let _ = app.emit("recording-state-changed", "initializing");
+    crate::tray::update_tray_state(&app, crate::tray::TrayState::Initializing);
+
+    // 4. Stop video pipelines
+    let video_manager = {
+        let mon = monitor.lock();
+        mon.video_manager()
+    };
+
+    let restart_info = {
+        let cfg = config.read();
+        let devices = device_manager.read();
+        let dev_configs = &cfg.video_device_configs;
+
+        let info: Vec<(String, String, crate::config::VideoDeviceConfig)> = cfg.selected_video_devices
+            .iter()
+            .filter_map(|dev_id| {
+                let device = devices.video_devices.iter().find(|d| &d.id == dev_id)?;
+                let dev_cfg = if let Some(c) = dev_configs.get(dev_id) {
+                    if device.capabilities.contains_key(&c.source_format) {
+                        c.clone()
+                    } else {
+                        device.default_config()?
+                    }
+                } else {
+                    device.default_config()?
+                };
+                Some((dev_id.clone(), device.name.clone(), dev_cfg))
+            })
+            .collect();
+
+        let pre_roll = cfg.pre_roll_secs.min(5);
+
+        (info, pre_roll)
+    };
+
+    video_manager.lock().stop();
+
+    // 5. Run the test
+    let result = run_pipeline_test(
+        &device_id,
+        &device_name,
+        &dev_config,
+        target_codec,
+    ).await;
+
+    // 6. Restart video pipelines
+    {
+        let (ref devices_info, pre_roll) = restart_info;
+        let mut mgr = video_manager.lock();
+        mgr.set_preroll_duration(pre_roll);
+        if !devices_info.is_empty() {
+            if let Err(e) = mgr.start(devices_info) {
+                println!("[EncoderTest] Warning: Failed to restart video pipelines: {}", e);
+            }
+        }
+    }
+
+    // 7. Set status back to idle
+    {
+        let mut state = recording_state.write();
+        state.status = RecordingStatus::Idle;
+    }
+    let _ = app.emit("recording-state-changed", "idle");
+    crate::tray::update_tray_state(&app, crate::tray::TrayState::Idle);
+
+    result
+}
+
+/// Unified pipeline test. Creates a capture pipeline (passthrough or raw+encoder)
+/// and measures framerate and dropped frames over 3 seconds.
+async fn run_pipeline_test(
+    device_id: &str,
+    device_name: &str,
+    dev_config: &crate::config::VideoDeviceConfig,
+    target_codec: Option<crate::encoding::VideoCodec>,
+) -> Result<EncoderTestResult, String> {
+    use crate::recording::video::VideoCapturePipeline;
+    use std::time::{Duration, Instant};
+
+    let device_index = device_id
+        .strip_prefix("webcam-")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+
+    let is_encoding = target_codec.is_some();
+    let mode_label = if is_encoding { "Encode" } else { "Passthrough" };
+
+    println!(
+        "[Test:{}] Creating pipeline for {} ({}) — {} {}x{} @ {:.1}fps",
+        mode_label, device_name, device_id, dev_config.source_format,
+        dev_config.source_width, dev_config.source_height, dev_config.source_fps
+    );
+
+    // Create the appropriate pipeline
+    let mut capture = if let Some(codec) = target_codec {
+        VideoCapturePipeline::new_webcam_raw(
+            device_index, device_name, device_id,
+            &dev_config.source_format,
+            dev_config.source_width, dev_config.source_height, dev_config.source_fps,
+            2,
+            Some(codec), dev_config.encoder_type, dev_config.preset_level,
+            dev_config.video_bit_depth, false,
+        ).map_err(|e| format!("Failed to create test pipeline: {}", e))?
+    } else {
+        VideoCapturePipeline::new_webcam(
+            device_index, device_name, device_id,
+            &dev_config.source_format,
+            dev_config.source_width, dev_config.source_height, dev_config.source_fps,
+            2,
+        ).map_err(|e| format!("Failed to create test pipeline: {}", e))?
+    };
+
+    capture.start().map_err(|e| format!("Failed to start test capture: {}", e))?;
+
+    // Wait for frames to arrive
+    println!("[Test:{}] Waiting for video frames...", mode_label);
+    let wait_start = Instant::now();
+    loop {
+        if wait_start.elapsed() > Duration::from_secs(5) {
+            let _ = capture.stop();
+            return Err("Timeout waiting for video frames from camera".to_string());
+        }
+        if capture.preroll_duration() > Duration::from_millis(100) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // Drain accumulated preroll frames so we only count new arrivals
+    let _ = capture.drain_preroll_frames();
+    println!("[Test:{}] Frames arriving, starting 4s test", mode_label);
+
+    let test_duration = Duration::from_secs(4);
+    let poll_interval = Duration::from_millis(10);
+
+    // Create encoder if needed
+    let encoder = if let Some(codec) = target_codec {
+        use crate::encoding::{AsyncVideoEncoder, EncoderConfig};
+        let temp_file = std::env::temp_dir().join("sacho_encoder_test.mkv");
+        let encoder_config = EncoderConfig {
+            keyframe_interval: (capture.fps * 2.0).round() as u32,
+            target_codec: codec,
+            preset_level: dev_config.preset_level,
+            effort_level: dev_config.effort_level,
+            video_bit_depth: dev_config.video_bit_depth,
+            target_width: None,
+            target_height: None,
+            target_fps: None,
+        };
+        match AsyncVideoEncoder::new(
+            temp_file.clone(), capture.width, capture.height, capture.fps,
+            encoder_config, (capture.fps * 2.0) as usize,
+        ) {
+            Ok(enc) => Some((enc, temp_file)),
+            Err(e) => {
+                let _ = capture.stop();
+                let _ = std::fs::remove_file(&temp_file);
+                return Err(format!("Failed to create encoder: {}", e));
+            }
         }
     } else {
-        target_width
-    };
-    let resolved_fps = if target_fps == 0.0 {
-        if source_fps <= DEFAULT_TARGET_FPS_TOLERANCE { source_fps } else { DEFAULT_TARGET_FPS }
-    } else {
-        target_fps
+        None
     };
 
-    (1..=5)
-        .map(|level| {
-            crate::encoding::scaled_bitrate_kbps(
-                codec, hw_type, level,
-                resolved_width, resolved_height, resolved_fps,
-            )
-        })
-        .collect()
+    let test_start = Instant::now();
+    let mut total_sent = 0u64;
+    let mut total_dropped = 0u64;
+
+    while test_start.elapsed() < test_duration {
+        let frames = capture.drain_preroll_frames();
+        if let Some((ref enc, _)) = encoder {
+            use crate::encoding::RawVideoFrame;
+            for frame in frames {
+                let raw_frame = RawVideoFrame {
+                    data: frame.data,
+                    pts: frame.pts,
+                    duration: frame.duration,
+                    width: capture.width,
+                    height: capture.height,
+                    format: "NV12".to_string(),
+                    capture_time: frame.wall_time,
+                };
+                match enc.try_send_frame(raw_frame) {
+                    Ok(true) => total_sent += 1,
+                    Ok(false) => total_dropped += 1,
+                    Err(_) => break,
+                }
+            }
+        } else {
+            total_sent += frames.len() as u64;
+        }
+        tokio::time::sleep(poll_interval).await;
+    }
+
+    let elapsed = test_start.elapsed().as_secs_f64();
+    let actual_fps = total_sent as f64 / elapsed;
+
+    // Cleanup
+    if let Some((enc, temp_file)) = encoder {
+        let _ = enc.finish();
+        let _ = std::fs::remove_file(&temp_file);
+    }
+    let _ = capture.stop();
+
+    let expected_fps = dev_config.source_fps;
+    let fps_ok = actual_fps / expected_fps >= 0.8;
+    let success = fps_ok && total_dropped <= 1;
+
+    let message = if success {
+        format!(
+            "OK — {:.0} fps, {} frames, {} dropped ({}x{})",
+            actual_fps, total_sent, total_dropped,
+            capture.width, capture.height
+        )
+    } else if total_dropped > 1 {
+        format!(
+            "Dropped {} of {} frames — {:.0} fps ({}x{})",
+            total_dropped, total_sent + total_dropped, actual_fps,
+            capture.width, capture.height
+        )
+    } else {
+        format!(
+            "Low framerate — {:.0} fps, expected {:.0} ({}x{}). This can sometimes happen if a camera reports incorrect framerates.",
+            actual_fps, expected_fps,
+            capture.width, capture.height
+        )
+    };
+
+    println!("[Test:{}] Result: {}", mode_label, message);
+
+    Ok(EncoderTestResult {
+        success,
+        frames_sent: total_sent,
+        frames_dropped: total_dropped,
+        message,
+    })
 }
 
 // ============================================================================
@@ -1646,7 +1905,7 @@ async fn run_auto_select_test(
             keyframe_interval: (capture.fps * 2.0).round() as u32,
             target_codec,
             preset_level: level,
-            custom_bitrate_kbps: None,
+            effort_level: dev_config.effort_level,
             video_bit_depth: dev_config.video_bit_depth,
             target_width: None,
             target_height: None,

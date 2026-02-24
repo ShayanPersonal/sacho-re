@@ -76,8 +76,8 @@ export interface VideoDeviceConfig {
   encoder_type: HardwareEncoderType | null;
   /** Quality preset 1-5 */
   preset_level: number;
-  /** Custom bitrate override in kbps (null = use preset default) */
-  custom_bitrate_kbps: number | null;
+  /** Compute effort level 1-5 (only affects software encoders) */
+  effort_level: number;
   /** Encoding bit depth for lossless codecs like FFV1. null = 8-bit default. */
   video_bit_depth: number | null;
   target_width: number;
@@ -288,7 +288,7 @@ export function computeDefaultConfig(
     encoding_codec: null,
     encoder_type: null,
     preset_level: 3,
-    custom_bitrate_kbps: null,
+    effort_level: 3,
     video_bit_depth: null,
     target_width: 0, // Match Source
     target_height: 0, // Match Source
@@ -547,28 +547,20 @@ export interface AutoSelectProgress {
   message: string;
 }
 
-/** Get scaled bitrates (kbps) for all 5 preset levels in one call.
- *  Returns array of 5 values (null for FFV1/unsupported). */
-export async function getPresetBitrates(
-  codec: VideoCodec,
-  hwType: HardwareEncoderType,
-  sourceWidth: number,
-  sourceHeight: number,
-  sourceFps: number,
-  targetWidth: number,
-  targetHeight: number,
-  targetFps: number,
-): Promise<(number | null)[]> {
-  return invoke("get_preset_bitrates", {
-    codec,
-    hwType,
-    sourceWidth,
-    sourceHeight,
-    sourceFps,
-    targetWidth,
-    targetHeight,
-    targetFps,
-  });
+/** Result of an encoder preset test */
+export interface EncoderTestResult {
+  success: boolean;
+  frames_sent: number;
+  frames_dropped: number;
+  message: string;
+}
+
+/** Test the current encoder preset for a specific video device.
+ *  Runs a ~3 second encoding test and returns whether the encoder can keep up. */
+export async function testEncoderPreset(
+  deviceId: string,
+): Promise<EncoderTestResult> {
+  return invoke("test_encoder_preset", { deviceId });
 }
 
 /** Run encoder auto-selection for a specific device.

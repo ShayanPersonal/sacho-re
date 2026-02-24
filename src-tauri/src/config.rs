@@ -252,10 +252,10 @@ pub struct VideoDeviceConfig {
     /// Quality preset 1-5. Default: 3.
     #[serde(default = "default_preset_level")]
     pub preset_level: u8,
-    /// Custom bitrate override (kbps). None = use preset default.
-    /// When set, the encoder uses this bitrate instead of the preset's suggestion.
-    #[serde(default)]
-    pub custom_bitrate_kbps: Option<u32>,
+    /// Compute effort level 1-5. Default: 3.
+    /// Only affects software encoders (SVT-AV1, libvpx VP9/VP8).
+    #[serde(default = "default_preset_level")]
+    pub effort_level: u8,
     /// Encoding bit depth for lossless codecs (FFV1). None = 8-bit default.
     /// Only meaningful when encoding_codec = FFV1 and passthrough = false.
     #[serde(default)]
@@ -280,7 +280,7 @@ impl PartialEq for VideoDeviceConfig {
             && self.encoding_codec == other.encoding_codec
             && self.encoder_type == other.encoder_type
             && self.preset_level == other.preset_level
-            && self.custom_bitrate_kbps == other.custom_bitrate_kbps
+            && self.effort_level == other.effort_level
             && self.video_bit_depth == other.video_bit_depth
             && self.target_width == other.target_width
             && self.target_height == other.target_height
@@ -463,7 +463,7 @@ impl Config {
             }
         }
 
-        // Validate per-device preset levels
+        // Validate per-device preset levels and effort levels
         for (key, dev_config) in self.video_device_configs.iter_mut() {
             if dev_config.preset_level < 1 || dev_config.preset_level > 5 {
                 let old = dev_config.preset_level;
@@ -471,6 +471,14 @@ impl Config {
                 clamped.push(format!(
                     "video_device_configs[{}].preset_level: {} -> {}",
                     key, old, dev_config.preset_level
+                ));
+            }
+            if dev_config.effort_level < 1 || dev_config.effort_level > 5 {
+                let old = dev_config.effort_level;
+                dev_config.effort_level = dev_config.effort_level.clamp(1, 5);
+                clamped.push(format!(
+                    "video_device_configs[{}].effort_level: {} -> {}",
+                    key, old, dev_config.effort_level
                 ));
             }
         }
