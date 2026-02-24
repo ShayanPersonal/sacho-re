@@ -60,8 +60,7 @@ export interface VideoDevice {
   capabilities: Record<string, CodecCapability[]>;
 }
 
-/** Per-device video source configuration.
- * target_width/height = 0 and target_fps = 0 means "Match Source" */
+/** Per-device video source configuration. */
 export interface VideoDeviceConfig {
   /** Source format string (e.g. "YUY2", "NV12", "MJPEG", "H264") */
   source_format: string;
@@ -181,17 +180,17 @@ export function getTargetResolutions(
   return results;
 }
 
-/** Generate common target framerates that don't exceed the source fps.
- * Uses a small tolerance (0.5) to include NTSC rates like 29.97 for a "30" threshold. */
+/** Generate target framerates: source fps first (default), then common values below source.
+ * Deduplicates common values within 0.5 of the source fps to avoid near-duplicates. */
 export function getTargetFramerates(sourceFps: number): number[] {
   const common = [120, 60, 30, 24, 15];
-  return common.filter((f) => f <= sourceFps + 0.5);
+  const filtered = common.filter((f) => f <= sourceFps + 0.5 && Math.abs(f - sourceFps) > 0.5);
+  return [sourceFps, ...filtered];
 }
 
 /** Format an fps value for display.
  * Integer rates show as "30", fractional rates show as "29.97" */
 export function formatFps(fps: number): string {
-  if (fps === 0) return "Match Source";
   const rounded = Math.round(fps);
   if (Math.abs(fps - rounded) < 0.01) return `${rounded}`;
   return fps.toFixed(2);
@@ -290,9 +289,9 @@ export function computeDefaultConfig(
     preset_level: 3,
     effort_level: 3,
     video_bit_depth: null,
-    target_width: 0, // Match Source
-    target_height: 0, // Match Source
-    target_fps: 0, // Match Source
+    target_width: width,
+    target_height: height,
+    target_fps: fps,
   };
 }
 

@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import type { AudioDevice, MidiDevice, VideoDevice, VideoDeviceConfig, VideoFpsWarning, AudioTriggerLevel, Config, DisconnectedDeviceInfo } from '$lib/api';
 import { refreshAllDevices, getAudioDevices, getMidiDevices, getVideoDevices, getConfig, updateConfig, updateAudioTriggerThresholds, getDisconnectedDevices, restartDevicePipelines } from '$lib/api';
 import { settings } from './settings';
+import { recordingState, refreshRecordingState } from './recording';
 import { playDisconnectWarningSound } from '$lib/sounds';
 
 // Save status for device changes: 'idle' | 'saving' | 'saved' | 'error'
@@ -315,15 +316,18 @@ export async function saveDeviceSelection() {
   };
   
   try {
-    // updateConfig is synchronous on the backend - it waits for monitor.start()
-    // to complete before returning, so when this resolves the backend is ready
+    // Optimistically signal initializing so RecordingIndicator disables during pipeline restart.
+    // The backend sets this too, but its synchronous Initializing→Idle cycle completes within
+    // the single invoke call, so the frontend event loop never observes the intermediate state.
+    recordingState.update(s => ({ ...s, status: 'initializing' }));
+
     await updateConfig(newConfig);
     config.set(newConfig);
     // Also update the settings store so RecordingIndicator reflects the changes
     settings.set(newConfig);
-    
+
     deviceSaveStatus.set('saved');
-    
+
     // Fade back to idle after 2 seconds
     deviceSaveTimeout = setTimeout(() => {
       deviceSaveStatus.set('idle');
@@ -332,6 +336,9 @@ export async function saveDeviceSelection() {
     console.error('Failed to save device selection:', error);
     deviceSaveStatus.set('error');
     throw error;
+  } finally {
+    // Sync recording state with backend (restores idle, or recording if update was rejected)
+    await refreshRecordingState();
   }
 }
 

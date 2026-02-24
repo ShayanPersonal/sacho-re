@@ -520,13 +520,14 @@ pub fn has_hardware_vp8_encoder() -> bool {
         && encoder_type.vp8_encoder_element().is_some()
 }
 
-/// Get the recommended default encoding codec
+/// Get the auto-selected default encoding codec
 ///
 /// Priority:
 /// 1. AV1 if hardware encoder is available
-/// 2. VP9 if hardware encoder is available
-/// 3. VP8 if hardware encoder is available
-/// 4. VP8 software (fallback - always available)
+/// 2. H.264 if hardware encoder is available
+/// 3. VP9 if hardware encoder is available
+/// 4. VP8 if hardware encoder is available
+/// 5. VP8 software (fallback - always available)
 pub fn get_recommended_codec() -> VideoCodec {
     if has_hardware_av1_encoder() {
         VideoCodec::Av1

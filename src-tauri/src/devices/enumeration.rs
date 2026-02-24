@@ -117,23 +117,26 @@ pub fn get_device_for_caps(
         }
     }
 
-    // Some capture cards advertise H.264 as video/x-raw with format=H264.
-    // If the standard caps didn't match, try the raw-format variant.
+    // Some capture cards advertise H.264 as video/x-raw with format=H264 or X264.
+    // Elgato cards use H264 at native resolution and X264 for scaled outputs.
+    // If the standard caps didn't match, try both raw-format variants.
     if caps_name == "video/x-h264" {
-        let raw_h264_filter = gst::Caps::builder("video/x-raw")
-            .field("format", "H264")
-            .field("width", width as i32)
-            .field("height", height as i32)
-            .field("framerate", target_fps)
-            .build();
+        for raw_fmt in &["H264", "X264"] {
+            let raw_h264_filter = gst::Caps::builder("video/x-raw")
+                .field("format", *raw_fmt)
+                .field("width", width as i32)
+                .field("height", height as i32)
+                .field("framerate", target_fps)
+                .build();
 
-        for gst_dev in devices {
-            if let Some(device_caps) = gst_dev.caps() {
-                let matched = device_caps.intersect_with_mode(&raw_h264_filter, gst::CapsIntersectMode::First);
-                if !matched.is_empty() {
-                    println!("[Video] Found H.264-as-raw caps via provider '{}': {}",
-                        gst_dev.device_class(), matched);
-                    return Some((matched, gst_dev.clone()));
+            for gst_dev in devices {
+                if let Some(device_caps) = gst_dev.caps() {
+                    let matched = device_caps.intersect_with_mode(&raw_h264_filter, gst::CapsIntersectMode::First);
+                    if !matched.is_empty() {
+                        println!("[Video] Found H.264-as-raw caps via provider '{}': {}",
+                            gst_dev.device_class(), matched);
+                        return Some((matched, gst_dev.clone()));
+                    }
                 }
             }
         }

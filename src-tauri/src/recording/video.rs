@@ -1525,31 +1525,10 @@ impl VideoCapturePipeline {
                             })
                             .unwrap_or(30.0);
 
-                        let negotiated_fps = self.fps;
                         println!(
                             "[Video]   Negotiated caps: {}x{} @ {:.2}fps (attempt {})",
                             self.width, self.height, self.fps, attempt
                         );
-
-                        // Measure actual frame delivery rate over 500ms.
-                        // Some sources (e.g. capture cards via ksvideosrc) advertise
-                        // framerate ranges and ignore the capsfilter constraint,
-                        // delivering at whatever rate their input provides.
-                        let count_before = self.frame_counter.load(Ordering::Relaxed);
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                        let count_after = self.frame_counter.load(Ordering::Relaxed);
-                        let measured_frames = count_after - count_before;
-                        if measured_frames > 0 {
-                            let measured_fps = measured_frames as f64 * 2.0;
-                            let ratio = measured_fps / negotiated_fps;
-                            if ratio > 1.25 || ratio < 0.75 {
-                                println!(
-                                    "[Video]   Actual framerate: {:.1}fps (caps said {:.1}fps) — using measured rate",
-                                    measured_fps, negotiated_fps
-                                );
-                                self.fps = measured_fps;
-                            }
-                        }
 
                         negotiated = true;
                         break;

@@ -26,9 +26,6 @@
         supportsPassthrough,
         getCodecInfo,
         formatDisplayName,
-        DEFAULT_TARGET_HEIGHT,
-        DEFAULT_TARGET_FPS,
-        DEFAULT_TARGET_FPS_TOLERANCE,
     } from "$lib/api";
     interface Props {
         device: VideoDevice;
@@ -53,14 +50,16 @@
             Object.keys(device.capabilities)[0] ??
             "",
     );
-    // 0 = "Match Source" sentinel
+    // Resolve legacy 0 sentinel ("Match Source") to source values for backward compat
     let selectedTargetWidth = $state<number>(
-        effectiveConfig?.target_width ?? 0,
+        effectiveConfig?.target_width || effectiveConfig?.source_width || 0,
     );
     let selectedTargetHeight = $state<number>(
-        effectiveConfig?.target_height ?? 0,
+        effectiveConfig?.target_height || effectiveConfig?.source_height || 0,
     );
-    let selectedTargetFps = $state<number>(effectiveConfig?.target_fps ?? 0);
+    let selectedTargetFps = $state<number>(
+        effectiveConfig?.target_fps || effectiveConfig?.source_fps || 0,
+    );
 
     // Encoding settings (per-device)
     let passthrough = $state<boolean>(effectiveConfig?.passthrough ?? true);
@@ -85,9 +84,28 @@
     // More encoding options revealer
     let showMoreEncoding = $state(false);
 
-    // Stream source help tooltip
+    // Help tooltips (only one open at a time, shared position style)
+    let showResolutionHelp = $state(false);
+    let showFpsHelp = $state(false);
     let showStreamSourceHelp = $state(false);
+    let showCodecHelp = $state(false);
+    let showEncoderHelp = $state(false);
     let tooltipStyle = $state("");
+
+    function positionTooltip(e: MouseEvent) {
+        const btn = e.currentTarget as HTMLElement;
+        const rect = btn.getBoundingClientRect();
+        const tooltipWidth = 240;
+        let left = rect.left + rect.width / 2 - tooltipWidth / 2;
+        left = Math.max(8, Math.min(left, window.innerWidth - tooltipWidth - 8));
+        let top = rect.bottom + 6;
+        if (top + 200 > window.innerHeight) {
+            top = rect.top - 6;
+            tooltipStyle = `left:${left}px;bottom:${window.innerHeight - top}px;`;
+        } else {
+            tooltipStyle = `left:${left}px;top:${top}px;`;
+        }
+    }
 
     // Encoder test state
     let testRunning = $state(false);
@@ -240,8 +258,15 @@
         }
     });
 
-    // Track the backend-recommended values for labeling
-    const recommendedCodec = $derived<VideoCodec | null>(
+    // "(Recommended)" label: only for AV1 or VP9 when they have hardware accel
+    const displayRecommendedCodec = $derived.by((): VideoCodec | null => {
+        if (!encoderAvailability) return null;
+        if (encoderAvailability.av1.has_hardware) return "av1";
+        if (encoderAvailability.vp9.has_hardware) return "vp9";
+        return null;
+    });
+    // "(Default)" label: the backend's auto-selected codec, only when it's not already "(Recommended)"
+    const autoSelectedCodec = $derived<VideoCodec | null>(
         encoderAvailability
             ? (encoderAvailability.recommended_codec as VideoCodec)
             : null,
@@ -308,45 +333,39 @@
         }
     });
 
-    // When source changes while "Match Source" is active, keep it as "Match Source"
-    // When source changes with a specific target, validate it still makes sense
+    // Keep target in sync: default to source values, clamp when source shrinks,
+    // and reset to source if current target isn't in the available options list
     $effect(() => {
         if (passthrough) {
-            selectedTargetWidth = 0;
-            selectedTargetHeight = 0;
-            selectedTargetFps = 0;
+            selectedTargetWidth = selectedWidth;
+            selectedTargetHeight = selectedHeight;
+            selectedTargetFps = selectedFps;
         }
-        if (isEncoding && selectedTargetWidth !== 0) {
+        if (isEncoding) {
             if (
                 selectedTargetWidth > selectedWidth ||
                 selectedTargetHeight > selectedHeight
             ) {
-                selectedTargetWidth = 0;
-                selectedTargetHeight = 0;
+                selectedTargetWidth = selectedWidth;
+                selectedTargetHeight = selectedHeight;
             }
-        }
-        if (isEncoding && selectedTargetFps !== 0) {
             if (selectedTargetFps > selectedFps + 0.5) {
-                selectedTargetFps = 0;
+                selectedTargetFps = selectedFps;
             }
-        }
-        if (
-            isEncoding &&
-            selectedTargetFps === 0 &&
-            selectedFps > DEFAULT_TARGET_FPS_TOLERANCE
-        ) {
-            selectedTargetFps = DEFAULT_TARGET_FPS;
-        }
-        if (
-            isEncoding &&
-            selectedTargetWidth === 0 &&
-            selectedHeight > DEFAULT_TARGET_HEIGHT
-        ) {
-            const ratio = selectedWidth / selectedHeight;
-            let w = Math.round(DEFAULT_TARGET_HEIGHT * ratio);
-            if (w % 2 !== 0) w -= 1;
-            selectedTargetWidth = w;
-            selectedTargetHeight = DEFAULT_TARGET_HEIGHT;
+            // Reset to source if target isn't in the available options
+            const resInList = targetResolutions.some(
+                (r) => r.width === selectedTargetWidth && r.height === selectedTargetHeight,
+            );
+            if (!resInList) {
+                selectedTargetWidth = selectedWidth;
+                selectedTargetHeight = selectedHeight;
+            }
+            const fpsInList = targetFramerates.some(
+                (f) => Math.abs(f - selectedTargetFps) < 0.01,
+            );
+            if (!fpsInList) {
+                selectedTargetFps = selectedFps;
+            }
         }
     });
 
@@ -357,22 +376,13 @@
     }
 
     function handleTargetResolutionChange(value: string) {
-        if (value === "match") {
-            selectedTargetWidth = 0;
-            selectedTargetHeight = 0;
-        } else {
-            const [w, h] = value.split("x").map(Number);
-            selectedTargetWidth = w;
-            selectedTargetHeight = h;
-        }
+        const [w, h] = value.split("x").map(Number);
+        selectedTargetWidth = w;
+        selectedTargetHeight = h;
     }
 
     function handleTargetFpsChange(value: string) {
-        if (value === "match") {
-            selectedTargetFps = 0;
-        } else {
-            selectedTargetFps = Number(value);
-        }
+        selectedTargetFps = Number(value);
     }
 
     let validationError = $state<string | null>(null);
@@ -390,9 +400,9 @@
             preset_level: presetLevel,
             effort_level: effortLevel,
             video_bit_depth: encodingCodec === "ffv1" ? videoBitDepth : null,
-            target_width: isEncoding ? selectedTargetWidth : 0,
-            target_height: isEncoding ? selectedTargetHeight : 0,
-            target_fps: isEncoding ? selectedTargetFps : 0,
+            target_width: selectedTargetWidth,
+            target_height: selectedTargetHeight,
+            target_fps: selectedTargetFps,
         };
     }
 
@@ -454,10 +464,46 @@
             </div>
         </div>
 
+        <div class="modal-inner">
+            {#if testRunning}
+                <div class="test-lock-overlay">
+                    <div class="lock-message">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10" />
+                            <polyline points="12 6 12 12 16 14" />
+                        </svg>
+                        <span>Testing configuration...</span>
+                    </div>
+                </div>
+            {/if}
         <div class="modal-body">
             <!-- Source Resolution -->
             <div class="field">
-                <label for="resolution-select">Source Resolution</label>
+                <label for="resolution-select">
+                    Source Resolution
+                    <span class="help-wrapper">
+                        <button
+                            class="help-btn"
+                            onclick={(e) => {
+                                e.stopPropagation();
+                                showResolutionHelp = !showResolutionHelp;
+                                showFpsHelp = false;
+                                showStreamSourceHelp = false;
+                                showCodecHelp = false;
+                                showEncoderHelp = false;
+                                if (showResolutionHelp) positionTooltip(e);
+                            }}
+                            onblur={() => (showResolutionHelp = false)}
+                        >
+                            ?
+                        </button>
+                        {#if showResolutionHelp}
+                            <span class="help-tooltip" style={tooltipStyle}>
+                                Higher resolution improves video quality. But it increases file size and is more demanding on your system.
+                            </span>
+                        {/if}
+                    </span>
+                </label>
                 <div class="select-wrapper">
                     <select
                         id="resolution-select"
@@ -484,7 +530,32 @@
 
             <!-- Source FPS -->
             <div class="field">
-                <label for="fps-select">Source Framerate</label>
+                <label for="fps-select">
+                    Source Framerate
+                    <span class="help-wrapper">
+                        <button
+                            class="help-btn"
+                            onclick={(e) => {
+                                e.stopPropagation();
+                                showFpsHelp = !showFpsHelp;
+                                showResolutionHelp = false;
+                                showStreamSourceHelp = false;
+                                showCodecHelp = false;
+                                showEncoderHelp = false;
+                                if (showFpsHelp) positionTooltip(e);
+                            }}
+                            onblur={() => (showFpsHelp = false)}
+                        >
+                            ?
+                        </button>
+                        {#if showFpsHelp}
+                            <span class="help-tooltip" style={tooltipStyle}>
+                                Higher framerate produces smoother video. But it
+                                increases file size and is more demanding on your system.
+                            </span>
+                        {/if}
+                    </span>
+                </label>
                 <div class="select-wrapper">
                     <select id="fps-select" bind:value={selectedFps}>
                         {#each availableFps as fps}
@@ -508,22 +579,11 @@
                             onclick={(e) => {
                                 e.stopPropagation();
                                 showStreamSourceHelp = !showStreamSourceHelp;
-                                if (showStreamSourceHelp) {
-                                    const btn = e.currentTarget as HTMLElement;
-                                    const rect = btn.getBoundingClientRect();
-                                    const tooltipWidth = 240;
-                                    let left = rect.left + rect.width / 2 - tooltipWidth / 2;
-                                    // Keep within viewport
-                                    left = Math.max(8, Math.min(left, window.innerWidth - tooltipWidth - 8));
-                                    let top = rect.bottom + 6;
-                                    // If it would go off the bottom, show above instead
-                                    if (top + 200 > window.innerHeight) {
-                                        top = rect.top - 6;
-                                        tooltipStyle = `left:${left}px;bottom:${window.innerHeight - top}px;`;
-                                    } else {
-                                        tooltipStyle = `left:${left}px;top:${top}px;`;
-                                    }
-                                }
+                                showResolutionHelp = false;
+                                showFpsHelp = false;
+                                showCodecHelp = false;
+                                showEncoderHelp = false;
+                                if (showStreamSourceHelp) positionTooltip(e);
                             }}
                             onblur={() => (showStreamSourceHelp = false)}
                         >
@@ -531,19 +591,11 @@
                         </button>
                         {#if showStreamSourceHelp}
                             <span class="help-tooltip" style={tooltipStyle}>
-                                Video devices can send their video stream in
-                                various "pixel formats" which you can select
-                                here.
-                                <br /><br />Compressed formats such as H.264 can
-                                be recorded in passthrough mode, which is less
-                                taxing on your system.
-                                <br /><br />Formats marked as (raw) may be
-                                higher quality, but require that the video source
-                                has a good connection (E.G. use USB 3, not
+                                If not sure what to pick,
+                                choose the first item in the list.
+                                If there's an issue, try the next item and repeat.<br /><br />
+                                Formats marked as (raw) may be higher quality, but need a good connection (E.G. use USB 3, not
                                 USB 2).
-                                <br /><br />If not sure what to pick,
-                                just pick the first format in the list.
-                                If there's an issue, try the next format and repeat.
                             </span>
                         {/if}
                     </span>
@@ -642,16 +694,42 @@
             {#if isEncoding}
                 <!-- Encoding Codec -->
                 <div class="field">
-                    <label for="encoding-codec-select">Video Codec</label>
+                    <label for="encoding-codec-select">
+                        Video Codec
+                        <span class="help-wrapper">
+                            <button
+                                class="help-btn"
+                                onclick={(e) => {
+                                    e.stopPropagation();
+                                    showCodecHelp = !showCodecHelp;
+                                    showResolutionHelp = false;
+                                    showFpsHelp = false;
+                                    showStreamSourceHelp = false;
+                                    showEncoderHelp = false;
+                                    if (showCodecHelp) positionTooltip(e);
+                                }}
+                                onblur={() => (showCodecHelp = false)}
+                            >
+                                ?
+                            </button>
+                            {#if showCodecHelp}
+                                <span class="help-tooltip" style={tooltipStyle}>
+                                    The video codec effects quality, file size, and compatibility with other programs.<br /><br /> Newer codecs (higher in the list) are better than older codecs, if your system can handle them.
+                                </span>
+                            {/if}
+                        </span>
+                    </label>
                     <select
                         id="encoding-codec-select"
                         bind:value={encodingCodec}
                     >
                         {#each availableEncodingCodecs as ec}
                             <option value={ec.codec}
-                                >{ec.label}{ec.codec === recommendedCodec
+                                >{ec.label}{ec.codec === displayRecommendedCodec
                                     ? " (Recommended)"
-                                    : ""}</option
+                                    : ec.codec === autoSelectedCodec && ec.codec !== displayRecommendedCodec
+                                      ? " (Default)"
+                                      : ""}</option
                             >
                         {/each}
                     </select>
@@ -660,7 +738,31 @@
                 <!-- Encoder Backend -->
                 {#if availableEncoders.length > 0}
                     <div class="field">
-                        <label for="encoder-type-select">Encoder</label>
+                        <label for="encoder-type-select">
+                            Encoder
+                            <span class="help-wrapper">
+                                <button
+                                    class="help-btn"
+                                    onclick={(e) => {
+                                        e.stopPropagation();
+                                        showEncoderHelp = !showEncoderHelp;
+                                        showResolutionHelp = false;
+                                        showFpsHelp = false;
+                                        showStreamSourceHelp = false;
+                                        showCodecHelp = false;
+                                        if (showEncoderHelp) positionTooltip(e);
+                                    }}
+                                    onblur={() => (showEncoderHelp = false)}
+                                >
+                                    ?
+                                </button>
+                                {#if showEncoderHelp}
+                                    <span class="help-tooltip" style={tooltipStyle}>
+                                        We recommend whatever is auto-selected. Changing this can be more demanding on your system.
+                                    </span>
+                                {/if}
+                            </span>
+                        </label>
                         <select
                             id="encoder-type-select"
                             bind:value={encoderType}
@@ -681,7 +783,7 @@
 
                 {#if encoderAvailability}
                     <p class="encoder-info">
-                        {#if encoderAvailability.av1.has_hardware || encoderAvailability.vp9.has_hardware || encoderAvailability.vp8.has_hardware}
+                        {#if encoderAvailability.av1.has_hardware || encoderAvailability.vp9.has_hardware}
                             Your device supports hardware acceleration for {[
                                 encoderAvailability.av1.has_hardware
                                     ? "AV1"
@@ -698,14 +800,13 @@
                                 .replace(/, ([^,]*)$/, " and $1")}. We recommend
                             selecting
                             <strong
-                                >{recommendedCodec
-                                    ? getCodecDisplayName(recommendedCodec)
+                                >{displayRecommendedCodec
+                                    ? getCodecDisplayName(displayRecommendedCodec)
                                     : "the default"}</strong
                             >.
                         {:else}
-                            No hardware-accelerated open codecs detected. VP9
-                            gives the best quality at the smallest file size. We
-                            recommend H.264 if it lags.
+                            AV1 and VP9 produce better video and smaller files
+                            if your system can handle it.
                         {/if}
                     </p>
                 {/if}
@@ -736,18 +837,15 @@
                         >
                         <select
                             id="target-resolution-select"
-                            value={selectedTargetWidth === 0
-                                ? "match"
-                                : `${selectedTargetWidth}x${selectedTargetHeight}`}
+                            value="{selectedTargetWidth}x{selectedTargetHeight}"
                             onchange={(e) =>
                                 handleTargetResolutionChange(
                                     (e.target as HTMLSelectElement).value,
                                 )}
                         >
-                            <option value="match">Match Source</option>
                             {#each targetResolutions as res}
                                 <option value="{res.width}x{res.height}"
-                                    >{res.label}</option
+                                    >{res.label}{res.width === selectedWidth && res.height === selectedHeight ? ' (Default)' : ''}</option
                                 >
                             {/each}
                         </select>
@@ -759,17 +857,14 @@
                         >
                         <select
                             id="target-fps-select"
-                            value={selectedTargetFps === 0
-                                ? "match"
-                                : String(selectedTargetFps)}
+                            value={String(selectedTargetFps)}
                             onchange={(e) =>
                                 handleTargetFpsChange(
                                     (e.target as HTMLSelectElement).value,
                                 )}
                         >
-                            <option value="match">Match Source</option>
                             {#each targetFramerates as fps}
-                                <option value={String(fps)}>{fps} fps</option>
+                                <option value={String(fps)}>{formatFps(fps)} fps{Math.abs(fps - selectedFps) < 0.01 ? ' (Default)' : ''}</option>
                             {/each}
                         </select>
                     </div>
@@ -777,7 +872,7 @@
                     <!-- Quality & Effort -->
                     <div class="field">
                         <label for="preset-slider">
-                            Quality: {levelLabels[presetLevel] ?? presetLevel}
+                            Encoding Preset: {levelLabels[presetLevel] ?? presetLevel}
                         </label>
                         <input
                             id="preset-slider"
@@ -789,7 +884,7 @@
                         />
                         {#if encoderType === "software" && encodingCodec !== "ffv1"}
                             <label for="effort-slider" class="effort-label">
-                                Effort: {levelLabels[effortLevel] ?? effortLevel}
+                                Encoding Effort: {levelLabels[effortLevel] ?? effortLevel}
                             </label>
                             <input
                                 id="effort-slider"
@@ -802,12 +897,9 @@
                         {/if}
                         <span class="field-hint">
                             {#if encodingCodec === "ffv1"}
-                                Higher quality levels compress better but
-                                encode slower. FFV1 is always lossless.
+                                FFV1 is always lossless, but higher values improve compression.
                             {:else}
-                                Increasing quality can produce better video but
-                                increase file size.{#if encoderType === "software"}
-                                {" "}<br />Increasing effort can improve compression and quality.{/if}
+
                             {/if}
                         </span>
                     </div>
@@ -895,6 +987,7 @@
             </button>
             <button class="btn-close" disabled={testRunning} onclick={saveAndClose}> Close </button>
         </div>
+        </div>
     </div>
 </div>
 
@@ -944,6 +1037,37 @@
     .device-name-label {
         font-size: 0.75rem;
         color: #6b6b6b;
+    }
+
+    .modal-inner {
+        position: relative;
+    }
+
+    .test-lock-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(14, 14, 12, 0.55);
+        backdrop-filter: blur(3px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 50;
+    }
+
+    .lock-message {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.75rem;
+        color: #8a8a8a;
+        font-size: 0.9rem;
+        font-weight: 500;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+    }
+
+    .lock-message svg {
+        color: rgba(219, 187, 116, 0.6);
     }
 
     .modal-body {
@@ -1353,6 +1477,18 @@
 
     :global(body.light-mode) .modal-footer {
         border-top-color: rgba(0, 0, 0, 0.06);
+    }
+
+    :global(body.light-mode) .test-lock-overlay {
+        background: rgba(245, 245, 243, 0.6);
+    }
+
+    :global(body.light-mode) .lock-message {
+        color: #6a6a6a;
+    }
+
+    :global(body.light-mode) .lock-message svg {
+        color: rgba(160, 128, 48, 0.6);
     }
 
     :global(body.light-mode) .encoder-info {

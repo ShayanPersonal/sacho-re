@@ -1121,7 +1121,7 @@
                 onclick={() => (moreMenuOpen = !moreMenuOpen)}
                 onblur={() => setTimeout(() => (moreMenuOpen = false), 150)}
             >
-                <span>⋯</span> More options
+                <span>⋯</span> More
             </button>
             {#if moreMenuOpen}
                 <div class="more-menu">
