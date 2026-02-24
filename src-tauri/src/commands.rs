@@ -1659,9 +1659,8 @@ async fn run_pipeline_test(
         )
     } else {
         format!(
-            "Low framerate — {:.0} fps, expected {:.0} ({}x{}). This can sometimes happen if a camera reports incorrect framerates.",
-            actual_fps, expected_fps,
-            capture.width, capture.height
+            "Low framerate — {:.0} fps, expected {:.0}. This can sometimes happen if a camera reports incorrect framerates.",
+            actual_fps, expected_fps
         )
     };
 
