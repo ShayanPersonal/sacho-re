@@ -337,6 +337,15 @@ impl VideoDeviceConfig {
         }
     }
 
+    /// Returns the effective encoding codec, resolving `None` to the recommended codec.
+    /// Returns `None` if passthrough mode is active (no encoding needed).
+    pub fn effective_codec(&self) -> Option<crate::encoding::VideoCodec> {
+        if self.passthrough {
+            return None;
+        }
+        Some(self.encoding_codec.unwrap_or_else(|| crate::encoding::get_recommended_codec()))
+    }
+
     /// Returns true if only preset_level differs (no pipeline restart needed).
     pub fn pipeline_fields_equal(&self, other: &Self) -> bool {
         self.source_format == other.source_format

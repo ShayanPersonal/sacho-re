@@ -49,34 +49,6 @@ export const ffv1WarningDevices = derived(
 // FPS mismatch warnings from video capture devices
 export const videoFpsWarnings = writable<VideoFpsWarning[]>([]);
 
-// Listen for FPS warning events from backend
-listen<VideoFpsWarning>('video-fps-warning', (event) => {
-  videoFpsWarnings.update(warnings => {
-    // Replace any existing warning for the same device
-    const filtered = warnings.filter(w => w.device_name !== event.payload.device_name);
-    return [...filtered, event.payload];
-  });
-});
-
-// Listen for audio trigger level events from backend
-listen<AudioTriggerLevel[]>('audio-trigger-levels', (event) => {
-  audioTriggerLevels.update(levels => {
-    const updated = { ...levels };
-    for (const entry of event.payload) {
-      updated[entry.device_id] = { current_rms: entry.current_rms, peak_level: entry.peak_level };
-    }
-    return updated;
-  });
-});
-
-// Clear FPS warnings and audio levels when monitoring restarts (recording-state-changed to initializing)
-listen<string>('recording-state-changed', (event) => {
-  if (event.payload === 'initializing') {
-    videoFpsWarnings.set([]);
-    audioTriggerLevels.set({});
-  }
-});
-
 // Disconnected device IDs (from health checker)
 export const disconnectedDevices = writable<Set<string>>(new Set());
 
@@ -85,24 +57,6 @@ export const disconnectedDeviceInfos = writable<DisconnectedDeviceInfo[]>([]);
 
 // Whether the user has dismissed the disconnect banner (resets when new devices disconnect)
 export const disconnectBannerDismissed = writable(false);
-
-// Listen for device health change events from backend
-listen<{ disconnected_devices: DisconnectedDeviceInfo[] }>('device-health-changed', (event) => {
-  const newInfos = event.payload.disconnected_devices;
-  const newIds = new Set(newInfos.map(d => d.id));
-
-  // If a new device appeared in the disconnected set, un-dismiss the banner
-  const prevIds = get(disconnectedDevices);
-  for (const id of newIds) {
-    if (!prevIds.has(id)) {
-      disconnectBannerDismissed.set(false);
-      break;
-    }
-  }
-
-  disconnectedDevices.set(newIds);
-  disconnectedDeviceInfos.set(newInfos);
-});
 
 // Repeating warning sound when devices are disconnected
 let disconnectWarningInterval: ReturnType<typeof setInterval> | null = null;
@@ -127,16 +81,65 @@ disconnectedDevices.subscribe((ids) => {
   }
 });
 
-// Listen for device reconnection — trigger pipeline restart via frontend round-trip
-listen<{ device_types: string[] }>('_device-needs-restart', async (event) => {
-  try {
-    await restartDevicePipelines(event.payload.device_types);
-    // Refresh device lists after restart so UI is up to date
-    await refreshDevices();
-  } catch (e) {
-    console.error('Failed to restart device pipelines:', e);
+// Event listener cleanup for HMR — previous listeners are unsubscribed before re-registering
+let eventUnlisteners: (() => void)[] = [];
+
+async function setupEventListeners() {
+  // Clean up any previous listeners (HMR reload)
+  for (const unlisten of eventUnlisteners) {
+    unlisten();
   }
-});
+  eventUnlisteners = [];
+
+  eventUnlisteners.push(await listen<VideoFpsWarning>('video-fps-warning', (event) => {
+    videoFpsWarnings.update(warnings => {
+      const filtered = warnings.filter(w => w.device_name !== event.payload.device_name);
+      return [...filtered, event.payload];
+    });
+  }));
+
+  eventUnlisteners.push(await listen<AudioTriggerLevel[]>('audio-trigger-levels', (event) => {
+    audioTriggerLevels.update(levels => {
+      const updated = { ...levels };
+      for (const entry of event.payload) {
+        updated[entry.device_id] = { current_rms: entry.current_rms, peak_level: entry.peak_level };
+      }
+      return updated;
+    });
+  }));
+
+  eventUnlisteners.push(await listen<string>('recording-state-changed', (event) => {
+    if (event.payload === 'initializing') {
+      videoFpsWarnings.set([]);
+      audioTriggerLevels.set({});
+    }
+  }));
+
+  eventUnlisteners.push(await listen<{ disconnected_devices: DisconnectedDeviceInfo[] }>('device-health-changed', (event) => {
+    const newInfos = event.payload.disconnected_devices;
+    const newIds = new Set(newInfos.map(d => d.id));
+
+    const prevIds = get(disconnectedDevices);
+    for (const id of newIds) {
+      if (!prevIds.has(id)) {
+        disconnectBannerDismissed.set(false);
+        break;
+      }
+    }
+
+    disconnectedDevices.set(newIds);
+    disconnectedDeviceInfos.set(newInfos);
+  }));
+
+  eventUnlisteners.push(await listen<{ device_types: string[] }>('_device-needs-restart', async (event) => {
+    try {
+      await restartDevicePipelines(event.payload.device_types);
+      await refreshDevices();
+    } catch (e) {
+      console.error('Failed to restart device pipelines:', e);
+    }
+  }));
+}
 
 // Config reference
 export const config = writable<Config | null>(null);
@@ -451,6 +454,7 @@ export function deleteVideoDeviceConfig(deviceId: string) {
 
 // Initialize
 async function initialize() {
+  await setupEventListeners();
   await loadDevices();
   await loadConfig();
   // Populate disconnected devices before cleanup (so cleanup preserves them)

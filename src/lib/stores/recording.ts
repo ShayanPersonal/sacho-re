@@ -22,38 +22,45 @@ const initialState: RecordingState = {
 
 export const recordingState = writable<RecordingState>(initialState);
 
-// Listen for backend recording events
-listen('recording-started', (event) => {
-  console.log('Recording started from backend:', event.payload);
-  const cfg = get(settings);
-  if (cfg?.sound_recording_start) {
-    playStartSound(cfg.sound_volume_start, cfg.custom_sound_start);
-  }
-  refreshRecordingState();
-});
+// Event listener cleanup for HMR — previous listeners are unsubscribed before re-registering
+let eventUnlisteners: (() => void)[] = [];
 
-listen('recording-stopped', async (event) => {
+async function setupEventListeners() {
+  for (const unlisten of eventUnlisteners) {
+    unlisten();
+  }
+  eventUnlisteners = [];
+
+  eventUnlisteners.push(await listen('recording-started', (event) => {
+    console.log('Recording started from backend:', event.payload);
+    const cfg = get(settings);
+    if (cfg?.sound_recording_start) {
+      playStartSound(cfg.sound_volume_start, cfg.custom_sound_start);
+    }
+    refreshRecordingState();
+  }));
+
+  eventUnlisteners.push(await listen('recording-stopped', async (event) => {
     console.log('Recording stopped from backend:', event.payload);
     const cfg = get(settings);
     if (cfg?.sound_recording_stop) {
       playStopSound(cfg.sound_volume_stop, cfg.custom_sound_stop);
     }
     await refreshRecordingState();
-    
-    // Add the new session to the list without full refresh
+
     try {
       const metadata = JSON.parse(event.payload as string) as SessionMetadata;
       addNewSession(metadata);
     } catch (e) {
       console.error('Failed to parse session metadata:', e);
     }
-  });
+  }));
 
-// Listen for recording state changes (e.g., when devices are being reinitialized)
-listen('recording-state-changed', async (event) => {
-  console.log('Recording state changed:', event.payload);
-  await refreshRecordingState();
-});
+  eventUnlisteners.push(await listen('recording-state-changed', async (event) => {
+    console.log('Recording state changed:', event.payload);
+    await refreshRecordingState();
+  }));
+}
 
 // Derived stores for convenience
 export const isRecording = derived(recordingState, $state => $state.status === 'recording');
@@ -129,4 +136,5 @@ export async function doStopRecording() {
 }
 
 // Initialize on import
+setupEventListeners();
 refreshRecordingState();

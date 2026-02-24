@@ -423,15 +423,18 @@ pub fn has_hardware_h264_encoder() -> bool {
     has_h264_encoder()
 }
 
-/// Detect the best encoder for a given target codec
-pub fn detect_best_encoder_for_codec(codec: VideoCodec) -> HardwareEncoderType {
+/// Detect the best encoder for a given target codec.
+///
+/// Returns `None` when no encoder is available (e.g. H264 on Linux where
+/// neither Media Foundation nor VideoToolbox exists).
+pub fn detect_best_encoder_for_codec(codec: VideoCodec) -> Option<HardwareEncoderType> {
     match codec {
-        VideoCodec::Av1 => detect_best_av1_encoder(),
-        VideoCodec::Vp8 => detect_best_vp8_encoder(),
-        VideoCodec::Vp9 => detect_best_vp9_encoder(),
-        VideoCodec::H264 => detect_best_h264_encoder().unwrap_or(HardwareEncoderType::Software),
-        VideoCodec::Ffv1 => HardwareEncoderType::Software,
-        _ => HardwareEncoderType::Software,
+        VideoCodec::Av1 => Some(detect_best_av1_encoder()),
+        VideoCodec::Vp8 => Some(detect_best_vp8_encoder()),
+        VideoCodec::Vp9 => Some(detect_best_vp9_encoder()),
+        VideoCodec::H264 => detect_best_h264_encoder(),
+        VideoCodec::Ffv1 => Some(HardwareEncoderType::Software),
+        _ => None,
     }
 }
 
@@ -607,7 +610,10 @@ impl AsyncVideoEncoder {
         config: EncoderConfig,
         buffer_size: usize,
     ) -> Result<Self> {
-        let hw_type = detect_best_encoder_for_codec(config.target_codec);
+        let hw_type = detect_best_encoder_for_codec(config.target_codec)
+            .ok_or_else(|| EncoderError::NotAvailable(
+                format!("No encoder available for {}", config.target_codec.display_name())
+            ))?;
         println!(
             "[Encoder] Using {} for {} encoding",
             hw_type.display_name(),

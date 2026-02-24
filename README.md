@@ -100,6 +100,10 @@ Recordings are saved by default to:
 
 The gstreamer CLI tools are installed on the development system. Use them to diagnose video pipeline issues.
 
+# LLMs
+
+I'm not interested in sycophancy.
+
 ## License
 
 All rights reserved.

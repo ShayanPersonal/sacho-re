@@ -408,7 +408,7 @@ impl VideoWriter {
         let normalized_pts = frame.pts.saturating_sub(offset);
         let mut buffer = gst::Buffer::from_slice(frame.data.clone());
         {
-            let buffer_ref = buffer.get_mut().unwrap();
+            let buffer_ref = buffer.get_mut().expect("BUG: freshly created buffer has refcount > 1");
             buffer_ref.set_pts(gst::ClockTime::from_nseconds(normalized_pts));
             buffer_ref.set_duration(gst::ClockTime::from_nseconds(frame.duration));
             // Preserve the keyframe/delta flag so the muxer marks frames correctly.
@@ -643,7 +643,10 @@ impl PrerollVideoEncoder {
             detect_best_encoder_for_codec, AsyncVideoEncoder, EncoderConfig,
         };
 
-        let hw_type = detect_best_encoder_for_codec(target_codec);
+        let hw_type = detect_best_encoder_for_codec(target_codec)
+            .ok_or_else(|| VideoError::Pipeline(
+                format!("No encoder available for {}", target_codec.display_name())
+            ))?;
         println!(
             "[PrerollEncoder] Using {} for {} encoding (pre-roll)",
             hw_type.display_name(),
@@ -792,7 +795,7 @@ impl PrerollVideoEncoder {
     fn push_frame(&self, frame: &BufferedFrame) {
         let mut buffer = gst::Buffer::from_slice(frame.data.clone());
         {
-            let buffer_ref = buffer.get_mut().unwrap();
+            let buffer_ref = buffer.get_mut().expect("BUG: freshly created buffer has refcount > 1");
             buffer_ref.set_pts(gst::ClockTime::from_nseconds(frame.pts));
             buffer_ref.set_duration(gst::ClockTime::from_nseconds(frame.duration));
         }
@@ -818,7 +821,7 @@ impl VideoCapturePipeline {
     /// Otherwise, falls back to the first stored device or platform-specific defaults.
     fn create_source_element(
         device_id: &str,
-        _device_index: u32,
+        device_index: u32,
         device_name_hint: &str,
         matched_device: Option<gstreamer::Device>,
     ) -> Result<(gst::Element, String)> {
@@ -858,19 +861,34 @@ impl VideoCapturePipeline {
         }
 
         // Fallback: create source element manually based on platform
+        println!("[Video] Warning: Using fallback source creation for '{}' (index {})", device_name_hint, device_index);
+
         #[cfg(target_os = "windows")]
         let (source, device_name) = {
-            let src = gst::ElementFactory::make("dshowvideosrc")
-                .property("device-name", device_name_hint)
+            // Prefer Media Foundation (mfvideosrc) over legacy DirectShow (dshowvideosrc)
+            if let Ok(src) = gst::ElementFactory::make("mfvideosrc")
+                .property("device-index", device_index as u32)
                 .build()
-                .map_err(|e| {
-                    VideoError::Pipeline(format!("Failed to create dshowvideosrc: {}", e))
-                })?;
-            (src, device_name_hint.to_string())
+            {
+                let name = src
+                    .property::<Option<String>>("device-name")
+                    .unwrap_or_else(|| device_name_hint.to_string());
+                (src, name)
+            } else {
+                println!("[Video] mfvideosrc unavailable, falling back to dshowvideosrc");
+                let src = gst::ElementFactory::make("dshowvideosrc")
+                    .property("device-name", device_name_hint)
+                    .build()
+                    .map_err(|e| {
+                        VideoError::Pipeline(format!("Failed to create dshowvideosrc: {}", e))
+                    })?;
+                (src, device_name_hint.to_string())
+            }
         };
 
         #[cfg(target_os = "linux")]
         let (source, device_name) = {
+            println!("[Video] Assuming /dev/video{} for device index {}", device_index, device_index);
             let src = gst::ElementFactory::make("v4l2src")
                 .property("device", format!("/dev/video{}", device_index))
                 .build()
@@ -1513,16 +1531,16 @@ impl VideoCapturePipeline {
                             self.width, self.height, self.fps, attempt
                         );
 
-                        // Measure actual frame delivery rate over 1 second.
+                        // Measure actual frame delivery rate over 500ms.
                         // Some sources (e.g. capture cards via ksvideosrc) advertise
                         // framerate ranges and ignore the capsfilter constraint,
                         // delivering at whatever rate their input provides.
                         let count_before = self.frame_counter.load(Ordering::Relaxed);
-                        std::thread::sleep(std::time::Duration::from_secs(1));
+                        std::thread::sleep(std::time::Duration::from_millis(500));
                         let count_after = self.frame_counter.load(Ordering::Relaxed);
                         let measured_frames = count_after - count_before;
                         if measured_frames > 0 {
-                            let measured_fps = measured_frames as f64;
+                            let measured_fps = measured_frames as f64 * 2.0;
                             let ratio = measured_fps / negotiated_fps;
                             if ratio > 1.25 || ratio < 0.75 {
                                 println!(
@@ -2162,6 +2180,13 @@ impl VideoCapturePipeline {
         } else {
             self.preroll_buffer.lock().set_duration(secs);
         }
+    }
+
+    /// Set the target resolution and fps for encoding (may differ from source).
+    pub fn set_target_resolution(&mut self, width: u32, height: u32, fps: f64) {
+        self.target_width = width;
+        self.target_height = height;
+        self.target_fps = fps;
     }
 
     /// Check if the device is delivering frames at a significantly lower rate

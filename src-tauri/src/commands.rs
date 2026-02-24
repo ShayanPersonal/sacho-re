@@ -81,11 +81,11 @@ pub fn get_recording_state(
 /// This ensures all device types (MIDI, audio, video) are captured consistently
 
 #[tauri::command]
-pub fn start_recording(
+pub async fn start_recording(
     recording_state: State<'_, RwLock<RecordingState>>,
     midi_monitor: State<'_, Arc<Mutex<MidiMonitor>>>,
 ) -> Result<String, String> {
-    // Check if we're in a state that allows recording
+    // Pre-flight checks are fast RwLock reads, keep them inline
     {
         let state = recording_state.read();
         if state.status == RecordingStatus::Initializing {
@@ -98,23 +98,31 @@ pub fn start_recording(
             return Err("Recording is stopping, please wait".to_string());
         }
     }
-    
-    // Use the MidiMonitor's manual start method which captures all device types
-    let monitor = midi_monitor.lock();
-    monitor.manual_start_recording()?;
-    
+
+    // Clone the Arc so we can move it into the blocking task
+    let monitor_arc = midi_monitor.inner().clone();
+
+    // Pipeline creation is blocking (100ms+), offload to avoid blocking the IPC thread
+    tokio::task::spawn_blocking(move || {
+        let monitor = monitor_arc.lock();
+        monitor.manual_start_recording()
+    }).await.map_err(|e| e.to_string())??;
+
     Ok("Recording started".to_string())
 }
 
 #[tauri::command]
-pub fn stop_recording(
+pub async fn stop_recording(
     midi_monitor: State<'_, Arc<Mutex<MidiMonitor>>>,
 ) -> Result<(), String> {
-    // Use the MidiMonitor's manual stop method which handles all device types
-    // and saves MIDI, audio, and video files properly
-    let monitor = midi_monitor.lock();
-    monitor.manual_stop_recording()?;
-    
+    let monitor_arc = midi_monitor.inner().clone();
+
+    // Stop + file saving is blocking, offload to avoid blocking the IPC thread
+    tokio::task::spawn_blocking(move || {
+        let monitor = monitor_arc.lock();
+        monitor.manual_stop_recording()
+    }).await.map_err(|e| e.to_string())??;
+
     Ok(())
 }
 
@@ -1306,8 +1314,8 @@ fn build_codec_encoder_info(codec: crate::encoding::VideoCodec) -> CodecEncoderI
     let available = available_encoders_for_codec(codec);
     let has_hardware = available.iter().any(|(hw, _)| !matches!(hw, HardwareEncoderType::Software));
     let recommended = if !available.is_empty() {
-        let best = detect_best_encoder_for_codec(codec);
-        Some(format!("{:?}", best).to_lowercase())
+        detect_best_encoder_for_codec(codec)
+            .map(|best| format!("{:?}", best).to_lowercase())
     } else {
         None
     };
@@ -1413,13 +1421,7 @@ pub async fn test_encoder_preset(
         (name, dev_cfg)
     };
 
-    let target_codec = if dev_config.passthrough {
-        None
-    } else {
-        Some(dev_config.encoding_codec.unwrap_or_else(|| {
-            crate::encoding::get_recommended_codec()
-        }))
-    };
+    let target_codec = dev_config.effective_codec();
 
     // 3. Set status to initializing
     {
@@ -1541,6 +1543,10 @@ async fn run_pipeline_test(
 
     capture.start().map_err(|e| format!("Failed to start test capture: {}", e))?;
 
+    // Apply resolved target dimensions (matching production behavior in VideoCaptureManager::start)
+    let resolved = dev_config.resolved();
+    capture.set_target_resolution(resolved.target_width, resolved.target_height, resolved.target_fps);
+
     // Wait for frames to arrive
     println!("[Test:{}] Waiting for video frames...", mode_label);
     let wait_start = Instant::now();
@@ -1566,15 +1572,19 @@ async fn run_pipeline_test(
     let encoder = if let Some(codec) = target_codec {
         use crate::encoding::{AsyncVideoEncoder, EncoderConfig};
         let temp_file = std::env::temp_dir().join("sacho_encoder_test.mkv");
+        let use_target_w = if resolved.target_width != capture.width { Some(resolved.target_width) } else { None };
+        let use_target_h = if resolved.target_height != capture.height { Some(resolved.target_height) } else { None };
+        let use_target_fps = if (resolved.target_fps - capture.fps).abs() > 0.01 { Some(resolved.target_fps) } else { None };
+        let effective_fps = use_target_fps.unwrap_or(capture.fps);
         let encoder_config = EncoderConfig {
-            keyframe_interval: (capture.fps * 2.0).round() as u32,
+            keyframe_interval: (effective_fps * 2.0).round() as u32,
             target_codec: codec,
             preset_level: dev_config.preset_level,
             effort_level: dev_config.effort_level,
             video_bit_depth: dev_config.video_bit_depth,
-            target_width: None,
-            target_height: None,
-            target_fps: None,
+            target_width: use_target_w,
+            target_height: use_target_h,
+            target_fps: use_target_fps,
         };
         match AsyncVideoEncoder::new(
             temp_file.clone(), capture.width, capture.height, capture.fps,
@@ -1741,13 +1751,8 @@ pub async fn auto_select_encoder_preset(
         (name, dev_cfg)
     };
 
-    if dev_config.passthrough {
-        return Err("Cannot auto-select for passthrough mode (no encoding)".to_string());
-    }
-
-    let target_codec = dev_config.encoding_codec.unwrap_or_else(|| {
-        crate::encoding::get_recommended_codec()
-    });
+    let target_codec = dev_config.effective_codec()
+        .ok_or_else(|| "Cannot auto-select for passthrough mode (no encoding)".to_string())?;
 
     // 3. Set status to initializing to prevent recording attempts
     {
@@ -1865,7 +1870,15 @@ async fn run_auto_select_test(
     
     // Start capture
     capture.start().map_err(|e| format!("Failed to start test capture: {}", e))?;
-    
+
+    // Apply resolved target dimensions (matching production behavior in VideoCaptureManager::start)
+    let resolved = dev_config.resolved();
+    capture.set_target_resolution(resolved.target_width, resolved.target_height, resolved.target_fps);
+    let use_target_w = if resolved.target_width != capture.width { Some(resolved.target_width) } else { None };
+    let use_target_h = if resolved.target_height != capture.height { Some(resolved.target_height) } else { None };
+    let use_target_fps = if (resolved.target_fps - capture.fps).abs() > 0.01 { Some(resolved.target_fps) } else { None };
+    let effective_fps = use_target_fps.unwrap_or(capture.fps);
+
     // Wait for frames to start arriving (up to 5 seconds)
     println!("[AutoSelect] Waiting for video frames...");
     let wait_start = Instant::now();
@@ -1902,14 +1915,14 @@ async fn run_auto_select_test(
         
         // Create encoder with this preset
         let encoder_config = EncoderConfig {
-            keyframe_interval: (capture.fps * 2.0).round() as u32,
+            keyframe_interval: (effective_fps * 2.0).round() as u32,
             target_codec,
             preset_level: level,
             effort_level: dev_config.effort_level,
             video_bit_depth: dev_config.video_bit_depth,
-            target_width: None,
-            target_height: None,
-            target_fps: None,
+            target_width: use_target_w,
+            target_height: use_target_h,
+            target_fps: use_target_fps,
         };
         
         let encoder = match AsyncVideoEncoder::new(
