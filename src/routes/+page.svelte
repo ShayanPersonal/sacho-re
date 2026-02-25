@@ -5,7 +5,6 @@
     import SimilarityTab from "$lib/components/similarity/SimilarityTab.svelte";
     import DevicePanel from "$lib/components/devices/DevicePanel.svelte";
     import Settings from "$lib/components/Settings.svelte";
-    import About from "$lib/components/About.svelte";
     import {
         refreshRecordingState,
         isRecording,
@@ -20,7 +19,7 @@
     // Devices and Settings tabs are locked while recording
     let recordingLocked = $derived($isRecording || $isStopping);
 
-    type Tab = "sessions" | "similarity" | "devices" | "settings" | "about";
+    type Tab = "sessions" | "similarity" | "devices" | "settings";
     let activeTab: Tab = $state("sessions");
 
     // Reactive dark mode from settings (default is light mode)
@@ -118,23 +117,6 @@
             </svg>
             Settings
         </button>
-        <button
-            class="tab"
-            class:active={activeTab === "about"}
-            onclick={() => (activeTab = "about")}
-        >
-            <svg
-                class="tab-icon icon-about"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-            >
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 16v-4M12 8h.01" />
-            </svg>
-            About
-        </button>
         <div class="spacer"></div>
         <RecordingIndicator />
     </nav>
@@ -230,8 +212,6 @@
                     </div>
                 {/if}
             </div>
-        {:else if activeTab === "about"}
-            <About />
         {/if}
     </main>
 </div>
@@ -352,10 +332,6 @@
 
     .icon-settings {
         stroke: #9a8a8a;
-    }
-
-    .icon-about {
-        stroke: #8a8ac7;
     }
 
     .content {
@@ -883,44 +859,6 @@
         background: rgba(200, 60, 60, 0.1);
         border-color: rgba(200, 60, 60, 0.3);
         color: #a04040;
-    }
-
-    /* About page specifics */
-    :global(body.light-mode .about-card) {
-        background: rgba(255, 255, 255, 0.85);
-        border-color: rgba(0, 0, 0, 0.08);
-    }
-
-    :global(body.light-mode .about-header h2) {
-        color: #2a2a2a;
-    }
-
-    :global(body.light-mode .about-title h3) {
-        color: #2a2a2a;
-    }
-
-    :global(body.light-mode .about-logo) {
-        color: #a08030;
-    }
-
-    :global(body.light-mode .about-features) {
-        border-top-color: rgba(0, 0, 0, 0.08);
-    }
-
-    :global(body.light-mode .feature) {
-        background: rgba(0, 0, 0, 0.03);
-    }
-
-    :global(body.light-mode .feature-icon) {
-        color: #5a5a5a;
-    }
-
-    :global(body.light-mode .about-credits) {
-        border-top-color: rgba(0, 0, 0, 0.08);
-    }
-
-    :global(body.light-mode .disclaimer) {
-        border-top-color: rgba(0, 0, 0, 0.08);
     }
 
     /* Meta icons */

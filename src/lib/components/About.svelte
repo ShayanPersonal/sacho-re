@@ -3,6 +3,9 @@
     import { getVersion } from "@tauri-apps/api/app";
     import { onMount } from "svelte";
 
+    let { open = false, onclose }: { open: boolean; onclose: () => void } =
+        $props();
+
     let appVersion = $state("...");
 
     onMount(async () => {
@@ -12,240 +15,271 @@
     function openExternal(url: string) {
         openUrl(url);
     }
+
+    function handleOverlayClick(e: MouseEvent) {
+        if (e.target === e.currentTarget) {
+            onclose();
+        }
+    }
+
+    function handleKeydown(e: KeyboardEvent) {
+        if (e.key === "Escape") {
+            onclose();
+        }
+    }
 </script>
 
-<div class="about">
-    <div class="about-header">
-        <h2>About</h2>
-    </div>
+{#if open}
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+        class="about-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-label="About Sacho"
+        onclick={handleOverlayClick}
+        onkeydown={handleKeydown}
+    >
+        <div class="about-modal">
+            <button
+                class="about-close"
+                onclick={onclose}
+                title="Close"
+            >&times;</button>
 
-    <div class="about-content">
-        <div class="about-card">
-            <div class="about-logo">
-                <svg viewBox="0 0 64 64" fill="currentColor">
-                    <!-- Outer ring -->
-                    <circle
-                        cx="32"
-                        cy="32"
-                        r="20"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="3"
-                    />
-                    <!-- Center circle -->
-                    <circle cx="32" cy="32" r="8" fill="currentColor" />
-                    <!-- 8 radiating lines -->
-                    <path
-                        d="M32 4v8M32 52v8"
-                        stroke="currentColor"
-                        stroke-width="3"
-                        stroke-linecap="round"
-                    />
-                    <path
-                        d="M4 32h8M52 32h8"
-                        stroke="currentColor"
-                        stroke-width="3"
-                        stroke-linecap="round"
-                    />
-                    <path
-                        d="M12.2 12.2l5.6 5.6M46.2 46.2l5.6 5.6"
-                        stroke="currentColor"
-                        stroke-width="3"
-                        stroke-linecap="round"
-                    />
-                    <path
-                        d="M51.8 12.2l-5.6 5.6M17.8 46.2l-5.6 5.6"
-                        stroke="currentColor"
-                        stroke-width="3"
-                        stroke-linecap="round"
-                    />
-                </svg>
-            </div>
+            <div class="about-card">
+                <div class="about-logo">
+                    <svg viewBox="0 0 64 64" fill="currentColor">
+                        <!-- Outer ring -->
+                        <circle
+                            cx="32"
+                            cy="32"
+                            r="20"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="3"
+                        />
+                        <!-- Center circle -->
+                        <circle cx="32" cy="32" r="8" fill="currentColor" />
+                        <!-- 8 radiating lines -->
+                        <path
+                            d="M32 4v8M32 52v8"
+                            stroke="currentColor"
+                            stroke-width="3"
+                            stroke-linecap="round"
+                        />
+                        <path
+                            d="M4 32h8M52 32h8"
+                            stroke="currentColor"
+                            stroke-width="3"
+                            stroke-linecap="round"
+                        />
+                        <path
+                            d="M12.2 12.2l5.6 5.6M46.2 46.2l5.6 5.6"
+                            stroke="currentColor"
+                            stroke-width="3"
+                            stroke-linecap="round"
+                        />
+                        <path
+                            d="M51.8 12.2l-5.6 5.6M17.8 46.2l-5.6 5.6"
+                            stroke="currentColor"
+                            stroke-width="3"
+                            stroke-linecap="round"
+                        />
+                    </svg>
+                </div>
 
-            <div class="about-title">
-                <h3>Sacho<sup class="tm">™</sup></h3>
-                <span class="version-badge">Version {appVersion}</span>
-            </div>
+                <div class="about-title">
+                    <h3>Sacho<sup class="tm">&trade;</sup></h3>
+                    <span class="version-badge">Version {appVersion}</span>
+                </div>
 
-            <div class="about-description">
-                <p>The Songwriter's Notebook™</p>
-            </div>
+                <div class="about-description">
+                    <p>The Songwriter's Notebook&trade;</p>
+                </div>
 
-            <div class="about-features">
-                <div class="feature">
-                    <span class="feature-icon">
-                        <svg viewBox="0 0 24 24" fill="currentColor">
-                            <circle cx="12" cy="12" r="3" />
-                            <circle
-                                cx="12"
-                                cy="12"
-                                r="9"
+                <div class="about-features">
+                    <div class="feature">
+                        <span class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                                <circle cx="12" cy="12" r="3" />
+                                <circle
+                                    cx="12"
+                                    cy="12"
+                                    r="9"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.5"
+                                />
+                            </svg>
+                        </span>
+                        <span class="feature-label">Auto-Recording</span>
+                        <span class="feature-desc"
+                            >Automatic MIDI, audio, and video recording when playing
+                            is detected.</span
+                        >
+                    </div>
+                    <div class="feature">
+                        <span class="feature-icon">
+                            <svg
+                                viewBox="0 0 24 24"
                                 fill="none"
                                 stroke="currentColor"
                                 stroke-width="1.5"
-                            />
-                        </svg>
-                    </span>
-                    <span class="feature-label">Auto-Recording</span>
-                    <span class="feature-desc"
-                        >Automatic MIDI, audio, and video recording when playing
-                        is detected.</span
-                    >
-                </div>
-                <div class="feature">
-                    <span class="feature-icon">
-                        <svg
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.5"
+                            >
+                                <rect x="3" y="3" width="18" height="18" rx="1" />
+                                <line x1="3" y1="9" x2="21" y2="9" />
+                                <line x1="3" y1="15" x2="21" y2="15" />
+                                <line x1="9" y1="3" x2="9" y2="21" />
+                                <line x1="15" y1="3" x2="15" y2="21" />
+                            </svg>
+                        </span>
+                        <span class="feature-label">Similarity Map</span>
+                        <span class="feature-desc"
+                            >Quickly locate recordings with similar themes and
+                            chords.</span
                         >
-                            <rect x="3" y="3" width="18" height="18" rx="1" />
-                            <line x1="3" y1="9" x2="21" y2="9" />
-                            <line x1="3" y1="15" x2="21" y2="15" />
-                            <line x1="9" y1="3" x2="9" y2="21" />
-                            <line x1="15" y1="3" x2="15" y2="21" />
-                        </svg>
-                    </span>
-                    <span class="feature-label">Similarity Map</span>
-                    <span class="feature-desc"
-                        >Quickly locate recordings with similar themes and
-                        chords.</span
-                    >
-                </div>
-                <div class="feature">
-                    <span class="feature-icon">
-                        <svg
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.5"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
+                    </div>
+                    <div class="feature">
+                        <span class="feature-icon">
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.5"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+                                <path d="M5 4h14M5 20h14" />
+                                <path d="M7 4c0 4 5 7 5 8s-5 4-5 8" />
+                                <path d="M17 4c0 4-5 7-5 8s5 4 5 8" />
+                                <path d="M8 19h8" opacity="0.4" />
+                            </svg>
+                        </span>
+                        <span class="feature-label">Pre-roll Capture</span>
+                        <span class="feature-desc"
+                            >Capture the moments leading up to the performance.</span
                         >
-                            <path d="M5 4h14M5 20h14" />
-                            <path d="M7 4c0 4 5 7 5 8s-5 4-5 8" />
-                            <path d="M17 4c0 4-5 7-5 8s5 4 5 8" />
-                            <path d="M8 19h8" opacity="0.4" />
-                        </svg>
-                    </span>
-                    <span class="feature-label">Pre-roll Capture</span>
-                    <span class="feature-desc"
-                        >Capture the moments leading up to the performance.</span
-                    >
+                    </div>
                 </div>
-            </div>
 
-            <div class="disclaimer">
-                <p>
-                    This software is provided "as-is" without warranty of any
-                    kind, express or implied. In no event shall the author be
-                    liable for any claim, damages, or other liability arising
-                    from the use of this software. Use at your own risk.
-                </p>
-            </div>
+                <div class="disclaimer">
+                    <p>
+                        This software is provided "as-is" without warranty of any
+                        kind, express or implied. In no event shall the author be
+                        liable for any claim, damages, or other liability arising
+                        from the use of this software. Use at your own risk.
+                    </p>
+                </div>
 
-            <div class="open-source-notice">
-                <p class="notice-title">Open Source Licenses</p>
-                <p class="notice-text">
-                    This application uses <button
-                        class="link-btn"
-                        onclick={() =>
-                            openExternal("https://gstreamer.freedesktop.org/")}
-                        >GStreamer</button
-                    >, a multimedia framework licensed under the
-                    <button
-                        class="link-btn"
-                        onclick={() =>
-                            openExternal(
-                                "https://www.gnu.org/licenses/lgpl-2.1.html",
-                            )}
-                        >GNU Lesser General Public License (LGPL) v2.1</button
-                    >. The complete source code for this version of GStreamer is
-                    available at
-                    <button
-                        class="link-btn"
-                        onclick={() =>
-                            openExternal(
-                                "https://gitlab.freedesktop.org/gstreamer/gstreamer/-/tree/1.26.10",
-                            )}
-                        >gitlab.freedesktop.org/gstreamer/-/tree/1.26.10</button
-                    >.
-                </p>
-                <p class="notice-text">
-                    This software uses libraries from the <button
-                        class="link-btn"
-                        onclick={() => openExternal("https://ffmpeg.org/")}
-                        >FFmpeg</button
-                    >
-                    project under the
-                    <button
-                        class="link-btn"
-                        onclick={() =>
-                            openExternal(
-                                "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html",
-                            )}>LGPLv2.1</button
-                    >. The complete source code for this version of FFmpeg is
-                    available at
-                    <button
-                        class="link-btn"
-                        onclick={() =>
-                            openExternal(
-                                "https://www.ffmpeg.org/releases/ffmpeg-7.1.1.tar.gz",
-                            )}>ffmpeg.org/releases/ffmpeg-7.1.1.tar.gz</button
-                    >. It was compiled with:
-                    <code class="notice-code"
-                        >--toolchain=msvc --enable-shared --disable-static
-                        --disable-programs --disable-doc --disable-everything
-                        --enable-encoder=ffv1 --enable-decoder=ffv1
-                        --disable-avdevice --disable-postproc --disable-network
-                        --disable-autodetect</code
-                    >. FFmpeg is a trademark of Fabrice Bellard, originator of
-                    the FFmpeg project.
-                </p>
+                <div class="open-source-notice">
+                    <p class="notice-title">Open Source Licenses</p>
+                    <p class="notice-text">
+                        This application uses <button
+                            class="link-btn"
+                            onclick={() =>
+                                openExternal("https://gstreamer.freedesktop.org/")}
+                            >GStreamer</button
+                        >, a multimedia framework licensed under the
+                        <button
+                            class="link-btn"
+                            onclick={() =>
+                                openExternal(
+                                    "https://www.gnu.org/licenses/lgpl-2.1.html",
+                                )}
+                            >GNU Lesser General Public License (LGPL) v2.1</button
+                        >. The complete source code for this version of GStreamer is
+                        available at
+                        <button
+                            class="link-btn"
+                            onclick={() =>
+                                openExternal(
+                                    "https://gitlab.freedesktop.org/gstreamer/gstreamer/-/tree/1.26.10",
+                                )}
+                            >gitlab.freedesktop.org/gstreamer/-/tree/1.26.10</button
+                        >.
+                    </p>
+                    <p class="notice-text">
+                        This software uses libraries from the <button
+                            class="link-btn"
+                            onclick={() => openExternal("https://ffmpeg.org/")}
+                            >FFmpeg</button
+                        >
+                        project under the
+                        <button
+                            class="link-btn"
+                            onclick={() =>
+                                openExternal(
+                                    "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html",
+                                )}>LGPLv2.1</button
+                        >. The complete source code for this version of FFmpeg is
+                        available at
+                        <button
+                            class="link-btn"
+                            onclick={() =>
+                                openExternal(
+                                    "https://www.ffmpeg.org/releases/ffmpeg-7.1.1.tar.gz",
+                                )}>ffmpeg.org/releases/ffmpeg-7.1.1.tar.gz</button
+                        >. It was compiled with:
+                        <code class="notice-code"
+                            >--toolchain=msvc --enable-shared --disable-static
+                            --disable-programs --disable-doc --disable-everything
+                            --enable-encoder=ffv1 --enable-decoder=ffv1
+                            --disable-avdevice --disable-postproc --disable-network
+                            --disable-autodetect</code
+                        >. FFmpeg is a trademark of Fabrice Bellard, originator of
+                        the FFmpeg project.
+                    </p>
+                </div>
             </div>
         </div>
     </div>
-</div>
+{/if}
 
 <style>
-    .about {
+    .about-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(4px);
         display: flex;
-        flex-direction: column;
-        height: 100%;
-        gap: 1.5rem;
-        min-height: 0;
-    }
-
-    .about-header {
-        flex-shrink: 0;
-    }
-
-    .about-header h2 {
-        font-family: "Bebas Neue", Impact, "Arial Narrow", sans-serif;
-        font-size: 1.375rem;
-        font-weight: 400;
-        color: #e8e6e3;
-        letter-spacing: 0.06em;
-    }
-
-    .about-content {
-        flex: 1;
-        display: flex;
-        align-items: flex-start;
+        align-items: center;
         justify-content: center;
-        padding-top: 2rem;
-        padding-bottom: 2rem;
+        z-index: 1000;
+    }
+
+    .about-modal {
+        position: relative;
+        max-width: 520px;
+        max-height: 85vh;
         overflow-y: auto;
-        min-height: 0;
+        border-radius: 0.5rem;
+        background: #1a1917;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+        padding: 2rem;
+    }
+
+    .about-close {
+        position: absolute;
+        top: 0.75rem;
+        right: 0.75rem;
+        background: none;
+        border: none;
+        color: #8a8a8a;
+        font-size: 1.5rem;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.25rem;
+        transition: all 0.15s ease;
+    }
+
+    .about-close:hover {
+        color: #e8e6e3;
+        background: rgba(255, 255, 255, 0.08);
     }
 
     .about-card {
-        background: rgba(255, 255, 255, 0.015);
-        border: 1px solid rgba(255, 255, 255, 0.04);
-        border-radius: 0.25rem;
-        padding: 2.5rem 3rem;
-        max-width: 480px;
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -419,13 +453,27 @@
     }
 
     /* Light mode overrides */
-    :global(body.light-mode) .about-header h2 {
+    :global(body.light-mode) .about-overlay {
+        background: rgba(0, 0, 0, 0.35);
+    }
+
+    :global(body.light-mode) .about-modal {
+        background: #ffffff;
+        border-color: rgba(0, 0, 0, 0.12);
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.2);
+    }
+
+    :global(body.light-mode) .about-close {
+        color: #8a8a8a;
+    }
+
+    :global(body.light-mode) .about-close:hover {
         color: #2a2a2a;
+        background: rgba(0, 0, 0, 0.06);
     }
 
     :global(body.light-mode) .about-card {
-        background: rgba(255, 255, 255, 0.85);
-        border-color: rgba(0, 0, 0, 0.08);
+        background: transparent;
     }
 
     :global(body.light-mode) .about-logo {

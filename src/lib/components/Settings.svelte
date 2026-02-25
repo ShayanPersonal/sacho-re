@@ -22,6 +22,9 @@
     } from "$lib/sounds";
     import { setCustomSound, clearCustomSound } from "$lib/api";
     import { refreshSessions } from "$lib/stores/sessions";
+    import About from "$lib/components/About.svelte";
+
+    let showAbout = $state(false);
 
     function positionTooltip(node: HTMLElement) {
         const rect = node.getBoundingClientRect();
@@ -250,6 +253,18 @@
 <div class="settings">
     <div class="settings-header">
         <h2>Settings</h2>
+        <button class="about-btn" onclick={() => (showAbout = true)} title="About Sacho">
+            <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+            >
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 16v-4M12 8h.01" />
+            </svg>
+            About
+        </button>
         <div class="header-right">
             {#if $saveStatus === "saving" || $saveStatus === "saved"}
                 <div
@@ -935,6 +950,8 @@
     {/if}
 </div>
 
+<About open={showAbout} onclose={() => (showAbout = false)} />
+
 <style>
     .settings {
         display: flex;
@@ -947,6 +964,7 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
+        position: relative;
     }
 
     .settings-header h2 {
@@ -1651,6 +1669,48 @@
 
     :global(body.light-mode) .loading {
         color: #8a8a8a;
+    }
+
+    /* About button */
+    .about-btn {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.375rem 0.75rem;
+        background: transparent;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 0.25rem;
+        color: #6b6b6b;
+        font-family: inherit;
+        font-size: 0.75rem;
+        font-weight: 500;
+        letter-spacing: 0.03em;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all 0.2s ease;
+    }
+
+    .about-btn svg {
+        width: 14px;
+        height: 14px;
+    }
+
+    .about-btn:hover {
+        color: #a8a8a8;
+        border-color: rgba(255, 255, 255, 0.1);
+    }
+
+    :global(body.light-mode) .about-btn {
+        border-color: rgba(0, 0, 0, 0.12);
+        color: #5a5a5a;
+    }
+
+    :global(body.light-mode) .about-btn:hover {
+        color: #3a3a3a;
+        border-color: rgba(0, 0, 0, 0.2);
     }
 
 </style>
