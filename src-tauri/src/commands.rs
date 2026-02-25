@@ -971,69 +971,103 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
     let total = existing_folders.len() + new_folders.len();
     let progress_counter = std::sync::Arc::new(AtomicUsize::new(0));
 
-    // 3a. Existing sessions — lightweight check (sequential, fast)
-    let mut updated_sessions: Vec<UpdatedSessionData> = Vec::new();
+    // 3a. Existing sessions — lightweight parallel check (metadata I/O only)
+    //
+    // Each worker reads directory entries and checks extensions + mtime.
+    // No header parsing or GStreamer, so threads are very lean. The thread
+    // pool overlaps filesystem latency, which matters on cloud-backed drives.
+    let updated_sessions: Vec<UpdatedSessionData> = if existing_folders.is_empty() {
+        Vec::new()
+    } else {
+        let num_workers = 8.min(existing_folders.len());
+        let work_queue = std::sync::Mutex::new(existing_folders.iter());
+        let (tx, rx) = std::sync::mpsc::channel();
 
-    for (folder_name, path) in &existing_folders {
-        if emit_progress {
-            let done = progress_counter.fetch_add(1, Ordering::Relaxed) + 1;
-            let _ = app.emit("rescan-progress", RescanProgress { current: done, total });
-        }
+        let existing_map_ref = &existing_map;
+        std::thread::scope(|s| {
+            for _ in 0..num_workers {
+                let work = &work_queue;
+                let tx = tx.clone();
+                let app_handle = app.clone();
+                let counter = progress_counter.clone();
 
-        if let Some(db_row) = existing_map.get(folder_name) {
-            let mut has_audio = false;
-            let mut has_midi = false;
-            let mut has_video = false;
-            let mut notes_modified_at = String::new();
+                s.spawn(move || {
+                    loop {
+                        let item = { work.lock().unwrap().next() };
+                        let (folder_name, path) = match item {
+                            Some(pair) => pair,
+                            None => break,
+                        };
 
-            if let Ok(entries) = std::fs::read_dir(path) {
-                for entry in entries.flatten() {
-                    let fname = match entry.file_name().to_str() {
-                        Some(n) => n.to_string(),
-                        None => continue,
-                    };
-                    if fname == "notes.txt" {
-                        if let Ok(meta) = entry.metadata() {
-                            if let Ok(modified) = meta.modified() {
-                                let dt: chrono::DateTime<chrono::Utc> = modified.into();
-                                notes_modified_at = dt.to_rfc3339();
+                        if emit_progress {
+                            let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                            let _ = app_handle.emit("rescan-progress",
+                                RescanProgress { current: done, total });
+                        }
+
+                        let db_row = match existing_map_ref.get(folder_name) {
+                            Some(row) => row,
+                            None => continue,
+                        };
+
+                        let mut has_audio = false;
+                        let mut has_midi = false;
+                        let mut has_video = false;
+                        let mut notes_modified_at = String::new();
+
+                        if let Ok(entries) = std::fs::read_dir(path) {
+                            for entry in entries.flatten() {
+                                let fname = match entry.file_name().to_str() {
+                                    Some(n) => n.to_string(),
+                                    None => continue,
+                                };
+                                if fname == "notes.txt" {
+                                    if let Ok(meta) = entry.metadata() {
+                                        if let Ok(modified) = meta.modified() {
+                                            let dt: chrono::DateTime<chrono::Utc> = modified.into();
+                                            notes_modified_at = dt.to_rfc3339();
+                                        }
+                                    }
+                                } else if fname.ends_with(".wav") || fname.ends_with(".flac") {
+                                    has_audio = true;
+                                } else if fname.ends_with(".mid") {
+                                    has_midi = true;
+                                } else if fname.ends_with(".mkv") {
+                                    has_video = true;
+                                }
                             }
                         }
-                    } else if fname.ends_with(".wav") || fname.ends_with(".flac") {
-                        has_audio = true;
-                    } else if fname.ends_with(".mid") {
-                        has_midi = true;
-                    } else if fname.ends_with(".mkv") {
-                        has_video = true;
+
+                        let tags_changed = has_audio != db_row.has_audio
+                            || has_midi != db_row.has_midi
+                            || has_video != db_row.has_video;
+                        let notes_changed = notes_modified_at != db_row.notes_modified_at;
+
+                        if tags_changed || notes_changed {
+                            let notes_path = path.join("notes.txt");
+                            let notes = std::fs::read_to_string(&notes_path).unwrap_or_default();
+
+                            let _ = tx.send(UpdatedSessionData {
+                                id: folder_name.clone(),
+                                has_audio,
+                                has_midi,
+                                has_video,
+                                notes,
+                                notes_modified_at: if notes_changed {
+                                    notes_modified_at
+                                } else {
+                                    db_row.notes_modified_at.clone()
+                                },
+                                title: crate::session::extract_title_from_folder_name(folder_name),
+                            });
+                        }
                     }
-                }
-            }
-
-            let tags_changed = has_audio != db_row.has_audio
-                || has_midi != db_row.has_midi
-                || has_video != db_row.has_video;
-            let notes_changed = notes_modified_at != db_row.notes_modified_at;
-
-            if tags_changed || notes_changed {
-                let notes_path = path.join("notes.txt");
-                let notes = std::fs::read_to_string(&notes_path).unwrap_or_default();
-
-                updated_sessions.push(UpdatedSessionData {
-                    id: folder_name.clone(),
-                    has_audio,
-                    has_midi,
-                    has_video,
-                    notes,
-                    notes_modified_at: if notes_changed {
-                        notes_modified_at
-                    } else {
-                        db_row.notes_modified_at.clone()
-                    },
-                    title: crate::session::extract_title_from_folder_name(folder_name),
                 });
             }
-        }
-    }
+            drop(tx);
+            rx.iter().collect()
+        })
+    };
 
     // 3b. New sessions — parallel full scan with header parsing
     //
