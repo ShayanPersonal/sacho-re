@@ -1370,6 +1370,7 @@ pub fn get_encoder_availability() -> EncoderAvailability {
 #[derive(Debug, Clone, Serialize)]
 pub struct EncoderTestResult {
     pub success: bool,
+    pub warning: bool,
     pub frames_sent: u64,
     pub frames_dropped: u64,
     pub message: String,
@@ -1645,6 +1646,8 @@ async fn run_pipeline_test(
     let fps_ok = actual_fps / expected_fps >= 0.8;
     let success = fps_ok && total_dropped <= 1;
 
+    let low_fps_warning = !fps_ok && total_dropped == 0;
+
     let message = if success {
         format!(
             "OK — {} frames dropped ({}x{})",
@@ -1659,7 +1662,7 @@ async fn run_pipeline_test(
         )
     } else {
         format!(
-            "No dropped frames, but low framerate - {:.0} fps, expected {:.0}. This can sometimes happen if a camera reports incorrect framerates.",
+            "No dropped frames, but low framerate. Got {:.0} fps, expected {:.0}. This can sometimes happen if a camera reports incorrect framerates.",
             actual_fps, expected_fps
         )
     };
@@ -1668,6 +1671,7 @@ async fn run_pipeline_test(
 
     Ok(EncoderTestResult {
         success,
+        warning: low_fps_warning,
         frames_sent: total_sent,
         frames_dropped: total_dropped,
         message,

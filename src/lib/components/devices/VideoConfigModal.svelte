@@ -949,7 +949,8 @@
             <div
                 class="test-result"
                 class:test-pass={testResult.success}
-                class:test-fail={!testResult.success}
+                class:test-warn={testResult.warning}
+                class:test-fail={!testResult.success && !testResult.warning}
             >
                 {testResult.message}
             </div>
@@ -1323,6 +1324,11 @@
         color: #4ade80;
     }
 
+    .test-warn {
+        background: rgba(234, 179, 8, 0.12);
+        color: #facc15;
+    }
+
     .test-fail {
         background: rgba(220, 38, 38, 0.12);
         color: #f87171;
@@ -1448,6 +1454,11 @@
     :global(body.light-mode) .test-pass {
         background: rgba(34, 197, 94, 0.1);
         color: #16a34a;
+    }
+
+    :global(body.light-mode) .test-warn {
+        background: rgba(234, 179, 8, 0.1);
+        color: #a16207;
     }
 
     :global(body.light-mode) .test-fail {

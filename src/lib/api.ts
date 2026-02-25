@@ -549,6 +549,7 @@ export interface AutoSelectProgress {
 /** Result of an encoder preset test */
 export interface EncoderTestResult {
   success: boolean;
+  warning: boolean;
   frames_sent: number;
   frames_dropped: number;
   message: string;
