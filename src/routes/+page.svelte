@@ -320,15 +320,15 @@
     }
 
     .icon-recordings {
-        stroke: #a86565;
+        stroke: #9c6969;
     }
 
     .icon-visualize {
-        stroke: #6a9a62;
+        stroke: #6c9066;
     }
 
     .icon-devices {
-        stroke: #6590a5;
+        stroke: #698b9b;
     }
 
     .icon-settings {

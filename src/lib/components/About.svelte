@@ -288,19 +288,23 @@
         100% { transform: scale(1); opacity: 1; }
     }
 
-    /* Ray wave — each ray pumps outward and back, staggered 80ms apart */
-    .ray-0 { animation: ray-pump-0 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.05s, ray-pump-0 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.69s; }
-    .ray-1 { animation: ray-pump-1 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.13s; }
-    .ray-2 { animation: ray-pump-2 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.21s; }
-    .ray-3 { animation: ray-pump-3 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.29s; }
-    .ray-4 { animation: ray-pump-4 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.37s; }
-    .ray-5 { animation: ray-pump-5 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.45s; }
-    .ray-6 { animation: ray-pump-6 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.53s; }
-    .ray-7 { animation: ray-pump-7 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.61s; }
+    /* Ray wave — slow start, fast middle, slow finish */
+    .ray-0 { animation: ray-pump-0 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.05s, ray-pump-0-end 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.79s; }
+    .ray-1 { animation: ray-pump-1 0.38s cubic-bezier(0.33, 1, 0.68, 1) 0.15s; }
+    .ray-2 { animation: ray-pump-2 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.25s; }
+    .ray-3 { animation: ray-pump-3 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.33s; }
+    .ray-4 { animation: ray-pump-4 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.41s; }
+    .ray-5 { animation: ray-pump-5 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.49s; }
+    .ray-6 { animation: ray-pump-6 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.59s; }
+    .ray-7 { animation: ray-pump-7 0.38s cubic-bezier(0.33, 1, 0.68, 1) 0.69s; }
 
     @keyframes ray-pump-0 { /* top */
         0%, 100% { transform: translate(0, 0); }
         50% { transform: translate(0, -5px); }
+    }
+    @keyframes ray-pump-0-end { /* top — settling */
+        0%, 100% { transform: translate(0, 0); }
+        50% { transform: translate(0, -3px); }
     }
     @keyframes ray-pump-1 { /* top-right */
         0%, 100% { transform: translate(0, 0); }
