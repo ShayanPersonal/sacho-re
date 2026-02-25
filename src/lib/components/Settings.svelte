@@ -651,10 +651,8 @@
                         log back in if your computer has a login screen.
                     </p>
                     <p class="setting-recommendation">
-                        To stop the application from running in the background,
-                        right-click the tray icon and select Quit. Note that
-                        your performances will not be recorded until the
-                        application is started again.
+                        To stop the application,
+                        right-click the tray icon and select Quit.
                     </p>
                     <!--
                     <button
