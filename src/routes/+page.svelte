@@ -313,10 +313,6 @@
         color: rgb(219, 187, 116);
     }
 
-    .tab.active .tab-icon {
-        stroke: rgb(219, 187, 116);
-    }
-
     .tab-icon {
         width: 16px;
         height: 16px;
@@ -337,6 +333,22 @@
 
     .icon-settings {
         stroke: #8a8a8a;
+    }
+
+    .tab.active .icon-recordings {
+        stroke: #c2906d;
+    }
+
+    .tab.active .icon-visualize {
+        stroke: #a3ab6b;
+    }
+
+    .tab.active .icon-devices {
+        stroke: #a0a68d;
+    }
+
+    .tab.active .icon-settings {
+        stroke: #b3a37f;
     }
 
     .content {
@@ -367,8 +379,20 @@
         color: #a08030;
     }
 
-    .app.light-mode .tab.active .tab-icon {
-        stroke: #a08030;
+    .app.light-mode .tab.active .icon-recordings {
+        stroke: #a4734b;
+    }
+
+    .app.light-mode .tab.active .icon-visualize {
+        stroke: #858d49;
+    }
+
+    .app.light-mode .tab.active .icon-devices {
+        stroke: #83886b;
+    }
+
+    .app.light-mode .tab.active .icon-settings {
+        stroke: #95855d;
     }
 
     .app.light-mode .tab.active::after {
