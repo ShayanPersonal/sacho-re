@@ -1647,19 +1647,19 @@ async fn run_pipeline_test(
 
     let message = if success {
         format!(
-            "OK — {:.0} fps, {} frames, {} dropped ({}x{})",
-            actual_fps, total_sent, total_dropped,
+            "OK — {} frames dropped ({}x{})",
+            total_dropped,
             capture.width, capture.height
         )
-    } else if total_dropped > 1 {
+    } else if total_dropped >= 1 {
         format!(
-            "Dropped {} of {} frames — {:.0} fps ({}x{})",
+            "Dropped {} of {} frames - {:.0} fps ({}x{})",
             total_dropped, total_sent + total_dropped, actual_fps,
             capture.width, capture.height
         )
     } else {
         format!(
-            "Low framerate — {:.0} fps, expected {:.0}. This can sometimes happen if a camera reports incorrect framerates.",
+            "No dropped frames, but low framerate - {:.0} fps, expected {:.0}. This can sometimes happen if a camera reports incorrect framerates.",
             actual_fps, expected_fps
         )
     };
