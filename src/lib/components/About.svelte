@@ -167,7 +167,7 @@
                         This software is provided "as-is" without warranty of any
                         kind, express or implied. In no event shall the author be
                         liable for any claim, damages, or other liability arising
-                        from the use of this software. Use at your own risk.
+                        from the use of this software.
                     </p>
                 </div>
 

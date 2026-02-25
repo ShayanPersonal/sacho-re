@@ -3,6 +3,7 @@
 import { writable, get } from 'svelte/store';
 import type { Config } from '$lib/api';
 import { getConfig, updateConfig } from '$lib/api';
+import { recordingState, refreshRecordingState } from './recording';
 
 export const settings = writable<Config | null>(null);
 export const isSaving = writable(false);
@@ -27,15 +28,29 @@ export async function saveSettings(newSettings: Config) {
     clearTimeout(saveStatusTimeout);
     saveStatusTimeout = null;
   }
-  
+
   isSaving.set(true);
   saveStatus.set('saving');
-  
+
+  // Check if the change affects recording pipelines (requires backend restart)
+  const current = get(settings);
+  const pipelineAffected = current != null && (
+    current.pre_roll_secs !== newSettings.pre_roll_secs ||
+    current.encode_during_preroll !== newSettings.encode_during_preroll
+  );
+
+  if (pipelineAffected) {
+    // Optimistically signal initializing so RecordingIndicator disables during pipeline restart.
+    // The backend sets this too, but its synchronous Initializing→Idle cycle completes within
+    // the single invoke call, so the frontend event loop never observes the intermediate state.
+    recordingState.update(s => ({ ...s, status: 'initializing' }));
+  }
+
   try {
     await updateConfig(newSettings);
-    settings.set(newSettings);
+    settings.set({ ...newSettings });
     saveStatus.set('saved');
-    
+
     // Fade back to idle after 2 seconds
     saveStatusTimeout = setTimeout(() => {
       saveStatus.set('idle');
@@ -46,6 +61,10 @@ export async function saveSettings(newSettings: Config) {
     throw error;
   } finally {
     isSaving.set(false);
+    if (pipelineAffected) {
+      // Sync recording state with backend (restores idle, or recording if update was rejected)
+      await refreshRecordingState();
+    }
   }
 }
 
