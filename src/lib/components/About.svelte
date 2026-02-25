@@ -50,41 +50,18 @@
                 <div class="about-logo">
                     <svg viewBox="0 0 64 64" fill="currentColor">
                         <!-- Outer ring -->
-                        <circle
-                            cx="32"
-                            cy="32"
-                            r="20"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="3"
-                        />
+                        <circle class="ring" cx="32" cy="32" r="20" fill="none" stroke="currentColor" stroke-width="3" />
                         <!-- Center circle -->
                         <circle cx="32" cy="32" r="8" fill="currentColor" />
-                        <!-- 8 radiating lines -->
-                        <path
-                            d="M32 4v8M32 52v8"
-                            stroke="currentColor"
-                            stroke-width="3"
-                            stroke-linecap="round"
-                        />
-                        <path
-                            d="M4 32h8M52 32h8"
-                            stroke="currentColor"
-                            stroke-width="3"
-                            stroke-linecap="round"
-                        />
-                        <path
-                            d="M12.2 12.2l5.6 5.6M46.2 46.2l5.6 5.6"
-                            stroke="currentColor"
-                            stroke-width="3"
-                            stroke-linecap="round"
-                        />
-                        <path
-                            d="M51.8 12.2l-5.6 5.6M17.8 46.2l-5.6 5.6"
-                            stroke="currentColor"
-                            stroke-width="3"
-                            stroke-linecap="round"
-                        />
+                        <!-- 8 radiating rays (clockwise from top, individually animated) -->
+                        <path class="ray ray-0" d="M32 4v8" stroke="currentColor" stroke-width="3" stroke-linecap="round" fill="none" />
+                        <path class="ray ray-1" d="M51.8 12.2l-5.6 5.6" stroke="currentColor" stroke-width="3" stroke-linecap="round" fill="none" />
+                        <path class="ray ray-2" d="M52 32h8" stroke="currentColor" stroke-width="3" stroke-linecap="round" fill="none" />
+                        <path class="ray ray-3" d="M46.2 46.2l5.6 5.6" stroke="currentColor" stroke-width="3" stroke-linecap="round" fill="none" />
+                        <path class="ray ray-4" d="M32 52v8" stroke="currentColor" stroke-width="3" stroke-linecap="round" fill="none" />
+                        <path class="ray ray-5" d="M17.8 46.2l-5.6 5.6" stroke="currentColor" stroke-width="3" stroke-linecap="round" fill="none" />
+                        <path class="ray ray-6" d="M4 32h8" stroke="currentColor" stroke-width="3" stroke-linecap="round" fill="none" />
+                        <path class="ray ray-7" d="M12.2 12.2l5.6 5.6" stroke="currentColor" stroke-width="3" stroke-linecap="round" fill="none" />
                     </svg>
                 </div>
 
@@ -297,6 +274,61 @@
     .about-logo svg {
         width: 100%;
         height: 100%;
+    }
+
+    /* Ring expand animation */
+    .ring {
+        transform-box: fill-box;
+        transform-origin: center;
+        animation: ring-expand 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    @keyframes ring-expand {
+        0% { transform: scale(0.82); opacity: 0.4; }
+        100% { transform: scale(1); opacity: 1; }
+    }
+
+    /* Ray wave — each ray pumps outward and back, staggered 80ms apart */
+    .ray-0 { animation: ray-pump-0 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.05s, ray-pump-0 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.69s; }
+    .ray-1 { animation: ray-pump-1 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.13s; }
+    .ray-2 { animation: ray-pump-2 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.21s; }
+    .ray-3 { animation: ray-pump-3 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.29s; }
+    .ray-4 { animation: ray-pump-4 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.37s; }
+    .ray-5 { animation: ray-pump-5 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.45s; }
+    .ray-6 { animation: ray-pump-6 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.53s; }
+    .ray-7 { animation: ray-pump-7 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.61s; }
+
+    @keyframes ray-pump-0 { /* top */
+        0%, 100% { transform: translate(0, 0); }
+        50% { transform: translate(0, -5px); }
+    }
+    @keyframes ray-pump-1 { /* top-right */
+        0%, 100% { transform: translate(0, 0); }
+        50% { transform: translate(3.5px, -3.5px); }
+    }
+    @keyframes ray-pump-2 { /* right */
+        0%, 100% { transform: translate(0, 0); }
+        50% { transform: translate(5px, 0); }
+    }
+    @keyframes ray-pump-3 { /* bottom-right */
+        0%, 100% { transform: translate(0, 0); }
+        50% { transform: translate(3.5px, 3.5px); }
+    }
+    @keyframes ray-pump-4 { /* bottom */
+        0%, 100% { transform: translate(0, 0); }
+        50% { transform: translate(0, 5px); }
+    }
+    @keyframes ray-pump-5 { /* bottom-left */
+        0%, 100% { transform: translate(0, 0); }
+        50% { transform: translate(-3.5px, 3.5px); }
+    }
+    @keyframes ray-pump-6 { /* left */
+        0%, 100% { transform: translate(0, 0); }
+        50% { transform: translate(-5px, 0); }
+    }
+    @keyframes ray-pump-7 { /* top-left */
+        0%, 100% { transform: translate(0, 0); }
+        50% { transform: translate(-3.5px, -3.5px); }
     }
 
     .about-title {
