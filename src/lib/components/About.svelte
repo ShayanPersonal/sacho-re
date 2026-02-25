@@ -307,9 +307,9 @@
     }
 
     .about-title h3 {
-        font-family: "Bebas Neue", Impact, "Arial Narrow", sans-serif;
-        font-size: 2rem;
-        font-weight: 400;
+        font-family: "Roboto", -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 1.5rem;
+        font-weight: 500;
         color: #e8e6e3;
         letter-spacing: 0.1em;
         margin: 0;

@@ -968,11 +968,11 @@
     }
 
     .settings-header h2 {
-        font-family: "Bebas Neue", Impact, "Arial Narrow", sans-serif;
-        font-size: 1.375rem;
-        font-weight: 400;
+        font-family: "Roboto", -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 1.125rem;
+        font-weight: 500;
         color: #e8e6e3;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.02em;
     }
 
     .save-status {
@@ -1077,9 +1077,9 @@
     }
 
     .settings-section h3 {
-        font-family: "Bebas Neue", Impact, "Arial Narrow", sans-serif;
+        font-family: "Roboto", -apple-system, BlinkMacSystemFont, sans-serif;
         font-size: 0.6875rem;
-        font-weight: 400;
+        font-weight: 500;
         text-transform: uppercase;
         letter-spacing: 0.1em;
         color: #5a5a5a;

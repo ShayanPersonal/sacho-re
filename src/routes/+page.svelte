@@ -1,4 +1,9 @@
 <script lang="ts">
+    import "@fontsource/roboto/300.css";
+    import "@fontsource/roboto/400.css";
+    import "@fontsource/roboto/500.css";
+    import "@fontsource/dm-mono/400.css";
+    import "@fontsource/dm-mono/500.css";
     import { onMount } from "svelte";
     import RecordingIndicator from "$lib/components/RecordingIndicator.svelte";
     import SessionBrowser from "$lib/components/sessions/SessionBrowser.svelte";
@@ -244,9 +249,9 @@
     }
 
     :global(h1, h2, h3, h4, h5, h6) {
-        font-family: "Bebas Neue", Impact, "Arial Narrow", sans-serif;
-        font-weight: 400;
-        letter-spacing: 0.05em;
+        font-family: "Roboto", -apple-system, BlinkMacSystemFont, sans-serif;
+        font-weight: 500;
+        letter-spacing: 0.02em;
     }
 
     .app {
@@ -261,7 +266,7 @@
     .tabs {
         display: flex;
         align-items: center;
-        gap: 0.125rem;
+        gap: 0.25rem;
         padding: 0.625rem 1rem 0.625rem 0.5rem;
         background: rgb(14, 14, 12);
         border-bottom: 1px solid rgba(255, 255, 255, 0.2);
@@ -280,25 +285,24 @@
         border: none;
         border-radius: 0.25rem;
         color: #8a8a8a;
-        font-family: inherit;
-        font-size: 0.875rem;
+        font-family: "Roboto", -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 0.8125rem;
         font-weight: 500;
-        letter-spacing: 0.03em;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
         cursor: pointer;
         transition: all 0.2s ease;
         position: relative;
     }
 
-    .tab:not(:last-of-type)::after {
+    .tab.active::after {
         content: "";
         position: absolute;
-        right: -0.0625rem;
-        top: 50%;
-        transform: translateY(-50%);
-        height: 1rem;
-        width: 1px;
-        background: rgba(255, 255, 255, 0.12);
+        bottom: 0;
+        left: 0.75rem;
+        right: 0.75rem;
+        height: 2px;
+        background: rgb(219, 187, 116);
     }
 
     .tab:hover {
@@ -307,9 +311,10 @@
 
     .tab.active {
         color: rgb(219, 187, 116);
-        text-shadow:
-            0 0 8px rgba(219, 187, 116, 0.5),
-            0 0 16px rgba(219, 187, 116, 0.25);
+    }
+
+    .tab.active .tab-icon {
+        stroke: rgb(219, 187, 116);
     }
 
     .tab-icon {
@@ -319,19 +324,19 @@
     }
 
     .icon-recordings {
-        stroke: #c75050;
+        stroke: #a86565;
     }
 
     .icon-visualize {
-        stroke: #6bc750;
+        stroke: #6a9a62;
     }
 
     .icon-devices {
-        stroke: #50a0c7;
+        stroke: #6590a5;
     }
 
     .icon-settings {
-        stroke: #9a8a8a;
+        stroke: #8a8a8a;
     }
 
     .content {
@@ -360,13 +365,14 @@
 
     .app.light-mode .tab.active {
         color: #a08030;
-        text-shadow:
-            0 0 8px rgba(160, 128, 48, 0.3),
-            0 0 16px rgba(160, 128, 48, 0.15);
     }
 
-    .app.light-mode .tab:not(:last-of-type)::after {
-        background: rgba(0, 0, 0, 0.1);
+    .app.light-mode .tab.active .tab-icon {
+        stroke: #a08030;
+    }
+
+    .app.light-mode .tab.active::after {
+        background: #a08030;
     }
 
     /* Global light mode overrides for child components */

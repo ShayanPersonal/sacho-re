@@ -436,11 +436,11 @@
   }
 
   .sidebar-header h2 {
-    font-family: 'Bebas Neue', Impact, 'Arial Narrow', sans-serif;
-    font-size: 1.375rem;
-    font-weight: 400;
+    font-family: "Roboto", -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 1.125rem;
+    font-weight: 500;
     color: #e8e6e3;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.02em;
   }
 
   .sidebar-actions-top {

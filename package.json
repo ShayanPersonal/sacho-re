@@ -13,16 +13,18 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@fontsource/dm-mono": "^5.2.7",
+    "@fontsource/roboto": "^5.2.10",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-autostart": "^2.5.1",
+    "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-notification": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-shell": "^2",
-    "@tauri-apps/plugin-dialog": "^2",
+    "@tonejs/midi": "^2.0.28",
     "d3": "^7.9.0",
-    "wavesurfer.js": "^7.8.0",
     "tone": "^15.0.4",
-    "@tonejs/midi": "^2.0.28"
+    "wavesurfer.js": "^7.8.0"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.6",
