@@ -89,7 +89,7 @@
                                 />
                             </svg>
                         </span>
-                        <span class="feature-label">Auto-Recording</span>
+                        <span class="feature-label">Auto-Capture</span>
                         <span class="feature-desc"
                             >Automatic MIDI, audio, and video recording when playing
                             is detected.</span
@@ -102,18 +102,21 @@
                                 fill="none"
                                 stroke="currentColor"
                                 stroke-width="1.5"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
                             >
-                                <rect x="3" y="3" width="18" height="18" rx="1" />
-                                <line x1="3" y1="9" x2="21" y2="9" />
-                                <line x1="3" y1="15" x2="21" y2="15" />
-                                <line x1="9" y1="3" x2="9" y2="21" />
-                                <line x1="15" y1="3" x2="15" y2="21" />
+                                <!-- fragmented pre-roll -->
+                                <path d="M2 13l0.5-2" opacity="0.35" />
+                                <path d="M4 11.5l0.6 1" opacity="0.45" />
+                                <path d="M6 12l0.7-1.5 0.7 3 0.7-1.5" opacity="0.55" />
+                                <path d="M9.5 12l0.7-2.5 0.8 5 0.7-2.5" opacity="0.7" />
+                                <!-- solid waveform -->
+                                <path d="M12 12l1.5-5 2 10 2-10 1.5 5h3" />
                             </svg>
                         </span>
-                        <span class="feature-label">Similarity Map</span>
+                        <span class="feature-label">Pre-roll Capture</span>
                         <span class="feature-desc"
-                            >Quickly locate recordings with similar themes and
-                            chords.</span
+                            >Capture the moments leading up to the performance - don't miss a beat.</span
                         >
                     </div>
                     <div class="feature">
@@ -123,29 +126,18 @@
                                 fill="none"
                                 stroke="currentColor"
                                 stroke-width="1.5"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
                             >
-                                <path d="M5 4h14M5 20h14" />
-                                <path d="M7 4c0 4 5 7 5 8s-5 4-5 8" />
-                                <path d="M17 4c0 4-5 7-5 8s5 4 5 8" />
-                                <path d="M8 19h8" opacity="0.4" />
+                                <circle cx="8.5" cy="12" r="7" />
+                                <circle cx="15.5" cy="12" r="7" />
+                                <path d="M12 5.96A7 7 0 0 1 12 18.04A7 7 0 0 1 12 5.96Z" fill="currentColor" opacity="0.25" stroke="none" />
                             </svg>
                         </span>
-                        <span class="feature-label">Pre-roll Capture</span>
+                        <span class="feature-label">Similar MIDI</span>
                         <span class="feature-desc"
-                            >Capture the moments leading up to the performance.</span
+                            >Quickly locate captures with similar themes and
+                            chords - put your past sessions to use.</span
                         >
                     </div>
-                </div>
-
-                <div class="disclaimer">
-                    <p>
-                        This software is provided "as-is" without warranty of any
-                        kind, express or implied. In no event shall the author be
-                        liable for any claim, damages, or other liability arising
-                        from the use of this software.
-                    </p>
                 </div>
 
                 <div class="open-source-notice">
@@ -164,7 +156,7 @@
                                     "https://www.gnu.org/licenses/lgpl-2.1.html",
                                 )}
                             >GNU Lesser General Public License (LGPL) v2.1</button
-                        >. The complete source code for this version of GStreamer is
+                        >. The complete source code for the version of GStreamer used is
                         available at
                         <button
                             class="link-btn"
@@ -188,7 +180,7 @@
                                 openExternal(
                                     "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html",
                                 )}>LGPLv2.1</button
-                        >. The complete source code for this version of FFmpeg is
+                        >. The complete source code for the version of FFmpeg used is
                         available at
                         <button
                             class="link-btn"
@@ -205,6 +197,15 @@
                             --disable-autodetect</code
                         >. FFmpeg is a trademark of Fabrice Bellard, originator of
                         the FFmpeg project.
+                    </p>
+                </div>
+
+                <div class="disclaimer">
+                    <p>
+                        This software is provided "as-is" without warranty of any
+                        kind, express or implied. In no event shall the author be
+                        liable for any claim, damages, or other liability arising
+                        from the use of this software. Use at your own risk.
                     </p>
                 </div>
             </div>
