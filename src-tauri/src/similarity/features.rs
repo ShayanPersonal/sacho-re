@@ -96,9 +96,9 @@ pub fn extract_melodic(melody: &[MelodyNote]) -> Option<MelodicFeatures> {
     })
 }
 
-/// Extract harmonic features from all note events. Returns None if < 2 notes.
+/// Extract harmonic features from all note events. Returns None if < 4 notes.
 pub fn extract_harmonic(events: &[NoteEvent], ticks_per_beat: u16) -> Option<HarmonicFeatures> {
-    if events.len() < 2 {
+    if events.len() < 4 {
         return None;
     }
 

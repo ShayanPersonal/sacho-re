@@ -163,7 +163,7 @@
       ctx.stroke();
     }
 
-    if (!$selectedFileId || $similarFiles.length === 0) {
+    if (!$selectedFileId || ($similarFiles.length === 0 && !$selectedFile)) {
       // Empty/no-selection state
       ctx.fillStyle = isLightMode ? '#8a8a8a' : '#4a4a4a';
       ctx.font = '14px Roboto, sans-serif';
@@ -176,6 +176,39 @@
       } else if ($isComputing) {
         ctx.fillText('Computing similarity...', cx, cy);
       }
+      return;
+    }
+
+    // Selected file with no features: show center node + message
+    if ($selectedFile && !$selectedFile.has_features) {
+      // Draw center node so user can click to preview
+      ctx.shadowColor = isLightMode ? 'rgba(130, 130, 130, 0.4)' : 'rgba(130, 130, 130, 0.3)';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+      ctx.fillStyle = isLightMode ? '#9a9a9a' : '#6a6a6a';
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // File name
+      ctx.fillStyle = isLightMode ? '#2a2a2a' : '#e8e6e3';
+      ctx.font = '11px Roboto, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      const name = $selectedFile.file_name.length > 20
+        ? $selectedFile.file_name.slice(0, 18) + '...'
+        : $selectedFile.file_name;
+      ctx.fillText(name, cx, cy + 18);
+
+      // Message
+      ctx.fillStyle = isLightMode ? '#8a8a8a' : '#5a5a5a';
+      ctx.font = '12px Roboto, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Track too short for similarity', cx, cy + 46);
+      return;
+    }
+
+    if ($similarFiles.length === 0) {
       return;
     }
 
@@ -403,6 +436,7 @@
               <button
                 class="file-item"
                 class:selected={$selectedFileId === file.id}
+                class:muted={!file.has_features}
                 onclick={() => selectFile(file.id)}
               >
                 <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -703,6 +737,10 @@
     background: rgba(201, 169, 98, 0.1);
     border-color: rgba(201, 169, 98, 0.2);
     color: #c9a962;
+  }
+
+  .file-item.muted {
+    opacity: 0.35;
   }
 
   .file-icon {

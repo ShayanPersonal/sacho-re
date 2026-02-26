@@ -151,7 +151,16 @@ pub fn run() {
                 }
             };
             app.manage(session_db);
-            
+
+            // Initialize similarity cache and warm it in the background
+            app.manage(commands::SimilarityCache::new());
+            let handle = app_handle.clone();
+            std::thread::spawn(move || {
+                let db = handle.state::<session::SessionDatabase>();
+                let cache = handle.state::<commands::SimilarityCache>();
+                commands::warm_similarity_cache(&db, &cache);
+            });
+
             // Initialize device health state (before MIDI monitor so it's available)
             app.manage(RwLock::new(devices::health::DeviceHealthState::new()));
 

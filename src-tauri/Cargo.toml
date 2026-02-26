@@ -88,6 +88,9 @@ sysinfo = { version = "0.38.1", default-features = false, features = ["disk", "s
 # Parallel processing
 rayon = "1.10"
 
+# Fast binary serialization for MIDI features
+bincode = "1"
+
 # Windows console attachment for CLI logging
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

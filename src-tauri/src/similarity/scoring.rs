@@ -1,106 +1,108 @@
 // Similarity scoring: cosine similarity with melodic and harmonic modes
 
-use super::features::{MidiFileFeatures, ChunkedFileFeatures};
+use super::features::{ChunkFeatures, ChunkedFileFeatures, HarmonicFeatures, MelodicFeatures};
+use rayon::prelude::*;
 
 pub enum SimilarityMode {
     Melodic,
     Harmonic,
 }
 
-/// Compute similarity between two MIDI files (0.0 = dissimilar, 1.0 = identical).
-pub fn compute_similarity(a: &MidiFileFeatures, b: &MidiFileFeatures, mode: &SimilarityMode) -> f32 {
-    match mode {
-        SimilarityMode::Melodic => melodic_similarity(a, b),
-        SimilarityMode::Harmonic => harmonic_similarity(a, b),
+// --- Precomputed L2 norms ---
+
+struct MelodicNorms {
+    interval_bigrams: f32,
+    contour_trigrams: f32,
+    interval_histogram: f32,
+    pitch_class_histogram: f32,
+}
+
+struct HarmonicNorms {
+    chroma: f32,
+    pc_transitions: f32,
+}
+
+struct ChunkNorms {
+    melodic: Option<MelodicNorms>,
+    harmonic: Option<HarmonicNorms>,
+}
+
+fn l2_norm(v: &[f32]) -> f32 {
+    v.iter().map(|x| x * x).sum::<f32>().sqrt()
+}
+
+fn compute_chunk_norms(chunk: &ChunkFeatures) -> ChunkNorms {
+    ChunkNorms {
+        melodic: chunk.melodic.as_ref().map(|m| MelodicNorms {
+            interval_bigrams: l2_norm(&m.interval_bigrams),
+            contour_trigrams: l2_norm(&m.contour_trigrams),
+            interval_histogram: l2_norm(&m.interval_histogram),
+            pitch_class_histogram: l2_norm(&m.pitch_class_histogram),
+        }),
+        harmonic: chunk.harmonic.as_ref().map(|h| HarmonicNorms {
+            chroma: l2_norm(&h.chroma),
+            pc_transitions: l2_norm(&h.pc_transitions),
+        }),
     }
 }
 
-/// Find the most similar files to a target, sorted by score descending.
-pub fn find_most_similar(
-    target_id: &str,
-    all_files: &[(String, MidiFileFeatures)],
-    mode: SimilarityMode,
-    max_results: usize,
-    threshold: f32,
-) -> Vec<(String, f32)> {
-    let target = match all_files.iter().find(|(id, _)| id == target_id) {
-        Some((_, features)) => features,
-        None => return Vec::new(),
-    };
+// --- Cosine similarity ---
 
-    let mut scores: Vec<(String, f32)> = all_files.iter()
-        .filter(|(id, _)| id != target_id)
-        .map(|(id, features)| {
-            let score = compute_similarity(target, features, &mode);
-            (id.clone(), score)
-        })
-        .filter(|(_, score)| *score >= threshold)
-        .collect();
-
-    scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    scores.truncate(max_results);
-    scores
-}
-
-/// Melodic scoring — weighted cosine, ~90% transposition-invariant.
-fn melodic_similarity(a: &MidiFileFeatures, b: &MidiFileFeatures) -> f32 {
-    let (a_mel, b_mel) = match (&a.melodic, &b.melodic) {
-        (Some(a), Some(b)) => (a, b),
-        _ => return 0.0,
-    };
-
-    0.4 * cosine_similarity(&a_mel.interval_bigrams, &b_mel.interval_bigrams)
-        + 0.3 * cosine_similarity(&a_mel.contour_trigrams, &b_mel.contour_trigrams)
-        + 0.2 * cosine_similarity(&a_mel.interval_histogram, &b_mel.interval_histogram)
-        + 0.1 * cosine_similarity(&a_mel.pitch_class_histogram, &b_mel.pitch_class_histogram)
-}
-
-/// Harmonic scoring — transposition-invariant via circular chroma shift.
-fn harmonic_similarity(a: &MidiFileFeatures, b: &MidiFileFeatures) -> f32 {
-    let (a_harm, b_harm) = match (&a.harmonic, &b.harmonic) {
-        (Some(a), Some(b)) => (a, b),
-        _ => return 0.0,
-    };
-
-    // Chroma must be exactly 12 bins for circular shift
-    if a_harm.chroma.len() != 12 || b_harm.chroma.len() != 12 {
-        return 0.0;
-    }
-
-    // Find best circular shift for chroma
-    let mut best_chroma_sim = 0.0f32;
-    for shift in 0..12 {
-        let shifted = circular_shift_12(&a_harm.chroma, shift);
-        let sim = cosine_similarity(&shifted, &b_harm.chroma);
-        if sim > best_chroma_sim {
-            best_chroma_sim = sim;
-        }
-    }
-
-    0.6 * best_chroma_sim + 0.4 * cosine_similarity(&a_harm.pc_transitions, &b_harm.pc_transitions)
-}
-
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+/// Cosine similarity with precomputed L2 norms — only computes the dot product.
+fn cosine_prenormed(a: &[f32], b: &[f32], norm_a: f32, norm_b: f32) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
     }
-
-    let mut dot = 0.0f32;
-    let mut norm_a = 0.0f32;
-    let mut norm_b = 0.0f32;
-
-    for (x, y) in a.iter().zip(b.iter()) {
-        dot += x * y;
-        norm_a += x * x;
-        norm_b += y * y;
-    }
-
-    let denom = norm_a.sqrt() * norm_b.sqrt();
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let denom = norm_a * norm_b;
     if denom > 0.0 {
         (dot / denom).clamp(0.0, 1.0)
     } else {
         0.0
     }
+}
+
+/// Melodic scoring — weighted cosine, transposition-invariant via intervals.
+fn melodic_similarity(
+    a: &MelodicFeatures,
+    b: &MelodicFeatures,
+    na: &MelodicNorms,
+    nb: &MelodicNorms,
+) -> f32 {
+    0.4 * cosine_prenormed(&a.interval_bigrams, &b.interval_bigrams, na.interval_bigrams, nb.interval_bigrams)
+        + 0.3 * cosine_prenormed(&a.contour_trigrams, &b.contour_trigrams, na.contour_trigrams, nb.contour_trigrams)
+        + 0.2 * cosine_prenormed(&a.interval_histogram, &b.interval_histogram, na.interval_histogram, nb.interval_histogram)
+        + 0.1 * cosine_prenormed(&a.pitch_class_histogram, &b.pitch_class_histogram, na.pitch_class_histogram, nb.pitch_class_histogram)
+}
+
+/// Harmonic scoring — transposition-invariant via circular chroma shift.
+fn harmonic_similarity(
+    a: &HarmonicFeatures,
+    b: &HarmonicFeatures,
+    na: &HarmonicNorms,
+    nb: &HarmonicNorms,
+) -> f32 {
+    if a.chroma.len() != 12 || b.chroma.len() != 12 {
+        return 0.0;
+    }
+
+    // Circular shift preserves L2 norm, so na.chroma is valid for all shifts
+    let mut best_chroma_sim = 0.0f32;
+    for shift in 0..12 {
+        let shifted = circular_shift_12(&a.chroma, shift);
+        let sim = cosine_prenormed(&shifted, &b.chroma, na.chroma, nb.chroma);
+        if sim > best_chroma_sim {
+            best_chroma_sim = sim;
+        }
+    }
+
+    0.6 * best_chroma_sim
+        + 0.4 * cosine_prenormed(
+            &a.pc_transitions,
+            &b.pc_transitions,
+            na.pc_transitions,
+            nb.pc_transitions,
+        )
 }
 
 fn circular_shift_12(chroma: &[f32], shift: usize) -> Vec<f32> {
@@ -123,23 +125,31 @@ pub struct ChunkSimilarityResult {
 /// Returns (best_score, candidate_chunk_offset_secs).
 fn best_chunk_pair_score(
     target: &ChunkedFileFeatures,
+    target_norms: &[ChunkNorms],
     candidate: &ChunkedFileFeatures,
+    candidate_norms: &[ChunkNorms],
     mode: &SimilarityMode,
 ) -> (f32, f32) {
     let mut best_score = 0.0f32;
     let mut best_offset = 0.0f32;
 
-    for tc in &target.chunks {
-        let t_features = MidiFileFeatures {
-            melodic: tc.melodic.clone(),
-            harmonic: tc.harmonic.clone(),
-        };
-        for cc in &candidate.chunks {
-            let c_features = MidiFileFeatures {
-                melodic: cc.melodic.clone(),
-                harmonic: cc.harmonic.clone(),
+    for (tc, tn) in target.chunks.iter().zip(target_norms.iter()) {
+        for (cc, cn) in candidate.chunks.iter().zip(candidate_norms.iter()) {
+            let score = match mode {
+                SimilarityMode::Melodic => match (&tc.melodic, &cc.melodic, &tn.melodic, &cn.melodic)
+                {
+                    (Some(a), Some(b), Some(na), Some(nb)) => melodic_similarity(a, b, na, nb),
+                    _ => 0.0,
+                },
+                SimilarityMode::Harmonic => {
+                    match (&tc.harmonic, &cc.harmonic, &tn.harmonic, &cn.harmonic) {
+                        (Some(a), Some(b), Some(na), Some(nb)) => {
+                            harmonic_similarity(a, b, na, nb)
+                        }
+                        _ => 0.0,
+                    }
+                }
             };
-            let score = compute_similarity(&t_features, &c_features, mode);
             if score > best_score {
                 best_score = score;
                 best_offset = cc.offset_secs;
@@ -158,15 +168,28 @@ pub fn find_most_similar_chunked(
     max_results: usize,
     threshold: f32,
 ) -> Vec<ChunkSimilarityResult> {
-    let target = match all_files.iter().find(|(id, _)| id == target_id) {
-        Some((_, features)) => features,
+    // Precompute L2 norms for all chunks across all files (parallel)
+    let all_norms: Vec<Vec<ChunkNorms>> = all_files
+        .par_iter()
+        .map(|(_, features)| features.chunks.iter().map(compute_chunk_norms).collect())
+        .collect();
+
+    let target_idx = match all_files.iter().position(|(id, _)| id == target_id) {
+        Some(idx) => idx,
         None => return Vec::new(),
     };
 
-    let mut scores: Vec<ChunkSimilarityResult> = all_files.iter()
-        .filter(|(id, _)| id != target_id)
-        .filter_map(|(id, features)| {
-            let (score, offset) = best_chunk_pair_score(target, features, &mode);
+    let target = &all_files[target_idx].1;
+    let target_norms = &all_norms[target_idx];
+
+    // Compare target against all other files (parallel)
+    let mut scores: Vec<ChunkSimilarityResult> = all_files
+        .par_iter()
+        .enumerate()
+        .filter(|(_, (id, _))| id != target_id)
+        .filter_map(|(i, (id, features))| {
+            let (score, offset) =
+                best_chunk_pair_score(target, target_norms, features, &all_norms[i], &mode);
             if score >= threshold {
                 Some(ChunkSimilarityResult {
                     file_id: id.clone(),

@@ -431,6 +431,7 @@ export interface MidiImportInfo {
   id: string;
   file_name: string;
   file_path: string;
+  has_features: boolean;
   imported_at: string;
 }
 
@@ -875,6 +876,7 @@ export async function getAppStats(): Promise<AppStats> {
 // ============================================================================
 
 export function formatDuration(secs: number): string {
+  if (!Number.isFinite(secs) || secs < 0) return "0:00";
   const totalSecs = Math.floor(secs);
   const hours = Math.floor(totalSecs / 3600);
   const mins = Math.floor((totalSecs % 3600) / 60);

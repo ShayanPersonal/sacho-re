@@ -729,11 +729,95 @@ pub fn restart_device_pipelines(
 // Similarity Commands
 // ============================================================================
 
+use crate::similarity::features::ChunkedFileFeatures;
+
+/// Cached entry: features for scoring + metadata for results.
+pub struct CachedMidiFile {
+    pub id: String,
+    pub file_name: String,
+    pub file_path: String,
+    pub has_features: bool,
+    pub imported_at: String,
+    pub features: ChunkedFileFeatures,
+}
+
+/// In-memory cache of deserialized MIDI features + metadata, populated eagerly
+/// on import and on app startup. Avoids repeated DB fetch + deserialization.
+pub struct SimilarityCache {
+    inner: Mutex<Option<SimilarityCacheData>>,
+}
+
+pub struct SimilarityCacheData {
+    /// (id, features) pairs for the scoring function
+    pub features: Vec<(String, ChunkedFileFeatures)>,
+    /// id -> metadata index for fast lookup
+    pub metadata: std::collections::HashMap<String, CachedMetadata>,
+}
+
+#[derive(Clone)]
+pub struct CachedMetadata {
+    pub file_name: String,
+    pub file_path: String,
+    pub has_features: bool,
+    pub imported_at: String,
+}
+
+impl SimilarityCache {
+    pub fn new() -> Self {
+        Self { inner: Mutex::new(None) }
+    }
+}
+
+/// Load features from DB into the cache. Called on startup and can be called
+/// from a background thread.
+pub fn warm_similarity_cache(db: &SessionDatabase, cache: &SimilarityCache) {
+    use std::time::Instant;
+    let t0 = Instant::now();
+    let imports = match db.get_all_midi_imports() {
+        Ok(imports) => imports,
+        Err(e) => {
+            log::error!("Failed to load MIDI imports for cache: {}", e);
+            return;
+        }
+    };
+    let t1 = Instant::now();
+
+    let mut features = Vec::new();
+    let mut metadata = std::collections::HashMap::new();
+
+    for import in &imports {
+        metadata.insert(import.id.clone(), CachedMetadata {
+            file_name: import.file_name.clone(),
+            file_path: import.file_path.clone(),
+            has_features: import.has_features,
+            imported_at: import.imported_at.clone(),
+        });
+
+        if let Some(chunked) = import.chunked_features.as_ref()
+            .and_then(|b| bincode::deserialize::<ChunkedFileFeatures>(b).ok())
+        {
+            features.push((import.id.clone(), chunked));
+        }
+    }
+    let t2 = Instant::now();
+
+    let count = features.len();
+    *cache.inner.lock() = Some(SimilarityCacheData { features, metadata });
+
+    eprintln!(
+        "[similarity cache] db_fetch={:.0}ms  deserialize={:.0}ms  files={}",
+        t1.duration_since(t0).as_secs_f64() * 1000.0,
+        t2.duration_since(t1).as_secs_f64() * 1000.0,
+        count,
+    );
+}
+
 #[derive(Debug, Serialize)]
 pub struct MidiImportInfo {
     pub id: String,
     pub file_name: String,
     pub file_path: String,
+    pub has_features: bool,
     pub imported_at: String,
 }
 
@@ -750,6 +834,7 @@ pub async fn import_midi_folder(
     app: tauri::AppHandle,
     path: String,
     db: State<'_, SessionDatabase>,
+    cache: State<'_, SimilarityCache>,
 ) -> Result<Vec<MidiImportInfo>, String> {
     use crate::similarity::{midi_parser, features};
     use rayon::prelude::*;
@@ -776,7 +861,9 @@ pub async fn import_midi_folder(
     let total = midi_paths.len();
     let counter = AtomicUsize::new(0);
 
-    let imports: Vec<crate::session::MidiImport> = midi_paths.par_iter().map(|midi_path| {
+    // Parse MIDI files and extract features, keeping both the serialized form
+    // (for DB storage) and the deserialized form (for the in-memory cache).
+    let parsed: Vec<(crate::session::MidiImport, Option<ChunkedFileFeatures>)> = midi_paths.par_iter().map(|midi_path| {
         let file_name = midi_path.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown.mid")
@@ -792,10 +879,9 @@ pub async fn import_midi_folder(
         let file_path_str = midi_path.to_string_lossy().to_string();
         let id = format!("{:x}", md5_hash(&file_path_str));
 
-        let chunked_json = match midi_parser::parse_midi(midi_path) {
+        let chunked = match midi_parser::parse_midi(midi_path) {
             Ok(midi_parser::MidiParseResult { events, ticks_per_beat, tempo_map }) => {
-                let chunked = features::extract_chunked_features(&events, ticks_per_beat, &tempo_map);
-                serde_json::to_string(&chunked).ok()
+                Some(features::extract_chunked_features(&events, ticks_per_beat, &tempo_map))
             }
             Err(e) => {
                 log::warn!("Failed to parse MIDI {}: {}", file_name, e);
@@ -803,22 +889,52 @@ pub async fn import_midi_folder(
             }
         };
 
-        crate::session::MidiImport {
+        let has_features = chunked.as_ref().is_some_and(|c| {
+            c.chunks.iter().any(|ch| ch.melodic.is_some() || ch.harmonic.is_some())
+        });
+        let chunked_bin = chunked.as_ref().and_then(|c| bincode::serialize(c).ok());
+
+        let import = crate::session::MidiImport {
             id,
             folder_path: path.clone(),
             file_name,
             file_path: file_path_str,
-            chunked_features: chunked_json,
+            chunked_features: chunked_bin,
+            has_features,
             imported_at: now.clone(),
-        }
+        };
+
+        (import, chunked)
     }).collect();
 
+    // Split into DB imports and cache entries
+    let imports: Vec<crate::session::MidiImport> = parsed.iter().map(|(imp, _)| imp.clone()).collect();
     db.insert_midi_imports(&imports).map_err(|e| e.to_string())?;
+
+    // Populate cache directly from parsed data (no deserialization needed)
+    let mut cached_features = Vec::new();
+    let mut cached_metadata = std::collections::HashMap::new();
+    for (imp, chunked) in parsed {
+        cached_metadata.insert(imp.id.clone(), CachedMetadata {
+            file_name: imp.file_name.clone(),
+            file_path: imp.file_path.clone(),
+            has_features: imp.has_features,
+            imported_at: imp.imported_at.clone(),
+        });
+        if let Some(c) = chunked {
+            cached_features.push((imp.id, c));
+        }
+    }
+    *cache.inner.lock() = Some(SimilarityCacheData {
+        features: cached_features,
+        metadata: cached_metadata,
+    });
 
     let result: Vec<MidiImportInfo> = imports.iter().map(|i| MidiImportInfo {
         id: i.id.clone(),
         file_name: i.file_name.clone(),
         file_path: i.file_path.clone(),
+        has_features: i.has_features,
         imported_at: i.imported_at.clone(),
     }).collect();
 
@@ -853,11 +969,12 @@ fn md5_hash(input: &str) -> u64 {
 pub fn get_midi_imports(
     db: State<'_, SessionDatabase>,
 ) -> Result<Vec<MidiImportInfo>, String> {
-    let imports = db.get_all_midi_imports().map_err(|e| e.to_string())?;
+    let imports = db.get_midi_import_list().map_err(|e| e.to_string())?;
     Ok(imports.iter().map(|i| MidiImportInfo {
         id: i.id.clone(),
         file_name: i.file_name.clone(),
         file_path: i.file_path.clone(),
+        has_features: i.has_features,
         imported_at: i.imported_at.clone(),
     }).collect())
 }
@@ -866,42 +983,66 @@ pub fn get_midi_imports(
 pub fn get_similar_files(
     file_id: String,
     mode: String,
-    db: State<'_, SessionDatabase>,
+    cache: State<'_, SimilarityCache>,
 ) -> Result<Vec<SimilarityResult>, String> {
-    use crate::similarity::{features, scoring};
+    use crate::similarity::scoring;
+    use std::time::Instant;
 
-    let imports = db.get_all_midi_imports().map_err(|e| e.to_string())?;
+    let t0 = Instant::now();
 
     let sim_mode = match mode.as_str() {
         "harmonic" => scoring::SimilarityMode::Harmonic,
         _ => scoring::SimilarityMode::Melodic,
     };
 
-    // Build chunked features list
-    let all_features: Vec<(String, features::ChunkedFileFeatures)> = imports.iter()
-        .filter_map(|import| {
-            let chunked: features::ChunkedFileFeatures = import.chunked_features.as_ref()
-                .and_then(|s| serde_json::from_str(s).ok())?;
-            Some((import.id.clone(), chunked))
-        })
-        .collect();
+    let guard = cache.inner.lock();
+    let cache_data = match guard.as_ref() {
+        Some(data) => data,
+        None => return Ok(Vec::new()),
+    };
 
-    let similar = scoring::find_most_similar_chunked(&file_id, &all_features, sim_mode, 12, 0.05);
+    let target_found = cache_data.features.iter().any(|(id, _)| id == &file_id);
+    let similar = scoring::find_most_similar_chunked(&file_id, &cache_data.features, sim_mode, 12, 0.05);
+    let t2 = Instant::now();
 
-    let results: Vec<SimilarityResult> = similar.iter().enumerate().map(|(i, result)| {
-        let import = imports.iter().find(|imp| imp.id == result.file_id).unwrap();
-        SimilarityResult {
+    if similar.is_empty() {
+        let chunk_info = cache_data.features.iter()
+            .find(|(id, _)| id == &file_id)
+            .map(|(_, f)| {
+                let chunks = f.chunks.len();
+                let has_melodic = f.chunks.iter().any(|c| c.melodic.is_some());
+                let has_harmonic = f.chunks.iter().any(|c| c.harmonic.is_some());
+                format!("chunks={} has_melodic={} has_harmonic={}", chunks, has_melodic, has_harmonic)
+            })
+            .unwrap_or_else(|| "not found".to_string());
+        eprintln!(
+            "[similarity] no results for file_id={} target_in_cache={} {} total_cached={}",
+            file_id, target_found, chunk_info, cache_data.features.len(),
+        );
+    }
+
+    // Look up file metadata from cache (not DB)
+    let results: Vec<SimilarityResult> = similar.iter().enumerate().filter_map(|(i, result)| {
+        let meta = cache_data.metadata.get(&result.file_id)?;
+        Some(SimilarityResult {
             file: MidiImportInfo {
-                id: import.id.clone(),
-                file_name: import.file_name.clone(),
-                file_path: import.file_path.clone(),
-                imported_at: import.imported_at.clone(),
+                id: result.file_id.clone(),
+                file_name: meta.file_name.clone(),
+                file_path: meta.file_path.clone(),
+                has_features: meta.has_features,
+                imported_at: meta.imported_at.clone(),
             },
             score: result.score,
             rank: (i + 1) as u32,
             match_offset_secs: result.match_offset_secs,
-        }
+        })
     }).collect();
+
+    eprintln!(
+        "[similarity] scoring={:.0}ms  files={}",
+        t2.duration_since(t0).as_secs_f64() * 1000.0,
+        cache_data.features.len(),
+    );
 
     Ok(results)
 }
@@ -909,7 +1050,9 @@ pub fn get_similar_files(
 #[tauri::command]
 pub fn clear_midi_imports(
     db: State<'_, SessionDatabase>,
+    cache: State<'_, SimilarityCache>,
 ) -> Result<(), String> {
+    *cache.inner.lock() = None;
     db.clear_midi_imports().map_err(|e| e.to_string())
 }
 

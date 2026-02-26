@@ -94,11 +94,15 @@
 
         duration = midiData.duration || 0;
 
-        // Auto-seek to the best-matching chunk offset
-        if (matchOffsetSecs != null && matchOffsetSecs > 0 && matchOffsetSecs < duration) {
-          currentTime = matchOffsetSecs;
-          lastMidiTime = matchOffsetSecs;
-          playStartOffset = matchOffsetSecs;
+        // Seek to 0.3s before the first note at or after the chunk offset
+        const chunkStart = (matchOffsetSecs != null && matchOffsetSecs > 0 && matchOffsetSecs < duration)
+          ? matchOffsetSecs : 0;
+        const firstNote = midiNotes.find(n => n.time >= chunkStart);
+        const seekTo = firstNote ? Math.max(0, firstNote.time - 0.3) : chunkStart;
+        if (seekTo > 0) {
+          currentTime = seekTo;
+          lastMidiTime = seekTo;
+          playStartOffset = seekTo;
         }
       } catch (e) {
         if (cancelled) return;

@@ -72,7 +72,8 @@ impl SessionDatabase {
                 folder_path TEXT NOT NULL,
                 file_name TEXT NOT NULL,
                 file_path TEXT NOT NULL,
-                chunked_features TEXT,
+                chunked_features BLOB,
+                has_features INTEGER NOT NULL DEFAULT 0,
                 imported_at TEXT NOT NULL
             );
 
@@ -374,8 +375,8 @@ impl SessionDatabase {
             tx.execute(
                 r#"
                 INSERT OR REPLACE INTO midi_imports (
-                    id, folder_path, file_name, file_path, chunked_features, imported_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    id, folder_path, file_name, file_path, chunked_features, has_features, imported_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 "#,
                 params![
                     import.id,
@@ -383,6 +384,7 @@ impl SessionDatabase {
                     import.file_name,
                     import.file_path,
                     import.chunked_features,
+                    import.has_features,
                     import.imported_at,
                 ],
             )?;
@@ -396,7 +398,7 @@ impl SessionDatabase {
     pub fn get_all_midi_imports(&self) -> anyhow::Result<Vec<MidiImport>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, folder_path, file_name, file_path, chunked_features, imported_at FROM midi_imports"
+            "SELECT id, folder_path, file_name, file_path, chunked_features, has_features, imported_at FROM midi_imports"
         )?;
 
         let rows = stmt.query_map([], |row| {
@@ -406,6 +408,33 @@ impl SessionDatabase {
                 file_name: row.get(2)?,
                 file_path: row.get(3)?,
                 chunked_features: row.get(4)?,
+                has_features: row.get(5)?,
+                imported_at: row.get(6)?,
+            })
+        })?;
+
+        let mut imports = Vec::new();
+        for row in rows {
+            imports.push(row?);
+        }
+        Ok(imports)
+    }
+
+    /// Get MIDI import metadata without loading feature blobs
+    pub fn get_midi_import_list(&self) -> anyhow::Result<Vec<MidiImport>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, folder_path, file_name, file_path, has_features, imported_at FROM midi_imports"
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(MidiImport {
+                id: row.get(0)?,
+                folder_path: row.get(1)?,
+                file_name: row.get(2)?,
+                file_path: row.get(3)?,
+                chunked_features: None,
+                has_features: row.get(4)?,
                 imported_at: row.get(5)?,
             })
         })?;
@@ -478,7 +507,8 @@ pub struct MidiImport {
     pub folder_path: String,
     pub file_name: String,
     pub file_path: String,
-    pub chunked_features: Option<String>,
+    pub chunked_features: Option<Vec<u8>>,
+    pub has_features: bool,
     pub imported_at: String,
 }
 
