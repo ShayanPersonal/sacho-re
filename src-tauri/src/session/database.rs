@@ -450,6 +450,7 @@ impl SessionDatabase {
     pub fn clear_midi_imports(&self) -> anyhow::Result<()> {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM midi_imports", [])?;
+        conn.execute_batch("VACUUM")?;
         Ok(())
     }
 }
