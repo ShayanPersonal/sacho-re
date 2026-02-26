@@ -41,18 +41,56 @@
     file: MidiImportInfo;
     score: number | null;
     rank: number | null;
+    matchOffsetSecs: number | null;
   }
   let inspectedResult = $state<InspectedFile | null>(null);
   let hoveredCenter = $state(false);
 
+  // Search + virtual scroll for large file lists
+  let searchQuery = $state('');
+  let fileListEl = $state<HTMLDivElement | null>(null);
+  let scrollTop = $state(0);
+  let listHeight = $state(400);
+  const ITEM_HEIGHT = 34; // px per file-item row
+  const OVERSCAN = 10;
+
+  let filteredFiles = $derived(
+    searchQuery.trim()
+      ? $importedFiles.filter(f => f.file_name.toLowerCase().includes(searchQuery.toLowerCase()))
+      : $importedFiles
+  );
+
+  let virtualSlice = $derived.by(() => {
+    const total = filteredFiles.length;
+    const startIdx = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - OVERSCAN);
+    const visibleCount = Math.ceil(listHeight / ITEM_HEIGHT) + OVERSCAN * 2;
+    const endIdx = Math.min(total, startIdx + visibleCount);
+    return {
+      items: filteredFiles.slice(startIdx, endIdx),
+      startIdx,
+      totalHeight: total * ITEM_HEIGHT,
+      offsetY: startIdx * ITEM_HEIGHT,
+    };
+  });
+
+  function handleFileListScroll(e: Event) {
+    const el = e.target as HTMLDivElement;
+    scrollTop = el.scrollTop;
+  }
+
   onMount(() => {
     const resizeObserver = new ResizeObserver(entries => {
       for (const entry of entries) {
-        canvasWidth = entry.contentRect.width;
-        canvasHeight = entry.contentRect.height;
+        if (entry.target === canvasContainer) {
+          canvasWidth = entry.contentRect.width;
+          canvasHeight = entry.contentRect.height;
+        } else if (entry.target === fileListEl) {
+          listHeight = entry.contentRect.height;
+        }
       }
     });
     if (canvasContainer) resizeObserver.observe(canvasContainer);
+    if (fileListEl) resizeObserver.observe(fileListEl);
     return () => {
       resizeObserver.disconnect();
       if (animationId) cancelAnimationFrame(animationId);
@@ -262,9 +300,9 @@
   function handleCanvasClick(e: MouseEvent) {
     if (hoveredIndex !== null) {
       const clicked = $similarFiles[hoveredIndex];
-      inspectedResult = { file: clicked.file, score: clicked.score, rank: clicked.rank };
+      inspectedResult = { file: clicked.file, score: clicked.score, rank: clicked.rank, matchOffsetSecs: clicked.match_offset_secs };
     } else if (hoveredCenter && $selectedFile) {
-      inspectedResult = { file: $selectedFile, score: null, rank: null };
+      inspectedResult = { file: $selectedFile, score: null, rank: null, matchOffsetSecs: null };
     } else {
       // Click on empty canvas background dismisses the panel
       inspectedResult = null;
@@ -333,7 +371,22 @@
       </div>
     </div>
 
-    <div class="file-list">
+    {#if $importedFiles.length > 0}
+      <div class="search-wrapper">
+        <input
+          class="search-input"
+          type="text"
+          placeholder="Search {$importedFiles.length.toLocaleString()} files..."
+          bind:value={searchQuery}
+        />
+      </div>
+    {/if}
+
+    <div
+      class="file-list"
+      bind:this={fileListEl}
+      onscroll={handleFileListScroll}
+    >
       {#if $importedFiles.length === 0}
         <div class="empty-state">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32">
@@ -344,20 +397,24 @@
           <span>No MIDI files imported</span>
         </div>
       {:else}
-        {#each $importedFiles as file (file.id)}
-          <button
-            class="file-item"
-            class:selected={$selectedFileId === file.id}
-            onclick={() => selectFile(file.id)}
-          >
-            <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M9 18V5l12-2v13" />
-              <circle cx="6" cy="18" r="3" />
-              <circle cx="18" cy="16" r="3" />
-            </svg>
-            <span class="file-name" title={file.file_name}>{file.file_name}</span>
-          </button>
-        {/each}
+        <div style="height: {virtualSlice.totalHeight}px; position: relative;">
+          <div style="position: absolute; top: {virtualSlice.offsetY}px; left: 0; right: 0;">
+            {#each virtualSlice.items as file (file.id)}
+              <button
+                class="file-item"
+                class:selected={$selectedFileId === file.id}
+                onclick={() => selectFile(file.id)}
+              >
+                <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M9 18V5l12-2v13" />
+                  <circle cx="6" cy="18" r="3" />
+                  <circle cx="18" cy="16" r="3" />
+                </svg>
+                <span class="file-name" title={file.file_name}>{file.file_name}</span>
+              </button>
+            {/each}
+          </div>
+        </div>
       {/if}
     </div>
 
@@ -407,6 +464,7 @@
       file={inspectedResult.file}
       score={inspectedResult.score}
       rank={inspectedResult.rank}
+      matchOffsetSecs={inspectedResult.matchOffsetSecs}
       onClose={() => inspectedResult = null}
     />
   {/if}
@@ -525,6 +583,32 @@
     color: #c05050;
   }
 
+  .search-wrapper {
+    padding: 0 0.75rem 0.5rem;
+  }
+
+  .search-input {
+    width: 100%;
+    padding: 0.375rem 0.625rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.25rem;
+    color: #c8c8c8;
+    font-family: inherit;
+    font-size: 0.75rem;
+    outline: none;
+    transition: border-color 0.15s ease;
+    box-sizing: border-box;
+  }
+
+  .search-input::placeholder {
+    color: #4a4a4a;
+  }
+
+  .search-input:focus {
+    border-color: rgba(201, 169, 98, 0.4);
+  }
+
   .mode-toggle {
     display: flex;
     border: 1px solid rgba(255, 255, 255, 0.06);
@@ -595,7 +679,8 @@
     align-items: center;
     gap: 0.5rem;
     width: 100%;
-    padding: 0.5rem 0.625rem;
+    height: 34px;
+    padding: 0 0.625rem;
     background: transparent;
     border: 1px solid transparent;
     border-radius: 0.25rem;
@@ -605,6 +690,8 @@
     cursor: pointer;
     transition: all 0.15s ease;
     text-align: left;
+    box-sizing: border-box;
+    flex-shrink: 0;
   }
 
   .file-item:hover {
@@ -785,6 +872,20 @@
 
   :global(body.light-mode) .mode-btn:hover:not(.active) {
     color: #4a4a4a;
+  }
+
+  :global(body.light-mode) .search-input {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.1);
+    color: #2a2a2a;
+  }
+
+  :global(body.light-mode) .search-input::placeholder {
+    color: #9a9a9a;
+  }
+
+  :global(body.light-mode) .search-input:focus {
+    border-color: rgba(160, 128, 48, 0.5);
   }
 
   :global(body.light-mode) .empty-state {

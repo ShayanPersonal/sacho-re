@@ -1,8 +1,8 @@
 // MIDI feature extraction for similarity analysis
 
 use serde::{Deserialize, Serialize};
-use super::melody::MelodyNote;
-use super::midi_parser::NoteEvent;
+use super::melody::{self, MelodyNote};
+use super::midi_parser::{NoteEvent, TempoEvent, tick_to_seconds};
 
 /// Combined features for a MIDI file
 #[derive(Debug, Clone)]
@@ -134,4 +134,82 @@ fn l1_normalize(arr: &mut [f32]) {
             *v /= sum;
         }
     }
+}
+
+/// Features for a single time-window chunk
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkFeatures {
+    pub offset_secs: f32,
+    pub melodic: Option<MelodicFeatures>,
+    pub harmonic: Option<HarmonicFeatures>,
+}
+
+/// All chunks for a file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkedFileFeatures {
+    pub chunks: Vec<ChunkFeatures>,
+}
+
+/// Extract features in 15-second overlapping windows (7.5s stride).
+pub fn extract_chunked_features(
+    events: &[NoteEvent],
+    ticks_per_beat: u16,
+    tempo_map: &[TempoEvent],
+) -> ChunkedFileFeatures {
+    if events.is_empty() {
+        return ChunkedFileFeatures { chunks: vec![] };
+    }
+
+    // Pre-compute onset seconds for each event
+    let onset_secs: Vec<f64> = events.iter()
+        .map(|e| tick_to_seconds(e.start_tick, ticks_per_beat, tempo_map))
+        .collect();
+
+    let total_duration = onset_secs.last().copied().unwrap_or(0.0);
+
+    const WINDOW_SECS: f64 = 15.0;
+    const STRIDE_SECS: f64 = 7.5;
+
+    let mut chunks = Vec::new();
+
+    if total_duration < WINDOW_SECS {
+        // Single chunk for short files
+        let skyline = melody::extract_skyline(events, ticks_per_beat);
+        let melodic = extract_melodic(&skyline);
+        let harmonic = extract_harmonic(events, ticks_per_beat);
+        chunks.push(ChunkFeatures {
+            offset_secs: 0.0,
+            melodic,
+            harmonic,
+        });
+    } else {
+        let mut start = 0.0;
+        while start < total_duration {
+            let end = start + WINDOW_SECS;
+
+            // Use partition_point on pre-computed onset times to find slice bounds
+            let lo = onset_secs.partition_point(|&t| t < start);
+            let hi = onset_secs.partition_point(|&t| t < end);
+
+            if hi > lo {
+                let slice = &events[lo..hi];
+                let skyline = melody::extract_skyline(slice, ticks_per_beat);
+                let melodic = extract_melodic(&skyline);
+                let harmonic = extract_harmonic(slice, ticks_per_beat);
+                chunks.push(ChunkFeatures {
+                    offset_secs: start as f32,
+                    melodic,
+                    harmonic,
+                });
+            }
+
+            start += STRIDE_SECS;
+            // Stop if the next window would start beyond the last note
+            if start >= total_duration {
+                break;
+            }
+        }
+    }
+
+    ChunkedFileFeatures { chunks }
 }

@@ -72,8 +72,7 @@ impl SessionDatabase {
                 folder_path TEXT NOT NULL,
                 file_name TEXT NOT NULL,
                 file_path TEXT NOT NULL,
-                melodic_features TEXT,
-                harmonic_features TEXT,
+                chunked_features TEXT,
                 imported_at TEXT NOT NULL
             );
 
@@ -375,16 +374,15 @@ impl SessionDatabase {
             tx.execute(
                 r#"
                 INSERT OR REPLACE INTO midi_imports (
-                    id, folder_path, file_name, file_path, melodic_features, harmonic_features, imported_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                    id, folder_path, file_name, file_path, chunked_features, imported_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 "#,
                 params![
                     import.id,
                     import.folder_path,
                     import.file_name,
                     import.file_path,
-                    import.melodic_features,
-                    import.harmonic_features,
+                    import.chunked_features,
                     import.imported_at,
                 ],
             )?;
@@ -398,7 +396,7 @@ impl SessionDatabase {
     pub fn get_all_midi_imports(&self) -> anyhow::Result<Vec<MidiImport>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, folder_path, file_name, file_path, melodic_features, harmonic_features, imported_at FROM midi_imports"
+            "SELECT id, folder_path, file_name, file_path, chunked_features, imported_at FROM midi_imports"
         )?;
 
         let rows = stmt.query_map([], |row| {
@@ -407,9 +405,8 @@ impl SessionDatabase {
                 folder_path: row.get(1)?,
                 file_name: row.get(2)?,
                 file_path: row.get(3)?,
-                melodic_features: row.get(4)?,
-                harmonic_features: row.get(5)?,
-                imported_at: row.get(6)?,
+                chunked_features: row.get(4)?,
+                imported_at: row.get(5)?,
             })
         })?;
 
@@ -481,8 +478,7 @@ pub struct MidiImport {
     pub folder_path: String,
     pub file_name: String,
     pub file_path: String,
-    pub melodic_features: Option<String>,
-    pub harmonic_features: Option<String>,
+    pub chunked_features: Option<String>,
     pub imported_at: String,
 }
 

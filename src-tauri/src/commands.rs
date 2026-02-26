@@ -742,6 +742,7 @@ pub struct SimilarityResult {
     pub file: MidiImportInfo,
     pub score: f32,
     pub rank: u32,
+    pub match_offset_secs: f32,
 }
 
 #[tauri::command]
@@ -750,7 +751,9 @@ pub async fn import_midi_folder(
     path: String,
     db: State<'_, SessionDatabase>,
 ) -> Result<Vec<MidiImportInfo>, String> {
-    use crate::similarity::{midi_parser, melody, features};
+    use crate::similarity::{midi_parser, features};
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::path::Path;
 
     let folder = Path::new(&path);
@@ -769,50 +772,46 @@ pub async fn import_midi_folder(
     // Clear old imports
     db.clear_midi_imports().map_err(|e| e.to_string())?;
 
-    let mut imports = Vec::new();
     let now = chrono::Utc::now().to_rfc3339();
+    let total = midi_paths.len();
+    let counter = AtomicUsize::new(0);
 
-    for (idx, midi_path) in midi_paths.iter().enumerate() {
+    let imports: Vec<crate::session::MidiImport> = midi_paths.par_iter().map(|midi_path| {
         let file_name = midi_path.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown.mid")
             .to_string();
 
+        let current = counter.fetch_add(1, Ordering::Relaxed) + 1;
         let _ = app.emit("midi-import-progress", MidiImportProgress {
-            current: idx + 1,
-            total: midi_paths.len(),
+            current,
+            total,
             file_name: file_name.clone(),
         });
+
         let file_path_str = midi_path.to_string_lossy().to_string();
         let id = format!("{:x}", md5_hash(&file_path_str));
 
-        // Parse MIDI and extract features
-        let (melodic_json, harmonic_json) = match midi_parser::parse_midi(midi_path) {
-            Ok((events, tpb)) => {
-                let skyline = melody::extract_skyline(&events, tpb);
-                let melodic = features::extract_melodic(&skyline);
-                let harmonic = features::extract_harmonic(&events, tpb);
-                (
-                    melodic.and_then(|f| serde_json::to_string(&f).ok()),
-                    harmonic.and_then(|f| serde_json::to_string(&f).ok()),
-                )
+        let chunked_json = match midi_parser::parse_midi(midi_path) {
+            Ok(midi_parser::MidiParseResult { events, ticks_per_beat, tempo_map }) => {
+                let chunked = features::extract_chunked_features(&events, ticks_per_beat, &tempo_map);
+                serde_json::to_string(&chunked).ok()
             }
             Err(e) => {
                 log::warn!("Failed to parse MIDI {}: {}", file_name, e);
-                (None, None)
+                None
             }
         };
 
-        imports.push(crate::session::MidiImport {
-            id: id.clone(),
+        crate::session::MidiImport {
+            id,
             folder_path: path.clone(),
-            file_name: file_name.clone(),
-            file_path: file_path_str.clone(),
-            melodic_features: melodic_json,
-            harmonic_features: harmonic_json,
+            file_name,
+            file_path: file_path_str,
+            chunked_features: chunked_json,
             imported_at: now.clone(),
-        });
-    }
+        }
+    }).collect();
 
     db.insert_midi_imports(&imports).map_err(|e| e.to_string())?;
 
@@ -878,20 +877,19 @@ pub fn get_similar_files(
         _ => scoring::SimilarityMode::Melodic,
     };
 
-    // Build features list
-    let mut all_features: Vec<(String, features::MidiFileFeatures)> = Vec::new();
-    for import in &imports {
-        let melodic = import.melodic_features.as_ref()
-            .and_then(|s| serde_json::from_str(s).ok());
-        let harmonic = import.harmonic_features.as_ref()
-            .and_then(|s| serde_json::from_str(s).ok());
-        all_features.push((import.id.clone(), features::MidiFileFeatures { melodic, harmonic }));
-    }
+    // Build chunked features list
+    let all_features: Vec<(String, features::ChunkedFileFeatures)> = imports.iter()
+        .filter_map(|import| {
+            let chunked: features::ChunkedFileFeatures = import.chunked_features.as_ref()
+                .and_then(|s| serde_json::from_str(s).ok())?;
+            Some((import.id.clone(), chunked))
+        })
+        .collect();
 
-    let similar = scoring::find_most_similar(&file_id, &all_features, sim_mode, 12, 0.05);
+    let similar = scoring::find_most_similar_chunked(&file_id, &all_features, sim_mode, 12, 0.05);
 
-    let results: Vec<SimilarityResult> = similar.iter().enumerate().map(|(i, (id, score))| {
-        let import = imports.iter().find(|imp| imp.id == *id).unwrap();
+    let results: Vec<SimilarityResult> = similar.iter().enumerate().map(|(i, result)| {
+        let import = imports.iter().find(|imp| imp.id == result.file_id).unwrap();
         SimilarityResult {
             file: MidiImportInfo {
                 id: import.id.clone(),
@@ -899,8 +897,9 @@ pub fn get_similar_files(
                 file_path: import.file_path.clone(),
                 imported_at: import.imported_at.clone(),
             },
-            score: *score,
+            score: result.score,
             rank: (i + 1) as u32,
+            match_offset_secs: result.match_offset_secs,
         }
     }).collect();
 

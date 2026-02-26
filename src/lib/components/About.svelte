@@ -134,8 +134,8 @@
                         </span>
                         <span class="feature-label">Similar MIDI</span>
                         <span class="feature-desc"
-                            >Quickly locate captures with similar themes and
-                            chords - put your past sessions to use.</span
+                            >Quickly locate recordings with similar themes and
+                            chords - put your past captures to use.</span
                         >
                     </div>
                 </div>
@@ -198,6 +198,7 @@
                         >. FFmpeg is a trademark of Fabrice Bellard, originator of
                         the FFmpeg project.
                     </p>
+                    <p class="notice-text">This software does not include an H.264 encoder or decoder. This software makes use of licensed APIs provided by the host, such as Windows Media Foundation or Apple VideoToolBox.</p>
                 </div>
 
                 <div class="disclaimer">

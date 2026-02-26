@@ -1,6 +1,6 @@
 // Similarity scoring: cosine similarity with melodic and harmonic modes
 
-use super::features::MidiFileFeatures;
+use super::features::{MidiFileFeatures, ChunkedFileFeatures};
 
 pub enum SimilarityMode {
     Melodic,
@@ -109,4 +109,77 @@ fn circular_shift_12(chroma: &[f32], shift: usize) -> Vec<f32> {
         result[(i + shift) % 12] = chroma[i];
     }
     result
+}
+
+// ---- Chunk-aware scoring ----
+
+pub struct ChunkSimilarityResult {
+    pub file_id: String,
+    pub score: f32,
+    pub match_offset_secs: f32,
+}
+
+/// Find best matching chunk pair between two chunked files.
+/// Returns (best_score, candidate_chunk_offset_secs).
+fn best_chunk_pair_score(
+    target: &ChunkedFileFeatures,
+    candidate: &ChunkedFileFeatures,
+    mode: &SimilarityMode,
+) -> (f32, f32) {
+    let mut best_score = 0.0f32;
+    let mut best_offset = 0.0f32;
+
+    for tc in &target.chunks {
+        let t_features = MidiFileFeatures {
+            melodic: tc.melodic.clone(),
+            harmonic: tc.harmonic.clone(),
+        };
+        for cc in &candidate.chunks {
+            let c_features = MidiFileFeatures {
+                melodic: cc.melodic.clone(),
+                harmonic: cc.harmonic.clone(),
+            };
+            let score = compute_similarity(&t_features, &c_features, mode);
+            if score > best_score {
+                best_score = score;
+                best_offset = cc.offset_secs;
+            }
+        }
+    }
+
+    (best_score, best_offset)
+}
+
+/// Find the most similar files using chunk-based comparison.
+pub fn find_most_similar_chunked(
+    target_id: &str,
+    all_files: &[(String, ChunkedFileFeatures)],
+    mode: SimilarityMode,
+    max_results: usize,
+    threshold: f32,
+) -> Vec<ChunkSimilarityResult> {
+    let target = match all_files.iter().find(|(id, _)| id == target_id) {
+        Some((_, features)) => features,
+        None => return Vec::new(),
+    };
+
+    let mut scores: Vec<ChunkSimilarityResult> = all_files.iter()
+        .filter(|(id, _)| id != target_id)
+        .filter_map(|(id, features)| {
+            let (score, offset) = best_chunk_pair_score(target, features, &mode);
+            if score >= threshold {
+                Some(ChunkSimilarityResult {
+                    file_id: id.clone(),
+                    score,
+                    match_offset_secs: offset,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    scores.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    scores.truncate(max_results);
+    scores
 }

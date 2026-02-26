@@ -85,6 +85,9 @@ tempfile = { version = "3", optional = true }
 
 sysinfo = { version = "0.38.1", default-features = false, features = ["disk", "system"] }
 
+# Parallel processing
+rayon = "1.10"
+
 # Windows console attachment for CLI logging
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

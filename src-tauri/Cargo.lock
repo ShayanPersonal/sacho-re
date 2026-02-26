@@ -4042,6 +4042,7 @@ dependencies = [
  "midir",
  "midly",
  "parking_lot",
+ "rayon",
  "ringbuf",
  "rusqlite",
  "serde",

@@ -16,9 +16,64 @@
   import { ask } from '@tauri-apps/plugin-dialog';
   import SessionDetail from './SessionDetail.svelte';
   
+  import { onMount } from 'svelte';
+
   let searchQuery = $state('');
   let expandedGroups = $state<Set<string>>(new Set(['Today', 'Yesterday', 'This Week']));
   let filterMenuOpen = $state(false);
+
+  // Virtual scroll state
+  let listEl = $state<HTMLDivElement | null>(null);
+  let scrollTop = $state(0);
+  let listHeight = $state(400);
+  const ITEM_HEIGHT = 34;
+  const OVERSCAN = 10;
+
+  type FlatItem =
+    | { type: 'header'; group: string; count: number }
+    | { type: 'session'; session: typeof $sessions[0] };
+
+  let flatItems = $derived.by(() => {
+    const items: FlatItem[] = [];
+    for (const [group, groupSessions] of Object.entries($groupedSessions)) {
+      items.push({ type: 'header', group, count: groupSessions.length });
+      if (expandedGroups.has(group)) {
+        for (const session of groupSessions) {
+          items.push({ type: 'session', session });
+        }
+      }
+    }
+    return items;
+  });
+
+  let virtualSlice = $derived.by(() => {
+    const total = flatItems.length;
+    const startIdx = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - OVERSCAN);
+    const visibleCount = Math.ceil(listHeight / ITEM_HEIGHT) + OVERSCAN * 2;
+    const endIdx = Math.min(total, startIdx + visibleCount);
+    return {
+      items: flatItems.slice(startIdx, endIdx),
+      startIdx,
+      totalHeight: total * ITEM_HEIGHT,
+      offsetY: startIdx * ITEM_HEIGHT,
+    };
+  });
+
+  function handleListScroll(e: Event) {
+    scrollTop = (e.target as HTMLDivElement).scrollTop;
+  }
+
+  onMount(() => {
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        if (entry.target === listEl) {
+          listHeight = entry.contentRect.height;
+        }
+      }
+    });
+    if (listEl) ro.observe(listEl);
+    return () => ro.disconnect();
+  });
   
   // Count active filters
   let activeFilterCount = $derived.by(() => {
@@ -62,6 +117,25 @@
     const target = e.target as HTMLElement;
     if (!target.closest('.filter-menu-container')) {
       filterMenuOpen = false;
+    }
+  }
+
+  function formatSessionLabel(timestamp: string): string {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const sessionDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+    const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    if (sessionDay.getTime() >= today.getTime()) {
+      return time;
+    } else if (sessionDay.getTime() >= yesterday.getTime()) {
+      return time;
+    } else {
+      return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
     }
   }
 </script>
@@ -139,7 +213,11 @@
       {/if}
     </div>
     
-    <div class="session-list">
+    <div
+      class="session-list"
+      bind:this={listEl}
+      onscroll={handleListScroll}
+    >
       {#if $isLoading}
         {#if $scanProgress}
           <div class="scan-progress">
@@ -155,58 +233,56 @@
       {:else if $sessions.length === 0}
         <div class="empty">No sessions found</div>
       {:else}
-        {#each Object.entries($groupedSessions) as [group, groupSessions]}
-          <div class="session-group">
-            <button 
-              class="group-header"
-              onclick={() => toggleGroup(group)}
-            >
-              <span class="group-arrow">{expandedGroups.has(group) ? '▼' : '▶'}</span>
-              <span class="group-name">{group}</span>
-              <span class="group-count">({groupSessions.length})</span>
-            </button>
-            
-            {#if expandedGroups.has(group)}
-              <div class="group-sessions">
-                {#each groupSessions as session}
-                  <button 
-                    class="session-item"
-                    class:selected={$selectedSessionId === session.id}
-                    onclick={() => selectSession(session.id)}
-                  >
-                    <div class="session-header">
-                      {#if session.title}
-                        <span class="session-title" title={session.title}>
-                          {session.title.slice(0, 18)}{session.title.length > 18 ? '…' : ''}
-                        </span>
-                      {:else if session.notes}
-                        <span class="session-title" title={session.notes}>
-                          {session.notes.split('\n')[0].slice(0, 18)}{session.notes.length > 18 ? '…' : ''}
-                        </span>
-                      {:else}
-                        <span class="session-time">
-                          {new Date(session.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      {/if}
-                    </div>
-                    <div class="session-meta">
-                      {#if session.has_midi}
-                        <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><title>MIDI</title><rect x="2" y="6" width="20" height="12" rx="1"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><line x1="14" y1="10" x2="14" y2="14"/><line x1="18" y1="10" x2="18" y2="14"/></svg>
-                      {/if}
-                      {#if session.has_audio}
-                        <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><title>Audio</title><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
-                      {/if}
-                      {#if session.has_video}
-                        <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><title>Video</title><rect x="2" y="5" width="14" height="14" rx="2"/><path d="M16 10l6-4v12l-6-4"/></svg>
-                      {/if}
-                      <span class="session-duration">{formatDuration(session.duration_secs)}</span>
-                    </div>
-                  </button>
-                {/each}
-              </div>
-            {/if}
+        <div style="height: {virtualSlice.totalHeight}px; position: relative;">
+          <div style="position: absolute; top: {virtualSlice.offsetY}px; left: 0; right: 0;">
+            {#each virtualSlice.items as item, i (item.type === 'header' ? `h-${item.group}` : `s-${item.session.id}`)}
+              {#if item.type === 'header'}
+                <button
+                  class="group-header"
+                  onclick={() => toggleGroup(item.group)}
+                >
+                  <span class="group-arrow">{expandedGroups.has(item.group) ? '▼' : '▶'}</span>
+                  <span class="group-name">{item.group}</span>
+                  <span class="group-count">({item.count})</span>
+                </button>
+              {:else}
+                <button
+                  class="session-item"
+                  class:selected={$selectedSessionId === item.session.id}
+                  onclick={() => selectSession(item.session.id)}
+                >
+                  <div class="session-header">
+                    {#if item.session.title}
+                      <span class="session-title" title={item.session.title}>
+                        {item.session.title.slice(0, 18)}{item.session.title.length > 18 ? '…' : ''}
+                      </span>
+                    {:else if item.session.notes}
+                      <span class="session-title" title={item.session.notes}>
+                        {item.session.notes.split('\n')[0].slice(0, 18)}{item.session.notes.length > 18 ? '…' : ''}
+                      </span>
+                    {:else}
+                      <span class="session-time">
+                        {formatSessionLabel(item.session.timestamp)}
+                      </span>
+                    {/if}
+                  </div>
+                  <div class="session-meta">
+                    {#if item.session.has_midi}
+                      <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><title>MIDI</title><rect x="2" y="6" width="20" height="12" rx="1"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><line x1="14" y1="10" x2="14" y2="14"/><line x1="18" y1="10" x2="18" y2="14"/></svg>
+                    {/if}
+                    {#if item.session.has_audio}
+                      <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><title>Audio</title><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+                    {/if}
+                    {#if item.session.has_video}
+                      <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><title>Video</title><rect x="2" y="5" width="14" height="14" rx="2"/><path d="M16 10l6-4v12l-6-4"/></svg>
+                    {/if}
+                    <span class="session-duration">{formatDuration(item.session.duration_secs)}</span>
+                  </div>
+                </button>
+              {/if}
+            {/each}
           </div>
-        {/each}
+        </div>
       {/if}
     </div>
     
@@ -410,9 +486,6 @@
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-    display: flex;
-    flex-direction: column;
-    gap: 0.375rem;
   }
   
   .loading, .empty {
@@ -461,16 +534,12 @@
     margin: 0;
   }
   
-  .session-group {
-    display: flex;
-    flex-direction: column;
-  }
-  
   .group-header {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.5rem 0.25rem;
+    height: 34px;
+    padding: 0 0.25rem;
     background: transparent;
     border: none;
     color: #6b6b6b;
@@ -481,6 +550,8 @@
     letter-spacing: 0.08em;
     cursor: pointer;
     transition: color 0.2s ease;
+    box-sizing: border-box;
+    width: 100%;
   }
   
   .group-header:hover {
@@ -497,18 +568,12 @@
     font-weight: 400;
   }
   
-  .group-sessions {
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-    padding-left: 0.75rem;
-  }
-  
   .session-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem 0.625rem;
+    height: 34px;
+    padding: 0 0.625rem 0 1rem;
     background: transparent;
     border: 1px solid transparent;
     border-radius: 0.25rem;
@@ -517,6 +582,8 @@
     cursor: pointer;
     transition: all 0.15s ease;
     min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
   }
   
   .session-item:hover {

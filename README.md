@@ -100,6 +100,12 @@ Recordings are saved by default to:
 
 Use gstreamer CLI tools to debug video pipeline issues before making changes.
 
+## Design
+
+Do not use em-dashes. The database is just for caching/search of recordings. The recordings folder should be portable. The application is used by a non-technical audience and should be easy to use without compromising on functionality.
+
+The app is not released so our changes do not need backwards compatibility.
+
 ## License
 
 All rights reserved.

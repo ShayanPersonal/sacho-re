@@ -12,9 +12,42 @@ pub struct NoteEvent {
     pub channel: u8,
 }
 
+#[derive(Debug, Clone)]
+pub struct TempoEvent {
+    pub tick: u64,
+    pub microseconds_per_beat: u32,
+}
+
+pub struct MidiParseResult {
+    pub events: Vec<NoteEvent>,
+    pub ticks_per_beat: u16,
+    pub tempo_map: Vec<TempoEvent>,
+}
+
+/// Convert a tick position to seconds using the tempo map.
+pub fn tick_to_seconds(tick: u64, ticks_per_beat: u16, tempo_map: &[TempoEvent]) -> f64 {
+    let tpb = ticks_per_beat as f64;
+    let mut seconds = 0.0;
+    let mut last_tick = 0u64;
+    let mut usec_per_beat = 500_000.0; // default 120 BPM
+
+    for te in tempo_map {
+        if te.tick >= tick {
+            break;
+        }
+        let delta_ticks = te.tick - last_tick;
+        seconds += (delta_ticks as f64 / tpb) * (usec_per_beat / 1_000_000.0);
+        last_tick = te.tick;
+        usec_per_beat = te.microseconds_per_beat as f64;
+    }
+
+    let delta_ticks = tick - last_tick;
+    seconds += (delta_ticks as f64 / tpb) * (usec_per_beat / 1_000_000.0);
+    seconds
+}
+
 /// Parse a MIDI file into note events with sustain pedal handling.
-/// Returns (events sorted by start_tick, ticks_per_beat).
-pub fn parse_midi(path: &Path) -> anyhow::Result<(Vec<NoteEvent>, u16)> {
+pub fn parse_midi(path: &Path) -> anyhow::Result<MidiParseResult> {
     let data = std::fs::read(path)?;
     let smf = midly::Smf::parse(&data)?;
 
@@ -24,6 +57,7 @@ pub fn parse_midi(path: &Path) -> anyhow::Result<(Vec<NoteEvent>, u16)> {
     }
 
     let mut notes: Vec<NoteEvent> = Vec::new();
+    let mut tempo_map: Vec<TempoEvent> = Vec::new();
 
     for track in &smf.tracks {
         let mut current_tick: u64 = 0;
@@ -36,6 +70,13 @@ pub fn parse_midi(path: &Path) -> anyhow::Result<(Vec<NoteEvent>, u16)> {
 
         for event in track {
             current_tick += event.delta.as_int() as u64;
+
+            if let midly::TrackEventKind::Meta(midly::MetaMessage::Tempo(t)) = event.kind {
+                tempo_map.push(TempoEvent {
+                    tick: current_tick,
+                    microseconds_per_beat: t.as_int(),
+                });
+            }
 
             if let midly::TrackEventKind::Midi { channel, message } = event.kind {
                 let ch = channel.as_int();
@@ -138,7 +179,15 @@ pub fn parse_midi(path: &Path) -> anyhow::Result<(Vec<NoteEvent>, u16)> {
     }
 
     notes.sort_by_key(|n| n.start_tick);
-    Ok((notes, ticks_per_beat))
+
+    // Sort and dedup tempo map
+    tempo_map.sort_by_key(|t| t.tick);
+    tempo_map.dedup_by_key(|t| t.tick);
+    if tempo_map.is_empty() {
+        tempo_map.push(TempoEvent { tick: 0, microseconds_per_beat: 500_000 });
+    }
+
+    Ok(MidiParseResult { events: notes, ticks_per_beat, tempo_map })
 }
 
 /// Handle a note-off event, respecting sustain pedal state.

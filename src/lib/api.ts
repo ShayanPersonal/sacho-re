@@ -438,6 +438,7 @@ export interface SimilarityResult {
   file: MidiImportInfo;
   score: number;
   rank: number;
+  match_offset_secs: number;
 }
 
 export type SimilarityMode = "melodic" | "harmonic";

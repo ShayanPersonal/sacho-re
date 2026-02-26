@@ -10,10 +10,11 @@
     file: MidiImportInfo;
     score: number | null;
     rank: number | null;
+    matchOffsetSecs: number | null;
     onClose: () => void;
   }
 
-  let { file, score, rank, onClose }: Props = $props();
+  let { file, score, rank, matchOffsetSecs, onClose }: Props = $props();
 
   // MIDI playback state
   let synth: Tone.PolySynth | null = null;
@@ -92,6 +93,13 @@
         }
 
         duration = midiData.duration || 0;
+
+        // Auto-seek to the best-matching chunk offset
+        if (matchOffsetSecs != null && matchOffsetSecs > 0 && matchOffsetSecs < duration) {
+          currentTime = matchOffsetSecs;
+          lastMidiTime = matchOffsetSecs;
+          playStartOffset = matchOffsetSecs;
+        }
       } catch (e) {
         if (cancelled) return;
         console.error('[MidiFileDetail] Failed to load:', e);
