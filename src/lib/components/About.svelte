@@ -198,7 +198,7 @@
                         >. FFmpeg is a trademark of Fabrice Bellard, originator of
                         the FFmpeg project.
                     </p>
-                    <p class="notice-text">This software does not include an H.264 encoder or decoder. This software makes use of licensed APIs provided by the host, such as Windows Media Foundation or Apple VideoToolBox.</p>
+                    <p class="notice-text">This software does not include proprietary encoders or decoders. This software uses APIs provided by the host when available.</p>
                 </div>
 
                 <div class="disclaimer">
@@ -278,11 +278,11 @@
         height: 100%;
     }
 
-    /* Ring expand animation */
+    /* Ring expand animation (100ms initial delay) */
     .ring {
         transform-box: fill-box;
         transform-origin: center;
-        animation: ring-expand 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+        animation: ring-expand 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.1s both;
     }
 
     @keyframes ring-expand {
@@ -290,15 +290,15 @@
         100% { transform: scale(1); opacity: 1; }
     }
 
-    /* Ray wave — slow start, fast middle, slow finish */
-    .ray-0 { animation: ray-pump-0 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.05s, ray-pump-0-end 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.79s; }
-    .ray-1 { animation: ray-pump-1 0.38s cubic-bezier(0.33, 1, 0.68, 1) 0.15s; }
-    .ray-2 { animation: ray-pump-2 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.25s; }
-    .ray-3 { animation: ray-pump-3 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.33s; }
-    .ray-4 { animation: ray-pump-4 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.41s; }
-    .ray-5 { animation: ray-pump-5 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.49s; }
-    .ray-6 { animation: ray-pump-6 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.59s; }
-    .ray-7 { animation: ray-pump-7 0.38s cubic-bezier(0.33, 1, 0.68, 1) 0.69s; }
+    /* Ray wave — slow start, fast middle, slow finish (100ms initial delay added) */
+    .ray-0 { animation: ray-pump-0 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.15s, ray-pump-0-end 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.89s; }
+    .ray-1 { animation: ray-pump-1 0.38s cubic-bezier(0.33, 1, 0.68, 1) 0.25s; }
+    .ray-2 { animation: ray-pump-2 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.35s; }
+    .ray-3 { animation: ray-pump-3 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.43s; }
+    .ray-4 { animation: ray-pump-4 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.51s; }
+    .ray-5 { animation: ray-pump-5 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.59s; }
+    .ray-6 { animation: ray-pump-6 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.69s; }
+    .ray-7 { animation: ray-pump-7 0.38s cubic-bezier(0.33, 1, 0.68, 1) 0.79s; }
 
     @keyframes ray-pump-0 { /* top */
         0%, 100% { transform: translate(0, 0); }

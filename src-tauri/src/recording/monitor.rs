@@ -2026,8 +2026,11 @@ fn start_recording(
     let config = app_handle.state::<RwLock<Config>>();
     let config_read = config.read().clone();
     
-    let timestamp = chrono::Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    let session_path = config_read.storage_path.join(&timestamp);
+    let now = chrono::Local::now();
+    let timestamp = now.format("%Y-%m-%d_%H-%M-%S").to_string();
+    let tz_abbr = crate::session::local_timezone_abbreviation(&now);
+    let folder_name = format!("{} {}", timestamp, tz_abbr);
+    let session_path = config_read.storage_path.join(&folder_name);
     
     if let Err(e) = std::fs::create_dir_all(&session_path) {
         println!("[Sacho] Failed to create session folder: {}", e);
@@ -2378,8 +2381,9 @@ fn stop_recording(
         .to_string();
     
     let metadata = SessionMetadata {
-        id: session_id,
-        timestamp: chrono::Utc::now(),
+        id: session_id.clone(),
+        timestamp: crate::session::parse_session_timestamp(&session_id)
+            .unwrap_or_else(chrono::Utc::now),
         duration_secs,
         path: session_path.clone(),
         audio_files,

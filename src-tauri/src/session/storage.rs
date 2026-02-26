@@ -4,7 +4,7 @@ use super::{SessionMetadata, AudioFileInfo, MidiFileInfo, VideoFileInfo};
 use super::unsanitize_device_name;
 use std::path::Path;
 use std::io::{Read, Seek, SeekFrom};
-use chrono::{DateTime, NaiveDateTime, Utc, TimeZone};
+use chrono::{DateTime, Datelike, FixedOffset, Local, NaiveDate, NaiveDateTime, Utc, TimeZone};
 use gstreamer_pbutils;
 
 // ============================================================================
@@ -185,7 +185,7 @@ pub fn scan_session_dir_for_index(
         .to_string();
 
     let timestamp = parse_session_timestamp(&folder_name)
-        .unwrap_or_else(Utc::now);
+        .unwrap_or_else(|| fallback_timestamp_from_dir(session_path));
 
     let entries = std::fs::read_dir(session_path)?;
 
@@ -283,13 +283,204 @@ pub fn scan_session_dir_for_index(
 // Directory scan → SessionMetadata
 // ============================================================================
 
-/// Parse a session timestamp from a folder name like "2026-02-21_14-32-45".
-/// Handles titled folders: "2026-02-21_14-32-45 - My Song" -> strips title before parsing.
+/// Parse a session timestamp from a folder name.
+/// Supports formats:
+///   "2026-02-25_17-46-00 PST"           → local time with timezone abbreviation
+///   "2026-02-25_17-46-00 PST - My Song" → with title
+///   "2026-02-25_01-46-00"               → no timezone → assume UTC (legacy)
 pub fn parse_session_timestamp(folder_name: &str) -> Option<DateTime<Utc>> {
     let timestamp_part = folder_name.split(" - ").next().unwrap_or(folder_name);
+
+    // Try splitting off a timezone suffix: "2026-02-25_17-46-00 PST" → ("2026-02-25_17-46-00", "PST")
+    if let Some((datetime_str, tz_str)) = timestamp_part.rsplit_once(' ') {
+        let naive = NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%d_%H-%M-%S").ok()?;
+        if let Some(offset) = tz_abbr_to_offset(tz_str) {
+            // Known timezone — interpret as local time in that timezone
+            return Some(offset.from_local_datetime(&naive).unwrap().with_timezone(&Utc));
+        }
+    }
+
+    // No timezone suffix (or unknown abbreviation) — parse as UTC for backwards compat
     NaiveDateTime::parse_from_str(timestamp_part, "%Y-%m-%d_%H-%M-%S")
         .ok()
         .map(|dt| Utc.from_utc_datetime(&dt))
+}
+
+/// Map common timezone abbreviations to fixed UTC offsets.
+fn tz_abbr_to_offset(abbr: &str) -> Option<FixedOffset> {
+    let secs = match abbr {
+        "UTC" | "GMT" => 0,
+        // North America
+        "EST" => -5 * 3600,
+        "EDT" => -4 * 3600,
+        "CST" => -6 * 3600,
+        "CDT" => -5 * 3600,
+        "MST" => -7 * 3600,
+        "MDT" => -6 * 3600,
+        "PST" => -8 * 3600,
+        "PDT" => -7 * 3600,
+        "AKST" => -9 * 3600,
+        "AKDT" => -8 * 3600,
+        "HST" => -10 * 3600,
+        "HAST" => -10 * 3600,
+        "HADT" => -9 * 3600,
+        // Europe
+        "WET" => 0,
+        "WEST" => 1 * 3600,
+        "CET" => 1 * 3600,
+        "CEST" => 2 * 3600,
+        "EET" => 2 * 3600,
+        "EEST" => 3 * 3600,
+        "GMT+1" => 1 * 3600,
+        // Asia
+        "IST" => 5 * 3600 + 30 * 60,
+        "JST" => 9 * 3600,
+        "KST" => 9 * 3600,
+        "HKT" => 8 * 3600,
+        "SGT" => 8 * 3600,
+        // Australia
+        "AEST" => 10 * 3600,
+        "AEDT" => 11 * 3600,
+        "ACST" => 9 * 3600 + 30 * 60,
+        "ACDT" => 10 * 3600 + 30 * 60,
+        "AWST" => 8 * 3600,
+        // Try numeric offset: "+0530", "-0800"
+        _ => return parse_numeric_tz_offset(abbr),
+    };
+    FixedOffset::east_opt(secs)
+}
+
+/// Parse a numeric timezone offset like "+0530" or "-0800" into a FixedOffset.
+fn parse_numeric_tz_offset(s: &str) -> Option<FixedOffset> {
+    if s.len() == 5 && (s.starts_with('+') || s.starts_with('-')) {
+        let sign: i32 = if s.starts_with('-') { -1 } else { 1 };
+        let hours: i32 = s[1..3].parse().ok()?;
+        let minutes: i32 = s[3..5].parse().ok()?;
+        FixedOffset::east_opt(sign * (hours * 3600 + minutes * 60))
+    } else {
+        None
+    }
+}
+
+/// Get a timezone abbreviation for a local datetime.
+/// Tries the system timezone name first (%Z → "Pacific Standard Time" → "PST").
+/// Falls back to determining standard/DST from UTC offset and mapping to a known
+/// abbreviation (e.g. PST, PDT, EST, EDT). Uses numeric offset ("-0800") as last resort.
+pub fn local_timezone_abbreviation(dt: &DateTime<Local>) -> String {
+    // Try %Z first (works on Unix/macOS, sometimes Windows)
+    let name = dt.format("%Z").to_string();
+    if !name.trim().is_empty() {
+        if name.len() <= 5 && !name.contains(' ') {
+            return name;
+        }
+        let abbr: String = name.split_whitespace()
+            .filter_map(|w| w.chars().next())
+            .filter(|c| c.is_alphabetic())
+            .collect::<String>()
+            .to_uppercase();
+        if !abbr.is_empty() {
+            return abbr;
+        }
+    }
+
+    // Determine standard vs DST by comparing January and July offsets.
+    // Standard time always has the smaller UTC offset (DST = standard + 3600).
+    let current_secs = dt.offset().local_minus_utc();
+
+    let jan = NaiveDate::from_ymd_opt(dt.year(), 1, 15).unwrap()
+        .and_hms_opt(12, 0, 0).unwrap();
+    let jul = NaiveDate::from_ymd_opt(dt.year(), 7, 15).unwrap()
+        .and_hms_opt(12, 0, 0).unwrap();
+
+    let jan_secs = Local.from_local_datetime(&jan)
+        .earliest()
+        .map(|d| d.offset().local_minus_utc())
+        .unwrap_or(current_secs);
+    let jul_secs = Local.from_local_datetime(&jul)
+        .earliest()
+        .map(|d| d.offset().local_minus_utc())
+        .unwrap_or(current_secs);
+
+    let (standard_secs, is_dst) = if jan_secs == jul_secs {
+        (jan_secs, false)
+    } else {
+        let std_secs = jan_secs.min(jul_secs);
+        (std_secs, current_secs != std_secs)
+    };
+
+    if let Some(abbr) = offset_to_tz_abbreviation(standard_secs, is_dst) {
+        return abbr.to_string();
+    }
+
+    // Last resort: numeric offset "-0800", "+0530", etc.
+    dt.format("%z").to_string()
+}
+
+/// Map a standard-time UTC offset (seconds) + DST flag to a timezone abbreviation.
+fn offset_to_tz_abbreviation(standard_offset_secs: i32, is_dst: bool) -> Option<&'static str> {
+    match (standard_offset_secs, is_dst) {
+        // North America
+        (-36000, false) => Some("HST"),
+        (-36000, true)  => Some("HDT"),
+        (-32400, false) => Some("AKST"),
+        (-32400, true)  => Some("AKDT"),
+        (-28800, false) => Some("PST"),
+        (-28800, true)  => Some("PDT"),
+        (-25200, false) => Some("MST"),
+        (-25200, true)  => Some("MDT"),
+        (-21600, false) => Some("CST"),
+        (-21600, true)  => Some("CDT"),
+        (-18000, false) => Some("EST"),
+        (-18000, true)  => Some("EDT"),
+        // Europe
+        (0, false)      => Some("GMT"),
+        (0, true)       => Some("BST"),
+        (3600, false)   => Some("CET"),
+        (3600, true)    => Some("CEST"),
+        (7200, false)   => Some("EET"),
+        (7200, true)    => Some("EEST"),
+        // Asia (no DST)
+        (19800, _)      => Some("IST"),
+        (28800, _)      => Some("SGT"),
+        (32400, _)      => Some("JST"),
+        // Australia
+        (34200, false)  => Some("ACST"),
+        (34200, true)   => Some("ACDT"),
+        (36000, false)  => Some("AEST"),
+        (36000, true)   => Some("AEDT"),
+        _ => None,
+    }
+}
+
+/// Fallback timestamp for sessions whose folder name doesn't contain a parseable timestamp.
+/// Uses the most recent modification time among files in the directory (or the directory itself).
+fn fallback_timestamp_from_dir(session_path: &Path) -> DateTime<Utc> {
+    let mut latest: Option<std::time::SystemTime> = None;
+
+    if let Ok(entries) = std::fs::read_dir(session_path) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if let Ok(modified) = meta.modified() {
+                    latest = Some(match latest {
+                        Some(prev) if modified > prev => modified,
+                        Some(prev) => prev,
+                        None => modified,
+                    });
+                }
+            }
+        }
+    }
+
+    // Fall back to directory mtime if no files found
+    if latest.is_none() {
+        if let Ok(meta) = std::fs::metadata(session_path) {
+            latest = meta.modified().ok();
+        }
+    }
+
+    latest
+        .map(|t| -> DateTime<Utc> { t.into() })
+        .unwrap_or_else(Utc::now)
 }
 
 /// Extract title from a folder name like "2026-01-22_20-19-05 - sad Song".
@@ -317,7 +508,7 @@ pub fn build_session_from_directory(session_path: &Path) -> anyhow::Result<Sessi
         .to_string();
 
     let timestamp = parse_session_timestamp(&folder_name)
-        .unwrap_or_else(Utc::now);
+        .unwrap_or_else(|| fallback_timestamp_from_dir(session_path));
 
     let entries = std::fs::read_dir(session_path)?;
 

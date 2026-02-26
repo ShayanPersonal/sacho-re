@@ -594,7 +594,7 @@
                                 If not sure what to pick,
                                 choose the first item in the list.
                                 If there's an issue, try the next item and repeat.<br /><br />
-                                Formats marked as (raw) may be higher quality, but need a good connection (E.G. use USB 3, not
+                                Formats marked as (raw) tend to be higher quality, but may need a good connection (for example, use USB 3, not
                                 USB 2).
                             </span>
                         {/if}

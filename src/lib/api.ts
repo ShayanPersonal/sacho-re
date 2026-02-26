@@ -897,15 +897,22 @@ export function formatBytes(bytes: number): string {
 export function formatDate(dateString: string): string {
   const date = new Date(dateString);
   const now = new Date();
-  const diffDays = Math.floor(
-    (now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24),
-  );
 
-  if (diffDays === 0) {
-    return `Today ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-  } else if (diffDays === 1) {
-    return `Yesterday ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-  } else if (diffDays < 7) {
+  // Use calendar-day comparison (midnight-based) to match session list grouping
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const weekAgo = new Date(today);
+  weekAgo.setDate(weekAgo.getDate() - 7);
+  const sessionDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  if (sessionDay.getTime() >= today.getTime()) {
+    return `Today ${time}`;
+  } else if (sessionDay.getTime() >= yesterday.getTime()) {
+    return `Yesterday ${time}`;
+  } else if (sessionDay >= weekAgo) {
     return date.toLocaleDateString([], {
       weekday: "long",
       hour: "2-digit",
