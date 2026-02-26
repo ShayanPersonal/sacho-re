@@ -793,10 +793,12 @@ pub fn warm_similarity_cache(db: &SessionDatabase, cache: &SimilarityCache) {
             imported_at: import.imported_at.clone(),
         });
 
-        if let Some(chunked) = import.chunked_features.as_ref()
-            .and_then(|b| bincode::deserialize::<ChunkedFileFeatures>(b).ok())
-        {
-            features.push((import.id.clone(), chunked));
+        if import.has_features {
+            if let Some(chunked) = import.chunked_features.as_ref()
+                .and_then(|b| bincode::deserialize::<ChunkedFileFeatures>(b).ok())
+            {
+                features.push((import.id.clone(), chunked));
+            }
         }
     }
     let t2 = Instant::now();
@@ -921,8 +923,10 @@ pub async fn import_midi_folder(
             has_features: imp.has_features,
             imported_at: imp.imported_at.clone(),
         });
-        if let Some(c) = chunked {
-            cached_features.push((imp.id, c));
+        if imp.has_features {
+            if let Some(c) = chunked {
+                cached_features.push((imp.id, c));
+            }
         }
     }
     *cache.inner.lock() = Some(SimilarityCacheData {
@@ -1039,9 +1043,10 @@ pub fn get_similar_files(
     }).collect();
 
     eprintln!(
-        "[similarity] scoring={:.0}ms  files={}",
+        "[similarity] scoring={:.0}ms  files_with_features={}/{}",
         t2.duration_since(t0).as_secs_f64() * 1000.0,
         cache_data.features.len(),
+        cache_data.metadata.len(),
     );
 
     Ok(results)
