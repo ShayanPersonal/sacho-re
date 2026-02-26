@@ -453,6 +453,17 @@ impl SessionDatabase {
         conn.execute_batch("VACUUM")?;
         Ok(())
     }
+
+    /// Clear all sessions (cache reset)
+    pub fn clear_sessions(&self) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM sessions", [])?;
+        // Rebuild FTS index after content table is cleared
+        conn.execute("INSERT INTO sessions_fts(sessions_fts) VALUES('rebuild')", [])?;
+        conn.execute("DELETE FROM midi_imports", [])?;
+        conn.execute_batch("VACUUM")?;
+        Ok(())
+    }
 }
 
 /// Filter for session queries

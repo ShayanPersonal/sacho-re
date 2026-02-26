@@ -105,6 +105,168 @@ pub fn read_flac_duration(path: &Path) -> anyhow::Result<f64> {
     read_video_duration(path)
 }
 
+/// Read MKV/WebM duration by parsing EBML Segment > Info > Duration.
+/// Only reads a few KB from the start of the file — no GStreamer needed.
+pub fn read_mkv_duration(path: &Path) -> anyhow::Result<f64> {
+    let mut file = std::fs::File::open(path)?;
+    let file_size = file.metadata()?.len();
+    // Read up to 64KB — Segment Info is almost always in the first few KB
+    let cap = file_size.min(65536) as usize;
+    let mut buf = vec![0u8; cap];
+    file.read_exact(&mut buf)?;
+
+    // EBML element IDs we care about
+    const SEGMENT: u32        = 0x18538067;
+    const INFO: u32           = 0x1549A966;
+    const TIMESTAMP_SCALE: u32 = 0x2AD7B1;
+    const DURATION: u32       = 0x4489;
+
+    /// Read an EBML variable-length integer (element ID).
+    /// Returns (id, bytes_consumed). IDs keep the leading VINT_MARKER bit.
+    fn read_ebml_id(data: &[u8]) -> Option<(u32, usize)> {
+        if data.is_empty() { return None; }
+        let first = data[0];
+        if first == 0 { return None; }
+        let len = first.leading_zeros() as usize + 1;
+        if len > 4 || data.len() < len { return None; }
+        let mut val = 0u32;
+        for i in 0..len {
+            val = (val << 8) | data[i] as u32;
+        }
+        Some((val, len))
+    }
+
+    /// Read an EBML variable-length integer (data size).
+    /// Returns (size, bytes_consumed). Strips the VINT_MARKER bit.
+    fn read_ebml_size(data: &[u8]) -> Option<(u64, usize)> {
+        if data.is_empty() { return None; }
+        let first = data[0];
+        if first == 0 { return None; }
+        let len = first.leading_zeros() as usize + 1;
+        if len > 8 || data.len() < len { return None; }
+        let mask = if len >= 8 { 0u8 } else { 0xFF >> len };
+        let mut val = (first & mask) as u64;
+        for i in 1..len {
+            val = (val << 8) | data[i] as u64;
+        }
+        // All-ones = unknown size
+        let max = (1u64 << (7 * len)) - 1;
+        if val == max { val = u64::MAX; }
+        Some((val, len))
+    }
+
+    fn read_ebml_float(data: &[u8], size: usize) -> Option<f64> {
+        match size {
+            4 => {
+                let bytes: [u8; 4] = data[..4].try_into().ok()?;
+                Some(f32::from_be_bytes(bytes) as f64)
+            }
+            8 => {
+                let bytes: [u8; 8] = data[..8].try_into().ok()?;
+                Some(f64::from_be_bytes(bytes))
+            }
+            _ => None,
+        }
+    }
+
+    fn read_ebml_uint(data: &[u8], size: usize) -> Option<u64> {
+        if size == 0 || size > 8 || data.len() < size { return None; }
+        let mut val = 0u64;
+        for i in 0..size {
+            val = (val << 8) | data[i] as u64;
+        }
+        Some(val)
+    }
+
+    // Parse: skip EBML header, enter Segment, find Info, read Duration
+    let mut pos = 0usize;
+
+    // Skip EBML header element
+    let (id, id_len) = read_ebml_id(&buf[pos..]).ok_or_else(|| anyhow::anyhow!("No EBML header"))?;
+    pos += id_len;
+    if id != 0x1A45DFA3 {
+        return Err(anyhow::anyhow!("Not an EBML file"));
+    }
+    let (size, size_len) = read_ebml_size(&buf[pos..]).ok_or_else(|| anyhow::anyhow!("Bad EBML header size"))?;
+    pos += size_len;
+    if size != u64::MAX { pos += size as usize; }
+
+    // Expect Segment element
+    if pos >= buf.len() { return Err(anyhow::anyhow!("Truncated before Segment")); }
+    let (id, id_len) = read_ebml_id(&buf[pos..]).ok_or_else(|| anyhow::anyhow!("No Segment"))?;
+    pos += id_len;
+    if id != SEGMENT {
+        return Err(anyhow::anyhow!("Expected Segment, got 0x{:X}", id));
+    }
+    let (_seg_size, size_len) = read_ebml_size(&buf[pos..]).ok_or_else(|| anyhow::anyhow!("Bad Segment size"))?;
+    pos += size_len;
+    // Now inside Segment — scan top-level children for Info
+
+    let mut timestamp_scale: u64 = 1_000_000; // default: 1ms
+    let mut duration_raw: Option<f64> = None;
+
+    // Scan Segment children until we find Info
+    while pos + 2 < buf.len() {
+        let (child_id, id_len) = match read_ebml_id(&buf[pos..]) {
+            Some(v) => v,
+            None => break,
+        };
+        pos += id_len;
+        let (child_size, size_len) = match read_ebml_size(&buf[pos..]) {
+            Some(v) => v,
+            None => break,
+        };
+        pos += size_len;
+
+        if child_id == INFO {
+            // Parse Info children
+            let info_end = if child_size == u64::MAX { buf.len() } else { (pos + child_size as usize).min(buf.len()) };
+            let mut ipos = pos;
+            while ipos + 2 < info_end {
+                let (info_child_id, iid_len) = match read_ebml_id(&buf[ipos..]) {
+                    Some(v) => v,
+                    None => break,
+                };
+                ipos += iid_len;
+                let (info_child_size, isz_len) = match read_ebml_size(&buf[ipos..]) {
+                    Some(v) => v,
+                    None => break,
+                };
+                ipos += isz_len;
+                let sz = info_child_size as usize;
+
+                if info_child_id == TIMESTAMP_SCALE && ipos + sz <= info_end {
+                    if let Some(v) = read_ebml_uint(&buf[ipos..], sz) {
+                        timestamp_scale = v;
+                    }
+                } else if info_child_id == DURATION && ipos + sz <= info_end {
+                    duration_raw = read_ebml_float(&buf[ipos..], sz);
+                }
+
+                if info_child_size == u64::MAX { break; }
+                ipos += sz;
+            }
+            break; // Done with Info
+        }
+
+        // Skip non-Info children
+        if child_size == u64::MAX { break; } // unknown-size non-Info element, can't skip
+        pos += child_size as usize;
+    }
+
+    match duration_raw {
+        Some(dur) => {
+            let secs = dur * (timestamp_scale as f64) / 1_000_000_000.0;
+            if secs > 0.0 && secs.is_finite() {
+                Ok(secs)
+            } else {
+                Err(anyhow::anyhow!("Invalid MKV duration: {}", secs))
+            }
+        }
+        None => Err(anyhow::anyhow!("Duration element not found in MKV header")),
+    }
+}
+
 /// Read video (or any media) duration using GStreamer Discoverer.
 /// Creates a one-off Discoverer. For batch operations, use
 /// `read_video_duration_with_discoverer` with a shared instance.
@@ -177,6 +339,7 @@ use super::database::SessionIndexData;
 pub fn scan_session_dir_for_index(
     session_path: &Path,
     discoverer: Option<&gstreamer_pbutils::Discoverer>,
+    discoverer_fallback_count: Option<&std::sync::atomic::AtomicUsize>,
 ) -> anyhow::Result<SessionIndexData> {
     let folder_name = session_path
         .file_name()
@@ -234,16 +397,23 @@ pub fn scan_session_dir_for_index(
             }
         } else if fname.ends_with(".mkv") {
             has_video = true;
-            let disc = discoverer.or_else(|| {
-                if fallback_discoverer.is_none() {
-                    fallback_discoverer = get_or_create_discoverer().ok();
+            // Fast path: parse MKV header directly
+            let result = read_mkv_duration(&path).or_else(|_| {
+                // Fallback: GStreamer Discoverer
+                if let Some(counter) = discoverer_fallback_count {
+                    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
-                fallback_discoverer.as_ref()
+                let disc = discoverer.or_else(|| {
+                    if fallback_discoverer.is_none() {
+                        fallback_discoverer = get_or_create_discoverer().ok();
+                    }
+                    fallback_discoverer.as_ref()
+                });
+                match disc {
+                    Some(d) => read_video_duration_with_discoverer(&path, d),
+                    None => Err(anyhow::anyhow!("No discoverer available")),
+                }
             });
-            let result = match disc {
-                Some(d) => read_video_duration_with_discoverer(&path, d),
-                None => Err(anyhow::anyhow!("Failed to create GStreamer discoverer")),
-            };
             match result {
                 Ok(d) => durations.push(d),
                 Err(_) => any_duration_failed = true,
@@ -571,7 +741,9 @@ pub fn build_session_from_directory(session_path: &Path) -> anyhow::Result<Sessi
         } else if fname.ends_with(".mkv") {
             let sanitized = fname.trim_start_matches("video_").trim_end_matches(".mkv");
             let device_name = unsanitize_device_name(sanitized);
-            let duration_secs = read_video_duration(&path).unwrap_or(0.0);
+            let duration_secs = read_mkv_duration(&path)
+                .or_else(|_| read_video_duration(&path))
+                .unwrap_or(0.0);
 
             video_files.push(VideoFileInfo {
                 filename: fname,

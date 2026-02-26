@@ -778,6 +778,14 @@ export async function rescanSessions(): Promise<number> {
   return invoke("rescan_sessions");
 }
 
+export async function resetCache(): Promise<number> {
+  return invoke("reset_cache");
+}
+
+export async function resetSettings(): Promise<void> {
+  return invoke("reset_settings");
+}
+
 // ============================================================================
 // Video Playback Commands
 // ============================================================================

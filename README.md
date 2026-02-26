@@ -2,7 +2,7 @@
 
 Sacho is a cross-platform (Windows, Mac, Linux) desktop application for songwriters and other spontaneous creatives to automatically capture MIDI, audio, and video when they play. Never lose a musical idea again.
 
-Sacho is designed for musicians and other creators who create impromptu performances and need an application to automatically record their performances. Currently, when Sacho detects MIDI on a MIDI device configured as "Trigger" in the settings, it begins recording audio and MIDI on devices marked as "Record". When no MIDI is received after a configured amount of time, the recording is saved. Recordings can be triggered and stopped manually. There is also a pre-roll, to capture the moments before a performance begins.
+Sacho is designed for musicians and other creators who play or create impromptu performances and need an application to automatically record their performances. Currently, when Sacho detects MIDI on a MIDI device configured as "Trigger" in the settings, it begins recording audio and MIDI on devices marked as "Record". When no MIDI is received after a configured amount of time, the recording is saved. Recordings can be triggered and stopped manually. There is also a pre-roll, to capture the moments before a performance begins.
 
 Being a commercial application, when it comes to gstreamer, Sacho should only use lgpl plugins and should never use unlicensed encoders.
 

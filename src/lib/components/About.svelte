@@ -1,12 +1,17 @@
 <script lang="ts">
-    import { openUrl } from "@tauri-apps/plugin-opener";
+    import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
     import { getVersion } from "@tauri-apps/api/app";
+    import { appConfigDir, appDataDir, join } from "@tauri-apps/api/path";
     import { onMount } from "svelte";
+    import { resetCache, resetSettings } from "$lib/api";
+    import { importedFiles, selectedFileId, similarFiles } from "$lib/stores/similarity";
 
     let { open = false, onclose }: { open: boolean; onclose: () => void } =
         $props();
 
     let appVersion = $state("...");
+    let confirmAction = $state<"cache" | "settings" | null>(null);
+    let isResetting = $state(false);
 
     onMount(async () => {
         appVersion = await getVersion();
@@ -18,13 +23,59 @@
 
     function handleOverlayClick(e: MouseEvent) {
         if (e.target === e.currentTarget) {
-            onclose();
+            if (confirmAction) {
+                confirmAction = null;
+            } else {
+                onclose();
+            }
         }
     }
 
     function handleKeydown(e: KeyboardEvent) {
         if (e.key === "Escape") {
-            onclose();
+            if (confirmAction) {
+                confirmAction = null;
+            } else {
+                onclose();
+            }
+        }
+    }
+
+    async function viewFiles() {
+        try {
+            if (confirmAction === "cache") {
+                const dir = await appDataDir();
+                const dbPath = await join(dir, "sessions.db");
+                await revealItemInDir(dbPath);
+            } else if (confirmAction === "settings") {
+                const dir = await appConfigDir();
+                const configPath = await join(dir, "config.toml");
+                await revealItemInDir(configPath);
+            }
+        } catch (e) {
+            console.error("Failed to open directory:", e);
+        }
+    }
+
+    async function handleConfirm() {
+        if (!confirmAction) return;
+        const action = confirmAction;
+        isResetting = true;
+        try {
+            if (action === "cache") {
+                await resetCache();
+                importedFiles.set([]);
+                selectedFileId.set(null);
+                similarFiles.set([]);
+            } else {
+                await resetSettings();
+                window.location.reload();
+            }
+        } catch (e) {
+            console.error("Reset failed:", e);
+        } finally {
+            isResetting = false;
+            confirmAction = null;
         }
     }
 </script>
@@ -198,7 +249,7 @@
                         >. FFmpeg is a trademark of Fabrice Bellard, originator of
                         the FFmpeg project.
                     </p>
-                    <p class="notice-text">This software does not include proprietary encoders or decoders. This software uses APIs provided by the host when available.</p>
+                    <p class="notice-text">This software does not include proprietary encoders or decoders. This software uses media APIs provided by the host when available.</p>
                 </div>
 
                 <div class="disclaimer">
@@ -209,8 +260,65 @@
                         from the use of this software. Use at your own risk.
                     </p>
                 </div>
+
+                <div class="reset-section">
+                    <div class="reset-buttons">
+                        <button
+                            class="reset-btn"
+                            onclick={() => confirmAction = "cache"}
+                            disabled={isResetting}
+                        >Reset Cache</button>
+                        <button
+                            class="reset-btn"
+                            onclick={() => confirmAction = "settings"}
+                            disabled={isResetting}
+                        >Reset Settings</button>
+                    </div>
+                </div>
             </div>
+
         </div>
+
+        {#if confirmAction}
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <div
+                class="confirm-overlay"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Confirm reset"
+                onclick={(e) => { if (e.target === e.currentTarget) confirmAction = null; }}
+                onkeydown={(e) => { if (e.key === "Escape") confirmAction = null; }}
+            >
+                <div class="confirm-dialog">
+                    {#if confirmAction === "cache"}
+                        <p class="confirm-title">Reset Cache</p>
+                        <p class="confirm-text">The cache is used for UI, search, and similarity. The application will rescan your recordings folder. This may take some time. Your recordings will not be deleted.</p>
+                    {:else}
+                        <p class="confirm-title">Reset Settings</p>
+                        <p class="confirm-text">This will restore all settings to their defaults. Device configurations will be reset. The app will reload.</p>
+                    {/if}
+                    <div class="confirm-actions">
+                        <button
+                            class="confirm-view"
+                            onclick={viewFiles}
+                            disabled={isResetting}
+                        >View file</button>
+                        <div class="confirm-actions-right">
+                            <button
+                                class="confirm-cancel"
+                                onclick={() => confirmAction = null}
+                                disabled={isResetting}
+                            >Cancel</button>
+                            <button
+                                class="confirm-proceed"
+                                onclick={handleConfirm}
+                                disabled={isResetting}
+                            >{isResetting ? "Resetting..." : "Reset"}</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        {/if}
     </div>
 {/if}
 
@@ -578,5 +686,201 @@
 
     :global(body.light-mode) .disclaimer p {
         color: #7a7a7a;
+    }
+
+    /* Reset section */
+    .reset-section {
+        margin-top: 0.75rem;
+        padding-top: 1.25rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.04);
+        width: 100%;
+    }
+
+    .reset-buttons {
+        display: flex;
+        gap: 0.75rem;
+        justify-content: center;
+    }
+
+    .reset-btn {
+        font-size: 0.6875rem;
+        color: #6a6a6a;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 0.25rem;
+        padding: 0.4rem 1rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+
+    .reset-btn:hover:not(:disabled) {
+        color: #a8a8a8;
+        background: rgba(255, 255, 255, 0.06);
+        border-color: rgba(255, 255, 255, 0.1);
+    }
+
+    .reset-btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+
+    /* Confirmation dialog */
+    .confirm-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        backdrop-filter: blur(2px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1001;
+    }
+
+    .confirm-dialog {
+        background: #222120;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 0.375rem;
+        padding: 1.25rem 1.5rem;
+        max-width: 340px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    .confirm-title {
+        font-size: 0.8125rem;
+        font-weight: 500;
+        color: #e8e6e3;
+        margin: 0 0 0.5rem 0;
+    }
+
+    .confirm-text {
+        font-size: 0.6875rem;
+        color: #8a8a8a;
+        line-height: 1.6;
+        margin: 0 0 1rem 0;
+    }
+
+    .confirm-actions {
+        display: flex;
+        gap: 0.5rem;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .confirm-actions-right {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .confirm-view {
+        font-size: 0.6875rem;
+        color: #6a6a6a;
+        background: none;
+        border: none;
+        padding: 0.35rem 0;
+        cursor: pointer;
+        transition: color 0.15s ease;
+    }
+
+    .confirm-view:hover:not(:disabled) {
+        color: #a8a8a8;
+    }
+
+    .confirm-cancel {
+        font-size: 0.6875rem;
+        color: #8a8a8a;
+        background: none;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 0.25rem;
+        padding: 0.35rem 0.875rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+
+    .confirm-cancel:hover:not(:disabled) {
+        color: #c8c8c8;
+        border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .confirm-proceed {
+        font-size: 0.6875rem;
+        color: #e8e6e3;
+        background: #8b3a3a;
+        border: 1px solid #a04444;
+        border-radius: 0.25rem;
+        padding: 0.35rem 0.875rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+
+    .confirm-proceed:hover:not(:disabled) {
+        background: #a04444;
+    }
+
+    .confirm-proceed:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    /* Light mode overrides for reset section */
+    :global(body.light-mode) .reset-section {
+        border-top-color: rgba(0, 0, 0, 0.08);
+    }
+
+    :global(body.light-mode) .reset-btn {
+        color: #6a6a6a;
+        background: rgba(0, 0, 0, 0.03);
+        border-color: rgba(0, 0, 0, 0.1);
+    }
+
+    :global(body.light-mode) .reset-btn:hover:not(:disabled) {
+        color: #3a3a3a;
+        background: rgba(0, 0, 0, 0.06);
+        border-color: rgba(0, 0, 0, 0.15);
+    }
+
+    :global(body.light-mode) .confirm-overlay {
+        background: rgba(0, 0, 0, 0.3);
+    }
+
+    :global(body.light-mode) .confirm-dialog {
+        background: #ffffff;
+        border-color: rgba(0, 0, 0, 0.12);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+    }
+
+    :global(body.light-mode) .confirm-title {
+        color: #2a2a2a;
+    }
+
+    :global(body.light-mode) .confirm-text {
+        color: #5a5a5a;
+    }
+
+    :global(body.light-mode) .confirm-view {
+        color: #7a7a7a;
+    }
+
+    :global(body.light-mode) .confirm-view:hover:not(:disabled) {
+        color: #3a3a3a;
+    }
+
+    :global(body.light-mode) .confirm-cancel {
+        color: #5a5a5a;
+        border-color: rgba(0, 0, 0, 0.12);
+    }
+
+    :global(body.light-mode) .confirm-cancel:hover:not(:disabled) {
+        color: #2a2a2a;
+        border-color: rgba(0, 0, 0, 0.2);
+    }
+
+    :global(body.light-mode) .confirm-proceed {
+        color: #fff;
+        background: #c53030;
+        border-color: #c53030;
+    }
+
+    :global(body.light-mode) .confirm-proceed:hover:not(:disabled) {
+        background: #b52828;
     }
 </style>

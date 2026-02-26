@@ -1062,6 +1062,31 @@ pub fn clear_midi_imports(
 }
 
 #[tauri::command]
+pub async fn reset_cache(
+    app: tauri::AppHandle,
+    db: State<'_, SessionDatabase>,
+    cache: State<'_, SimilarityCache>,
+) -> Result<usize, String> {
+    *cache.inner.lock() = None;
+    db.clear_sessions().map_err(|e| e.to_string())?;
+    let app_clone = app.clone();
+    tokio::task::spawn_blocking(move || {
+        rescan_sessions_blocking(&app_clone)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn reset_settings(
+    app: tauri::AppHandle,
+    config: State<'_, RwLock<Config>>,
+) -> Result<(), String> {
+    let mut cfg = config.write();
+    *cfg = Config::default();
+    cfg.save(&app).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn rescan_sessions(
     app: tauri::AppHandle,
 ) -> Result<usize, String> {
@@ -1074,6 +1099,9 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
     use std::collections::{HashMap, HashSet};
     use crate::session::{SessionIndexData, UpdatedSessionData, ExistingSessionRow};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Instant;
+
+    let t_start = Instant::now();
 
     let config = app.state::<RwLock<Config>>();
     let db = app.state::<SessionDatabase>();
@@ -1089,12 +1117,15 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
     let mut new_folders: Vec<(String, std::path::PathBuf)> = Vec::new();
 
     // 2. Get existing sessions from DB (before partitioning)
+    let t0 = Instant::now();
     let existing = db.get_all_existing_sessions().map_err(|e| e.to_string())?;
     let existing_map: HashMap<String, ExistingSessionRow> = existing
         .into_iter()
         .map(|row| (row.id.clone(), row))
         .collect();
+    let t_db_fetch = t0.elapsed();
 
+    let t0 = Instant::now();
     for entry in std::fs::read_dir(&storage_path).map_err(|e| e.to_string())? {
         let entry = match entry {
             Ok(e) => e,
@@ -1113,11 +1144,14 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
             }
         }
     }
+    let t_read_dir = t0.elapsed();
 
+    let new_folders_count = new_folders.len();
     let emit_progress = !new_folders.is_empty();
     let total = existing_folders.len() + new_folders.len();
     let progress_counter = std::sync::Arc::new(AtomicUsize::new(0));
 
+    let t_3a_start = Instant::now();
     // 3a. Existing sessions — lightweight parallel check (metadata I/O only)
     //
     // Each worker reads directory entries and checks extensions + mtime.
@@ -1215,13 +1249,16 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
             rx.iter().collect()
         })
     };
+    let t_existing_check = t_3a_start.elapsed();
 
+    let t_3b_start = Instant::now();
     // 3b. New sessions — parallel full scan with header parsing
     //
     // Each worker thread pulls folders from a shared queue, creates its own
     // GStreamer Discoverer (not Send, so one per thread), and sends results
     // back via a channel. This overlaps I/O-latency across folders, which is
     // the main bottleneck on cloud-backed filesystems like Google Drive.
+    let discoverer_fallbacks = std::sync::Arc::new(AtomicUsize::new(0));
     let new_sessions: Vec<SessionIndexData> = if new_folders.is_empty() {
         Vec::new()
     } else {
@@ -1237,6 +1274,7 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
             let tx = tx.clone();
             let app_handle = app.clone();
             let counter = progress_counter.clone();
+            let fallbacks = discoverer_fallbacks.clone();
 
             workers.push(std::thread::spawn(move || {
                 // One discoverer per worker, reused across all its folders
@@ -1248,6 +1286,7 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
                             let result = crate::session::scan_session_dir_for_index(
                                 &path,
                                 discoverer.as_ref(),
+                                Some(&fallbacks),
                             );
                             let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
                             let _ = app_handle.emit(
@@ -1284,18 +1323,25 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
         results
     };
 
+    let t_new_scan = t_3b_start.elapsed();
+
     // 4. Sessions in DB but not on disk -> deleted
     let deleted_ids: Vec<&String> = existing_map.keys()
         .filter(|id| !disk_folders.contains(id.as_str()))
         .collect();
 
     // 5. Batch sync in a single transaction
+    let t_sync_start = Instant::now();
     let _count = db.batch_sync(&new_sessions, &updated_sessions, &deleted_ids)
         .map_err(|e| e.to_string())?;
+    let t_batch_sync = t_sync_start.elapsed();
 
     let result = new_sessions.len() + updated_sessions.len();
-    log::info!("Rescanned sessions: {} new, {} updated, {} deleted",
-        new_sessions.len(), updated_sessions.len(), deleted_ids.len());
+    let fallback_count = discoverer_fallbacks.load(Ordering::Relaxed);
+    eprintln!("[rescan] db_fetch={:?}  read_dir={:?}  existing_check={:?}({} folders, {} updated)  new_scan={:?}({} folders, {} kept, {} discoverer_fallbacks)  batch_sync={:?}  deleted={}  total={:?}",
+        t_db_fetch, t_read_dir, t_existing_check, existing_folders.len(), updated_sessions.len(),
+        t_new_scan, new_folders_count, new_sessions.len(), fallback_count,
+        t_batch_sync, deleted_ids.len(), t_start.elapsed());
     Ok(result)
 }
 

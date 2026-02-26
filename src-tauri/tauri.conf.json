@@ -61,7 +61,7 @@
       }
     },
     "shortDescription": "Automatic recording companion for musicians",
-    "longDescription": "Sacho automatically captures MIDI, audio, and video when you play, so you never lose a musical idea."
+    "longDescription": "Sacho automatically captures MIDI, audio, and video when you play, so you never lose a musical performance."
   },
   "plugins": {}
 }

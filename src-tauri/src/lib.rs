@@ -211,6 +211,8 @@ pub fn run() {
             commands::get_similar_files,
             commands::clear_midi_imports,
             commands::rescan_sessions,
+            commands::reset_cache,
+            commands::reset_settings,
             commands::restart_midi_monitor,
             commands::read_session_file,
             commands::check_video_codec,
