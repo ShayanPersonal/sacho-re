@@ -292,7 +292,7 @@
                 <div class="confirm-dialog">
                     {#if confirmAction === "cache"}
                         <p class="confirm-title">Reset Cache</p>
-                        <p class="confirm-text">The cache is used for UI, search, and similarity. The application will rescan your recordings folder. This may take some time. Your recordings will not be deleted.</p>
+                        <p class="confirm-text">The cache is used for UI, search, and similarity. The application will rescan your recordings folder. This may take some time.</p>
                     {:else}
                         <p class="confirm-title">Reset Settings</p>
                         <p class="confirm-text">This will restore all settings to their defaults. Device configurations will be reset. The app will reload.</p>
