@@ -127,7 +127,7 @@
 
                 <div class="about-features">
                     <div class="feature">
-                        <span class="feature-icon">
+                        <span class="feature-icon icon-red">
                             <svg viewBox="0 0 24 24" fill="currentColor">
                                 <circle cx="12" cy="12" r="3" />
                                 <circle
@@ -147,7 +147,7 @@
                         >
                     </div>
                     <div class="feature">
-                        <span class="feature-icon">
+                        <span class="feature-icon icon-blue">
                             <svg
                                 viewBox="0 0 24 24"
                                 fill="none"
@@ -171,7 +171,7 @@
                         >
                     </div>
                     <div class="feature">
-                        <span class="feature-icon">
+                        <span class="feature-icon icon-green">
                             <svg
                                 viewBox="0 0 24 24"
                                 fill="none"
@@ -183,7 +183,7 @@
                                 <path d="M12 5.96A7 7 0 0 1 12 18.04A7 7 0 0 1 12 5.96Z" fill="currentColor" opacity="0.25" stroke="none" />
                             </svg>
                         </span>
-                        <span class="feature-label">Similar MIDI</span>
+                        <span class="feature-label">Similarity</span>
                         <span class="feature-desc"
                             >Quickly locate recordings with similar themes and
                             chords - put your past captures to use.</span
@@ -249,7 +249,7 @@
                         >. FFmpeg is a trademark of Fabrice Bellard, originator of
                         the FFmpeg project.
                     </p>
-                    <p class="notice-text">This software does not include proprietary encoders or decoders. This software uses media APIs provided by the host when available.</p>
+                    <p class="notice-text">This software processes unrecognized media formats with media APIs provided by the host.</p>
                 </div>
 
                 <div class="disclaimer">
@@ -512,9 +512,12 @@
     .feature-icon {
         width: 28px;
         height: 28px;
-        color: #8a8a8a;
         flex-shrink: 0;
     }
+
+    .icon-red { color: #9e6060; }
+    .icon-blue { color: #607a9e; }
+    .icon-green { color: #609e6e; }
 
     .feature-icon svg {
         width: 100%;
@@ -648,9 +651,9 @@
         background: rgba(0, 0, 0, 0.03);
     }
 
-    :global(body.light-mode) .feature-icon {
-        color: #5a5a5a;
-    }
+    :global(body.light-mode) .icon-red { color: #8a4a4a; }
+    :global(body.light-mode) .icon-blue { color: #4a6a8a; }
+    :global(body.light-mode) .icon-green { color: #4a7a52; }
 
     :global(body.light-mode) .feature-label {
         color: #3a3a3a;

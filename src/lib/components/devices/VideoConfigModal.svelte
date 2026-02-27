@@ -653,7 +653,7 @@
                             disabled={isEncodeOnly}
                             onchange={() => (passthrough = true)}
                         />
-                        Passthrough{defaultPassthrough(selectedFormat)
+                        Passthrough{defaultPassthrough(selectedFormat) && selectedFormat !== "H264" && selectedFormat !== "VP8"
                             ? " (Recommended)"
                             : ""}
                     </label>
@@ -680,8 +680,8 @@
                     >
                 {:else if !passthrough && !isSelectedRaw}
                     <span class="field-hint warning"
-                        >&#9888; The source is compressed. Re-encoding may
-                        cause quality loss.</span
+                        >Re-encoding may
+                        cause quality loss, but may reduce file size.</span
                     >
                 {:else}
                     <span class="field-hint"
@@ -714,7 +714,7 @@
                             </button>
                             {#if showCodecHelp}
                                 <span class="help-tooltip" style={tooltipStyle}>
-                                    The video codec effects quality, file size, and compatibility with other programs.<br /><br /> Newer codecs (higher in the list) are better than older codecs, if your system can handle them.
+                                    The video codec affects quality, file size, and compatibility with other programs.<br /><br /> Newer codecs (higher in the list) produce smaller files and better quality video, if your system can handle them.
                                 </span>
                             {/if}
                         </span>
