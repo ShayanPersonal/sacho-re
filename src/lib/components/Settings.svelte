@@ -483,7 +483,7 @@
                                     </button>
                                     {#if showAudioFormatHelp}
                                         <div class="help-tooltip" use:positionTooltip>
-                                            Does not affect audio quality.
+                                            Does not affect playback quality.
                                         </div>
                                     {/if}
                                 </span>
@@ -494,7 +494,7 @@
                                 bind:value={localSettings.audio_format}
                                 onchange={autoSave}
                             >
-                                <option value="flac">.flac (lossless, default)</option>
+                                <option value="flac">.flac (default)</option>
                                 <option value="wav">.wav (larger files)</option>
                             </select>
                         </div>
@@ -513,7 +513,7 @@
                                     </button>
                                     {#if showVideoContainerHelp}
                                         <div class="help-tooltip" use:positionTooltip>
-                                            Does not affect video quality or file size. MP4 has wider compatibility with other programs.
+                                            Does not affect video quality or file size. <br />.mp4 has wider compatibility with other programs.
                                         </div>
                                     {/if}
                                 </span>
