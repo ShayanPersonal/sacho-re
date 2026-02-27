@@ -460,7 +460,7 @@
                     <div class="format-fields">
                         <div class="format-field">
                             <label for="audio-format">
-                                <span class="setting-label">Audio Format</span>
+                                <span class="setting-label">Audio File Type</span>
                             </label>
                             <select
                                 id="audio-format"
@@ -473,7 +473,7 @@
                         </div>
                         <div class="format-field">
                             <label for="video-container">
-                                <span class="setting-label">Video Format</span>
+                                <span class="setting-label">Video File Type</span>
                             </label>
                             <select
                                 id="video-container"
@@ -1111,12 +1111,13 @@
     }
 
     .format-fields {
-        display: flex;
-        gap: 1rem;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 5.5rem;
+        width: fit-content;
     }
 
     .format-field {
-        flex: 1;
         display: flex;
         flex-direction: column;
         gap: 0.25rem;

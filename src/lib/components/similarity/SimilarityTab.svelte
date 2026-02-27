@@ -244,25 +244,6 @@
     const n = $similarFiles.length;
     const progress = animationProgress;
 
-    // Draw connection lines
-    for (let i = 0; i < n; i++) {
-      const result = $similarFiles[i];
-      const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
-      // Rank-based distance: rank 1 = closest
-      const dist = Math.min((result.rank / (n + 1)) * maxR, maxR * 0.75);
-      const delay = (i / n) * STAGGER;
-      const pos = goldenSpiralPos(cx, cy, angle, dist, progress, delay);
-
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(pos.x, pos.y);
-      ctx.strokeStyle = isLightMode
-        ? `rgba(160, 128, 48, ${0.1 * progress})`
-        : `rgba(201, 169, 98, ${0.08 * progress})`;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
-
     // Draw satellite nodes
     for (let i = 0; i < n; i++) {
       const result = $similarFiles[i];
