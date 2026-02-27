@@ -452,7 +452,7 @@
                         >
                     </div>
                     <p class="setting-recommendation">
-                        Tip: You can back up this folder to cloud storage and
+                        Tip: You can sync this folder to cloud storage and
                         open it on other instances of this app.
                     </p>
                 </div>

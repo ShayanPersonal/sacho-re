@@ -85,6 +85,9 @@ tempfile = { version = "3", optional = true }
 
 sysinfo = { version = "0.38.1", default-features = false, features = ["disk", "system"] }
 
+# Ctrl+C / SIGTERM handler
+ctrlc = "3"
+
 # Parallel processing
 rayon = "1.10"
 

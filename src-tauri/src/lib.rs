@@ -70,8 +70,6 @@ pub fn run() {
             // "in use" system-wide after a force-kill.
             if args.iter().any(|a| a == "--quit") {
                 log::info!("Received --quit from uninstaller, shutting down gracefully");
-                let midi_monitor = app.state::<Arc<Mutex<recording::MidiMonitor>>>();
-                midi_monitor.lock().stop();
                 app.exit(0);
                 return;
             }
@@ -183,7 +181,13 @@ pub fn run() {
             if let Err(e) = tray::setup_tray(&app_handle) {
                 log::error!("Failed to setup tray: {}", e);
             }
-            
+
+            // Handle Ctrl+C (e.g. during development) so RunEvent::Exit cleanup runs.
+            let ctrlc_handle = app_handle.clone();
+            ctrlc::set_handler(move || {
+                ctrlc_handle.exit(0);
+            }).ok();
+
             log::info!("Sacho initialized successfully");
             
             Ok(())
@@ -236,10 +240,9 @@ pub fn run() {
         .expect("error while building Sacho")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
-                // Explicitly stop the MIDI monitor so midir closes all WinMM
-                // handles before the process exits.  Without this,
-                // std::process::exit() skips Drop impls and some USB MIDI
-                // drivers leave the device marked "in use" system-wide.
+                // Single cleanup point for all exit paths (tray quit, --quit
+                // flag, etc.).  Stops all pipelines and ensures midir closes
+                // WinMM MIDI handles before the process exits.
                 let midi_monitor = app.state::<Arc<Mutex<recording::MidiMonitor>>>();
                 midi_monitor.lock().stop();
             }

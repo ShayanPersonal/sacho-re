@@ -1808,8 +1808,13 @@ impl MidiMonitor {
         self.audio_level_poller_handle = Some(handle);
     }
 
-    /// Stop monitoring (all pipelines)
+    /// Stop monitoring (all pipelines).
+    /// If a recording is in progress, finalizes it first so files are complete.
     pub fn stop(&mut self) {
+        if self.is_recording() {
+            println!("[Sacho] Recording in progress during shutdown, finalizing...");
+            stop_recording(&self.app_handle, &self.capture_state, &self.video_manager);
+        }
         self.stop_health_checker();
         self.stop_idle_checker();
         self.stop_midi();
