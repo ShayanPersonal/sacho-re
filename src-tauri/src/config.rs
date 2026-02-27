@@ -413,7 +413,7 @@ impl Default for Config {
             storage_path: get_default_storage_path(),
             idle_timeout_secs: 5,
             pre_roll_secs: 2, // Default to 2 seconds of pre-roll
-            audio_format: AudioFormat::Wav,
+            audio_format: AudioFormat::Flac,
             wav_bit_depth: AudioBitDepth::default(),
             wav_sample_rate: AudioSampleRate::default(),
             flac_bit_depth: AudioBitDepth::default(),

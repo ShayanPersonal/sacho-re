@@ -13,8 +13,10 @@
     selectFile,
     switchMode,
     clearImports,
+    fileDurations,
   } from '$lib/stores/similarity';
   import type { SimilarityMode, MidiImportInfo } from '$lib/api';
+  import { formatDuration } from '$lib/api';
   import { settings } from '$lib/stores/settings';
   import MidiFileDetail from './MidiFileDetail.svelte';
 
@@ -266,7 +268,7 @@
 
       ctx.shadowBlur = 0;
 
-      // Score label near node
+      // Score label above node
       if (progress > 0.5) {
         const labelAlpha = (progress - 0.5) * 2;
         ctx.fillStyle = isLightMode
@@ -276,6 +278,18 @@
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
         ctx.fillText(`${Math.round(result.score * 100)}%`, pos.x, pos.y - radius - 4);
+
+        // Duration label to the right of node
+        const dur = $fileDurations.get(result.file.id);
+        if (dur !== undefined) {
+          ctx.fillStyle = isLightMode
+            ? `rgba(120, 120, 120, ${labelAlpha * 0.5})`
+            : `rgba(100, 100, 100, ${labelAlpha * 0.5})`;
+          ctx.font = '9px "DM Mono", monospace';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(formatDuration(Math.floor(dur)), pos.x + radius + 5, pos.y);
+        }
       }
     }
 
@@ -298,6 +312,14 @@
         ? $selectedFile.file_name.slice(0, 18) + '...'
         : $selectedFile.file_name;
       ctx.fillText(name, cx, cy + 18);
+
+      // Duration below name
+      const centerDur = $fileDurations.get($selectedFile.id);
+      if (centerDur !== undefined) {
+        ctx.fillStyle = isLightMode ? 'rgba(120, 120, 120, 0.7)' : 'rgba(100, 100, 100, 0.6)';
+        ctx.font = '9px "DM Mono", monospace';
+        ctx.fillText(formatDuration(Math.floor(centerDur)), cx, cy + 32);
+      }
     }
   });
 
@@ -484,13 +506,19 @@
 
       {#if hoveredIndex !== null && $similarFiles[hoveredIndex]}
         {@const result = $similarFiles[hoveredIndex]}
+        {@const hovDur = $fileDurations.get(result.file.id)}
         <div
           class="tooltip"
           style="left: {tooltipX}px; top: {tooltipY - 10}px"
         >
           <div class="tooltip-content">
             <div class="tooltip-name">{result.file.file_name}</div>
-            <div class="tooltip-score">{Math.round(result.score * 100)}% similar</div>
+            <div class="tooltip-meta">
+              <span class="tooltip-score">{Math.round(result.score * 100)}% similar</span>
+              {#if hovDur !== undefined}
+                <span class="tooltip-duration">{formatDuration(Math.floor(hovDur))}</span>
+              {/if}
+            </div>
           </div>
         </div>
       {/if}
@@ -831,10 +859,22 @@
     white-space: nowrap;
   }
 
+  .tooltip-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.125rem;
+  }
+
   .tooltip-score {
     font-size: 0.75rem;
     color: #c9a962;
-    margin-top: 0.125rem;
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
+  }
+
+  .tooltip-duration {
+    font-size: 0.6875rem;
+    color: #6a6a6a;
     font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
   }
 
@@ -983,6 +1023,10 @@
 
   :global(body.light-mode) .tooltip-score {
     color: #8a6a20;
+  }
+
+  :global(body.light-mode) .tooltip-duration {
+    color: #9a9a9a;
   }
 
   :global(body.light-mode) .computing-overlay {

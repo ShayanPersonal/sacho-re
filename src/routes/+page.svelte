@@ -78,8 +78,9 @@
                 stroke="currentColor"
                 stroke-width="1.5"
             >
-                <path d="M3 3v18h18" />
-                <path d="M7 16l4-4 4 4 6-6" />
+                <circle cx="8.5" cy="12" r="7" />
+                <circle cx="15.5" cy="12" r="7" />
+                <path d="M12 5.96A7 7 0 0 1 12 18.04A7 7 0 0 1 12 5.96Z" fill="currentColor" opacity="0.25" stroke="none" />
             </svg>
             Similarity
         </button>

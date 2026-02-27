@@ -168,7 +168,7 @@
                         </span>
                         <span class="feature-label">Pre-roll Capture</span>
                         <span class="feature-desc"
-                            >Capture the moments leading up to the performance - don't miss a beat.</span
+                            >Capture the moments leading into the performance - don't miss a beat.</span
                         >
                     </div>
                     <div class="feature">
@@ -184,10 +184,10 @@
                                 <path d="M12 5.96A7 7 0 0 1 12 18.04A7 7 0 0 1 12 5.96Z" fill="currentColor" opacity="0.25" stroke="none" />
                             </svg>
                         </span>
-                        <span class="feature-label">Similarity</span>
+                        <span class="feature-label">Similarity Search</span>
                         <span class="feature-desc"
-                            >Quickly locate recordings with similar themes and
-                            chords - put your past captures to use.</span
+                            >Quickly locate files with similar melodies and
+                            harmonies - put your old recordings to use.</span
                         >
                     </div>
                 </div>

@@ -34,6 +34,14 @@
             node.style.marginTop = "0";
             node.style.marginBottom = "0.5rem";
         }
+        if (rect.right > window.innerWidth) {
+            node.style.left = "auto";
+            node.style.right = "0";
+        }
+        if (rect.left < 0) {
+            node.style.left = "0";
+            node.style.right = "auto";
+        }
     }
 
     // Local editable copy
@@ -42,6 +50,8 @@
     let showAutostartHelp = $state(false);
     let showBackgroundHelp = $state(false);
     let showCombineHelp = $state(false);
+    let showVideoContainerHelp = $state(false);
+    let showAudioFormatHelp = $state(false);
     let showAudioAdvanced = $state(false);
 
     // All-users autostart state
@@ -459,29 +469,62 @@
                 <div class="setting-row">
                     <div class="format-fields">
                         <div class="format-field">
-                            <label for="audio-format">
-                                <span class="setting-label">Audio File Type</span>
-                            </label>
+                            <div class="label-with-help">
+                                <label for="audio-format">
+                                    <span class="setting-label">Audio File Type</span>
+                                </label>
+                                <span class="setting-label-with-help">
+                                    <button
+                                        class="help-btn"
+                                        onclick={() => showAudioFormatHelp = !showAudioFormatHelp}
+                                        onblur={() => showAudioFormatHelp = false}
+                                    >
+                                        ?
+                                    </button>
+                                    {#if showAudioFormatHelp}
+                                        <div class="help-tooltip" use:positionTooltip>
+                                            Does not affect audio quality.
+                                        </div>
+                                    {/if}
+                                </span>
+                            </div>
+                            
                             <select
                                 id="audio-format"
                                 bind:value={localSettings.audio_format}
                                 onchange={autoSave}
                             >
-                                <option value="wav">WAV (uses more disk space)</option>
-                                <option value="flac">FLAC (uses less disk space)</option>
+                                <option value="flac">.flac (lossless, default)</option>
+                                <option value="wav">.wav (larger files)</option>
                             </select>
                         </div>
                         <div class="format-field">
-                            <label for="video-container">
-                                <span class="setting-label">Video File Type</span>
-                            </label>
+                            <div class="label-with-help">
+                                <label for="video-container">
+                                    <span class="setting-label">Video Container</span>
+                                </label>
+                                <span class="setting-label-with-help">
+                                    <button
+                                        class="help-btn"
+                                        onclick={() => showVideoContainerHelp = !showVideoContainerHelp}
+                                        onblur={() => showVideoContainerHelp = false}
+                                    >
+                                        ?
+                                    </button>
+                                    {#if showVideoContainerHelp}
+                                        <div class="help-tooltip" use:positionTooltip>
+                                            Does not affect video quality or file size. MP4 has wider compatibility with other programs.
+                                        </div>
+                                    {/if}
+                                </span>
+                            </div>
                             <select
                                 id="video-container"
                                 bind:value={localSettings.preferred_video_container}
                                 onchange={autoSave}
                             >
-                                <option value="mp4">MP4 (default)</option>
-                                <option value="mkv">MKV</option>
+                                <option value="mp4">.mp4 (default)</option>
+                                <option value="mkv">.mkv</option>
                             </select>
                         </div>
                     </div>
@@ -554,8 +597,8 @@
                                         <option value="int24"
                                             >24-bit (default)</option
                                         >
-                                        <option value="float32"
-                                            >32-bit (limited compatibility)</option
+                                        <option value="float32" disabled
+                                            >32-bit float (use WAV)</option
                                         >
                                     </select>
                                 {/if}
@@ -1121,6 +1164,7 @@
         display: flex;
         flex-direction: column;
         gap: 0.25rem;
+        min-width: 215px;
     }
 
     .inline-checkbox {
@@ -1516,6 +1560,12 @@
         font-size: 0.8125rem;
     }
 
+    .label-with-help {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+
     .setting-label-with-help {
         display: flex;
         align-items: center;
@@ -1558,8 +1608,8 @@
         font-size: 0.75rem;
         font-weight: 400;
         color: #8a8a8a;
-        white-space: normal;
-        width: 280px;
+        width: max-content;
+        max-width: 280px;
         line-height: 1.5;
         z-index: 100;
     }
