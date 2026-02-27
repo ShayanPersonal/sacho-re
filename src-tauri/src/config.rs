@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-use crate::encoding::HardwareEncoderType;
+use crate::encoding::{ContainerFormat, HardwareEncoderType};
 
 /// Default maximum encoding height when the user hasn't chosen a specific target.
 /// This is just the initial selection — users can pick higher values in the UI.
@@ -144,11 +144,17 @@ pub struct Config {
     #[serde(default)]
     pub encode_during_preroll: bool,
 
-    /// Whether to combine audio and video into a single MKV file.
+    /// Whether to combine audio and video into a single container file.
     /// When enabled (and exactly 1 video + 1 audio device are selected),
-    /// the separate audio file is muxed into the video MKV after recording stops.
+    /// the separate audio file is muxed into the video container after recording stops.
     #[serde(default)]
     pub combine_audio_video: bool,
+
+    /// Preferred video container format for recordings.
+    /// AV1, VP9, and H.264 are remuxed to this container after recording.
+    /// FFV1 always stays MKV; VP8 always stays WebM regardless of this setting.
+    #[serde(default = "default_preferred_video_container")]
+    pub preferred_video_container: ContainerFormat,
 
     /// Device presets
     pub device_presets: Vec<DevicePreset>,
@@ -346,6 +352,34 @@ impl VideoDeviceConfig {
         Some(self.encoding_codec.unwrap_or_else(|| crate::encoding::get_recommended_codec()))
     }
 
+    /// Returns the effective output container for this device, given the global preference.
+    ///
+    /// FFV1 always uses MKV; VP8 always uses WebM; MJPEG always uses MKV.
+    /// For AV1, VP9, and H.264 the user's global `preferred_video_container` is used.
+    /// Raw sources that will be encoded follow the same logic based on their target codec.
+    pub fn effective_container(&self, preferred: ContainerFormat) -> ContainerFormat {
+        let codec = if self.passthrough {
+            match self.source_format.as_str() {
+                "MJPEG" => crate::encoding::VideoCodec::Mjpeg,
+                "H264"  => crate::encoding::VideoCodec::H264,
+                "AV1"   => crate::encoding::VideoCodec::Av1,
+                "VP8"   => crate::encoding::VideoCodec::Vp8,
+                "VP9"   => crate::encoding::VideoCodec::Vp9,
+                _       => crate::encoding::VideoCodec::Raw,
+            }
+        } else {
+            self.encoding_codec.unwrap_or_else(|| crate::encoding::get_recommended_codec())
+        };
+        match codec {
+            crate::encoding::VideoCodec::Ffv1 => ContainerFormat::Mkv,
+            crate::encoding::VideoCodec::Vp8 => ContainerFormat::WebM,
+            crate::encoding::VideoCodec::Mjpeg => ContainerFormat::Mkv,
+            crate::encoding::VideoCodec::Raw => ContainerFormat::Mkv,
+            // AV1, VP9, H264: use user's global preference
+            _ => preferred,
+        }
+    }
+
     /// Returns true if only preset_level differs (no pipeline restart needed).
     pub fn pipeline_fields_equal(&self, other: &Self) -> bool {
         self.source_format == other.source_format
@@ -409,6 +443,7 @@ impl Default for Config {
             video_device_configs: HashMap::new(),
             encode_during_preroll: false,
             combine_audio_video: false,
+            preferred_video_container: ContainerFormat::Mp4,
             device_presets: Vec::new(),
             current_preset: None,
         }
@@ -574,4 +609,9 @@ fn default_preset_level() -> u8 {
 /// Default sound volume (for serde)
 fn default_sound_volume() -> f64 {
     1.0
+}
+
+/// Default preferred video container (for serde)
+fn default_preferred_video_container() -> ContainerFormat {
+    ContainerFormat::Mp4
 }

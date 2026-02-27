@@ -20,7 +20,7 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 
-use super::VideoCodec;
+use super::{ContainerFormat, VideoCodec};
 
 /// Error type for encoder operations
 #[derive(Debug, thiserror::Error)]
@@ -975,33 +975,11 @@ impl AsyncVideoEncoder {
         // Give filesystem time to sync
         std::thread::sleep(std::time::Duration::from_millis(100));
 
-        // Remux the file to add proper duration header.
-        // FFV1 is skipped: GStreamer bug — matroskademux outputs caps with
-        // field name "ffvversion" but matroskamux expects "ffversion", causing
-        // not-negotiated error. FFV1 doesn't need remuxing anyway since
-        // matroskamux writes correct duration on EOS for intra-frame codecs.
-        let bytes_written = if config.target_codec == VideoCodec::Ffv1 {
-            std::fs::metadata(&output_path)
-                .map(|m| m.len())
-                .unwrap_or(0)
-        } else {
-            match Self::remux_with_duration(&output_path) {
-                Ok(size) => {
-                    println!(
-                        "[Encoder] Remuxed with duration header, size: {} bytes",
-                        size
-                    );
-                    size
-                }
-                Err(e) => {
-                    println!("[Encoder] Warning: Failed to remux with duration: {}", e);
-                    // Fall back to original file size
-                    std::fs::metadata(&output_path)
-                        .map(|m| m.len())
-                        .unwrap_or(0)
-                }
-            }
-        };
+        // Remuxing is now a post-recording step (see stop_recording in video.rs).
+        // The encoder thread just reports the raw MKV file size.
+        let bytes_written = std::fs::metadata(&output_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
 
         let encoding_duration = start_time.elapsed();
         let content_duration = Duration::from_nanos(last_pts_end);
@@ -1036,38 +1014,54 @@ impl AsyncVideoEncoder {
         })
     }
 
-    /// Remux a video file to add proper duration header
+    /// Remux an MKV file to the target container format.
     ///
-    /// Files created in streaming mode may not have duration in the header.
-    /// This function remuxes the file to add it.
-    pub(crate) fn remux_with_duration(file_path: &PathBuf) -> Result<u64> {
-        let extension = file_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("mkv");
+    /// Recording always produces MKV files for crash safety. This function
+    /// remuxes to the user's desired container (MP4, WebM) after a clean finish.
+    /// If target is MKV, remuxes in-place to fix the duration header.
+    ///
+    /// Returns `(final_path, file_size)`.
+    pub(crate) fn remux_to_container(
+        input_path: &PathBuf,
+        target_container: ContainerFormat,
+    ) -> Result<(PathBuf, u64)> {
+        let output_path = if target_container == ContainerFormat::Mkv {
+            // MKV→MKV: remux in-place to fix duration header
+            input_path.clone()
+        } else {
+            input_path.with_extension(target_container.extension())
+        };
 
-        println!("[Encoder] Remuxing {} to add duration header...", extension);
+        let temp_path = input_path.with_extension(format!("{}.tmp", target_container.extension()));
 
-        // Create temp file path
-        let temp_path = file_path.with_extension(format!("{}.tmp", extension));
+        println!(
+            "[Encoder] Remuxing MKV -> {} ({:?} -> {:?})",
+            target_container.display_name(),
+            input_path.file_name().unwrap_or_default(),
+            output_path.file_name().unwrap_or_default(),
+        );
 
-        // Build remux pipeline: filesrc ! matroskademux ! matroskamux ! filesink
         let pipeline = gst::Pipeline::new();
 
         let filesrc = gst::ElementFactory::make("filesrc")
-            .property("location", file_path.to_string_lossy().to_string())
+            .property("location", input_path.to_string_lossy().to_string())
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesrc: {}", e)))?;
 
+        // Input is always MKV
         let demux = gst::ElementFactory::make("matroskademux")
             .build()
             .map_err(|e| {
                 EncoderError::Pipeline(format!("Failed to create matroskademux: {}", e))
             })?;
 
-        let mux = gst::ElementFactory::make("matroskamux")
+        let mux = gst::ElementFactory::make(target_container.gst_muxer())
             .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create {}: {}", target_container.gst_muxer(), e)))?;
+
+        if target_container.has_writing_app_property() {
+            mux.set_property("writing-app", "Sacho");
+        }
 
         let filesink = gst::ElementFactory::make("filesink")
             .property("location", temp_path.to_string_lossy().to_string())
@@ -1095,11 +1089,9 @@ impl AsyncVideoEncoder {
                 return;
             };
 
-            // Get the pad name to determine the stream type
             let pad_name = src_pad.name();
             println!("[Encoder] Demux pad added: {}", pad_name);
 
-            // Request appropriate pad from muxer
             let sink_pad = if pad_name.starts_with("video") {
                 mux.request_pad_simple("video_%u")
             } else if pad_name.starts_with("audio") {
@@ -1135,6 +1127,7 @@ impl AsyncVideoEncoder {
                 }
                 gst::MessageView::Error(err) => {
                     pipeline.set_state(gst::State::Null).ok();
+                    let _ = std::fs::remove_file(&temp_path);
                     return Err(EncoderError::Pipeline(format!(
                         "Remux error: {} ({:?})",
                         err.error(),
@@ -1147,19 +1140,54 @@ impl AsyncVideoEncoder {
 
         pipeline.set_state(gst::State::Null).ok();
 
-        // Get the new file size
         let new_size = std::fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0);
 
         if new_size > 0 {
-            // Replace original with remuxed version
-            std::fs::remove_file(file_path).map_err(|e| EncoderError::Io(e))?;
-            std::fs::rename(&temp_path, file_path).map_err(|e| EncoderError::Io(e))?;
-            Ok(new_size)
+            if target_container == ContainerFormat::Mkv {
+                // MKV→MKV: replace original with remuxed version (fixes duration)
+                std::fs::remove_file(input_path).map_err(|e| EncoderError::Io(e))?;
+                std::fs::rename(&temp_path, &output_path).map_err(|e| EncoderError::Io(e))?;
+            } else {
+                // MKV→MP4/WebM: write to new file, delete original MKV
+                std::fs::rename(&temp_path, &output_path).map_err(|e| EncoderError::Io(e))?;
+                std::fs::remove_file(input_path).map_err(|e| EncoderError::Io(e))?;
+            }
+            Ok((output_path, new_size))
         } else {
-            // Keep original if remux produced empty file
             let _ = std::fs::remove_file(&temp_path);
             Err(EncoderError::Pipeline("Remux produced empty file".into()))
         }
+    }
+
+    /// Create muxer and filesink elements, add them to the pipeline, link them,
+    /// and return `(muxer, filesink)`. Sets "writing-app" if supported.
+    fn create_mux_and_sink(
+        pipeline: &gst::Pipeline,
+        container: ContainerFormat,
+        output_path: &PathBuf,
+    ) -> Result<(gst::Element, gst::Element)> {
+        let muxer = gst::ElementFactory::make(container.gst_muxer())
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create {}: {}", container.gst_muxer(), e)))?;
+
+        if container.has_writing_app_property() {
+            muxer.set_property("writing-app", "Sacho");
+        }
+
+        let filesink = gst::ElementFactory::make("filesink")
+            .property("location", output_path.to_string_lossy().to_string())
+            .property("async", false)
+            .property("sync", false)
+            .build()
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
+
+        pipeline
+            .add_many([&muxer, &filesink])
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to add mux+sink: {}", e)))?;
+        muxer.link(&filesink)
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to link mux->sink: {}", e)))?;
+
+        Ok((muxer, filesink))
     }
 
     /// Create the GStreamer encoding pipeline
@@ -1330,7 +1358,7 @@ impl AsyncVideoEncoder {
         Ok((pipeline, appsrc, chain_tail))
     }
 
-    /// Create AV1 encoding pipeline (MKV container)
+    /// Create AV1 encoding pipeline
     fn create_av1_pipeline(
         output_path: &PathBuf,
         width: u32,
@@ -1350,33 +1378,18 @@ impl AsyncVideoEncoder {
             pixel_format,
         )?;
 
-        // Create AV1 encoder
         let encoder = Self::create_av1_encoder(hw_type, config)?;
 
-        // AV1 parser
         let parser = gst::ElementFactory::make("av1parse")
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create av1parse: {}", e)))?;
 
-        // MKV muxer for AV1
-        let muxer = gst::ElementFactory::make("matroskamux")
-            .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
-        muxer.set_property("writing-app", "Sacho");
+        let (muxer, _filesink) = Self::create_mux_and_sink(&pipeline, ContainerFormat::Mkv, output_path)?;
 
-        // File sink with sync disabled for better performance
-        let filesink = gst::ElementFactory::make("filesink")
-            .property("location", output_path.to_string_lossy().to_string())
-            .property("async", false)
-            .property("sync", false)
-            .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
-
-        // Add encoder-specific elements and link from the common chain tail
         pipeline
-            .add_many([&encoder, &parser, &muxer, &filesink])
+            .add_many([&encoder, &parser])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
-        gst::Element::link_many([&chain_tail, &encoder, &parser, &muxer, &filesink])
+        gst::Element::link_many([&chain_tail, &encoder, &parser, &muxer])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
 
         Ok(pipeline)
@@ -1415,7 +1428,7 @@ impl AsyncVideoEncoder {
         Ok(encoder)
     }
 
-    /// Create VP8 encoding pipeline (MKV container)
+    /// Create VP8 encoding pipeline
     fn create_vp8_pipeline(
         output_path: &PathBuf,
         width: u32,
@@ -1435,28 +1448,13 @@ impl AsyncVideoEncoder {
             pixel_format,
         )?;
 
-        // Create VP8 encoder
         let encoder = Self::create_vp8_encoder(hw_type, config)?;
+        let (muxer, _filesink) = Self::create_mux_and_sink(&pipeline, ContainerFormat::Mkv, output_path)?;
 
-        // MKV muxer for VP8
-        let muxer = gst::ElementFactory::make("matroskamux")
-            .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
-        muxer.set_property("writing-app", "Sacho");
-
-        // File sink with sync disabled for better performance
-        let filesink = gst::ElementFactory::make("filesink")
-            .property("location", output_path.to_string_lossy().to_string())
-            .property("async", false)
-            .property("sync", false)
-            .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
-
-        // Add encoder-specific elements and link from the common chain tail
         pipeline
-            .add_many([&encoder, &muxer, &filesink])
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
-        gst::Element::link_many([&chain_tail, &encoder, &muxer, &filesink])
+            .add(&encoder)
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to add encoder: {}", e)))?;
+        gst::Element::link_many([&chain_tail, &encoder, &muxer])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
 
         Ok(pipeline)
@@ -1509,7 +1507,7 @@ impl AsyncVideoEncoder {
         Ok(encoder)
     }
 
-    /// Create VP9 encoding pipeline (MKV container)
+    /// Create VP9 encoding pipeline
     fn create_vp9_pipeline(
         output_path: &PathBuf,
         width: u32,
@@ -1529,28 +1527,13 @@ impl AsyncVideoEncoder {
             pixel_format,
         )?;
 
-        // Create VP9 encoder
         let encoder = Self::create_vp9_encoder(hw_type, config)?;
+        let (muxer, _filesink) = Self::create_mux_and_sink(&pipeline, ContainerFormat::Mkv, output_path)?;
 
-        // MKV muxer for VP9
-        let muxer = gst::ElementFactory::make("matroskamux")
-            .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
-        muxer.set_property("writing-app", "Sacho");
-
-        // File sink with sync disabled for better performance
-        let filesink = gst::ElementFactory::make("filesink")
-            .property("location", output_path.to_string_lossy().to_string())
-            .property("async", false)
-            .property("sync", false)
-            .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
-
-        // Add encoder-specific elements and link from the common chain tail
         pipeline
-            .add_many([&encoder, &muxer, &filesink])
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
-        gst::Element::link_many([&chain_tail, &encoder, &muxer, &filesink])
+            .add(&encoder)
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to add encoder: {}", e)))?;
+        gst::Element::link_many([&chain_tail, &encoder, &muxer])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
 
         Ok(pipeline)
@@ -1603,10 +1586,9 @@ impl AsyncVideoEncoder {
         Ok(encoder)
     }
 
-    /// Create H264 encoding pipeline (MKV container)
+    /// Create H264 encoding pipeline
     ///
     /// Uses platform-native encoders only (Media Foundation on Windows, VideoToolbox on macOS).
-    /// Pipeline: common_chain → encoder → h264parse → matroskamux → filesink
     fn create_h264_pipeline(
         output_path: &PathBuf,
         width: u32,
@@ -1626,33 +1608,18 @@ impl AsyncVideoEncoder {
             pixel_format,
         )?;
 
-        // Create H264 encoder
         let encoder = Self::create_h264_encoder(hw_type, config)?;
 
-        // H264 parser for NAL unit framing before muxing
         let parser = gst::ElementFactory::make("h264parse")
             .build()
             .map_err(|e| EncoderError::Pipeline(format!("Failed to create h264parse: {}", e)))?;
 
-        // MKV muxer for H264
-        let muxer = gst::ElementFactory::make("matroskamux")
-            .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
-        muxer.set_property("writing-app", "Sacho");
+        let (muxer, _filesink) = Self::create_mux_and_sink(&pipeline, ContainerFormat::Mkv, output_path)?;
 
-        // File sink with sync disabled for better performance
-        let filesink = gst::ElementFactory::make("filesink")
-            .property("location", output_path.to_string_lossy().to_string())
-            .property("async", false)
-            .property("sync", false)
-            .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
-
-        // Add encoder-specific elements and link from the common chain tail
         pipeline
-            .add_many([&encoder, &parser, &muxer, &filesink])
+            .add_many([&encoder, &parser])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
-        gst::Element::link_many([&chain_tail, &encoder, &parser, &muxer, &filesink])
+        gst::Element::link_many([&chain_tail, &encoder, &parser, &muxer])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
 
         Ok(pipeline)
@@ -1691,7 +1658,7 @@ impl AsyncVideoEncoder {
         Ok(encoder)
     }
 
-    /// Create FFV1 encoding pipeline (MKV container)
+    /// Create FFV1 encoding pipeline
     fn create_ffv1_pipeline(
         output_path: &PathBuf,
         width: u32,
@@ -1711,27 +1678,13 @@ impl AsyncVideoEncoder {
             pixel_format,
         )?;
 
-        // Create FFV1 encoder
         let encoder = Self::create_ffv1_encoder(hw_type, config)?;
-
-        // MKV muxer
-        let muxer = gst::ElementFactory::make("matroskamux")
-            .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create matroskamux: {}", e)))?;
-        muxer.set_property("writing-app", "Sacho");
-
-        // File sink
-        let filesink = gst::ElementFactory::make("filesink")
-            .property("location", output_path.to_string_lossy().to_string())
-            .property("async", false)
-            .property("sync", false)
-            .build()
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to create filesink: {}", e)))?;
+        let (muxer, _filesink) = Self::create_mux_and_sink(&pipeline, ContainerFormat::Mkv, output_path)?;
 
         pipeline
-            .add_many([&encoder, &muxer, &filesink])
-            .map_err(|e| EncoderError::Pipeline(format!("Failed to add elements: {}", e)))?;
-        gst::Element::link_many([&chain_tail, &encoder, &muxer, &filesink])
+            .add(&encoder)
+            .map_err(|e| EncoderError::Pipeline(format!("Failed to add encoder: {}", e)))?;
+        gst::Element::link_many([&chain_tail, &encoder, &muxer])
             .map_err(|e| EncoderError::Pipeline(format!("Failed to link elements: {}", e)))?;
 
         Ok(pipeline)

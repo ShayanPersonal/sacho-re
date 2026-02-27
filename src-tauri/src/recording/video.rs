@@ -3,7 +3,7 @@
 // This module provides video recording with pre-roll buffering using GStreamer pipelines.
 // Key features:
 // - Continuous capture with ring-buffer pre-roll (configurable duration)
-// - Passthrough encoding to MKV container
+// - Passthrough encoding to configurable container format (MKV, WebM, MP4)
 // - Non-blocking file I/O through GStreamer's async handling
 // - Synchronization support with audio/MIDI streams
 
@@ -237,6 +237,8 @@ pub struct VideoCapturePipeline {
     is_encoding: bool,
     /// Target encoding codec (AV1/VP9/VP8/FFV1). None = auto-detect.
     encoding_codec: Option<crate::encoding::VideoCodec>,
+    /// Container format for output files
+    container_format: crate::encoding::ContainerFormat,
     /// Hardware encoder type. None = auto-detect.
     encoder_type: Option<HardwareEncoderType>,
     /// Pixel format for raw video capture
@@ -291,7 +293,9 @@ struct VideoWriter {
 }
 
 impl VideoWriter {
-    /// Create a new video writer for the specified codec
+    /// Create a new video writer for the specified codec.
+    /// Always writes to MKV container for crash safety. Remuxing to the
+    /// user's target container happens as a post-recording step.
     fn new(
         path: &PathBuf,
         codec: crate::encoding::VideoCodec,
@@ -302,11 +306,9 @@ impl VideoWriter {
         use crate::encoding::encoder::fps_to_gst_fraction;
 
         let pipeline = gst::Pipeline::new();
-        let container = codec.container();
 
         println!(
-            "[Video] Creating {} writer with {} codec (creating elements...)",
-            container.extension(),
+            "[Video] Creating MKV writer with {} codec (creating elements...)",
             codec.display_name()
         );
 
@@ -324,19 +326,14 @@ impl VideoWriter {
             .is_live(true)
             .build();
 
-        // Create muxer for the container
-        let muxer = gst::ElementFactory::make(container.gst_muxer())
+        // Always use matroskamux for crash safety
+        let muxer = gst::ElementFactory::make("matroskamux")
             .build()
             .map_err(|e| {
-                VideoError::Pipeline(format!("Failed to create {}: {}", container.gst_muxer(), e))
+                VideoError::Pipeline(format!("Failed to create matroskamux: {}", e))
             })?;
 
-        // Set muxer-specific properties
-        match container {
-            crate::encoding::ContainerFormat::Mkv => {
-                muxer.set_property("writing-app", "Sacho");
-            }
-        }
+        muxer.set_property("writing-app", "Sacho");
 
         let filesink = gst::ElementFactory::make("filesink")
             .property("location", path.to_string_lossy().to_string())
@@ -1107,6 +1104,11 @@ impl VideoCapturePipeline {
             raw_encoder: None,
             is_encoding: false,
             encoding_codec: None,
+            container_format: crate::encoding::ContainerFormat::default_container_for_codec(
+                crate::encoding::VideoCodec::from_gst_caps_name(
+                    crate::encoding::format_to_gst_caps(source_format).0
+                ).unwrap_or(crate::encoding::VideoCodec::Mjpeg)
+            ),
             encoder_type: None,
             pixel_format: None,
             consecutive_full_drops: 0,
@@ -1475,6 +1477,9 @@ impl VideoCapturePipeline {
             raw_encoder: None,
             is_encoding: true,
             encoding_codec,
+            container_format: crate::encoding::ContainerFormat::default_container_for_codec(
+                encoding_codec.unwrap_or_else(|| crate::encoding::get_recommended_codec())
+            ),
             encoder_type: encoder_type_hint,
             pixel_format: Some(intermediate_fmt.to_string()),
             consecutive_full_drops: 0,
@@ -1743,23 +1748,25 @@ impl VideoCapturePipeline {
             return Err(VideoError::Pipeline("Already recording".to_string()));
         }
 
-        // For encoding pipelines, determine the actual output format
+        // Always record to MKV for crash safety. Remux to target container after.
+        output_path = output_path.with_extension("mkv");
         if self.is_encoding {
             let target_codec = self
                 .encoding_codec
                 .unwrap_or_else(|| crate::encoding::get_recommended_codec());
-            output_path = output_path.with_extension(target_codec.container().extension());
             println!(
-                "[Video] Starting recording to {:?} ({} -> {})",
+                "[Video] Starting recording to {:?} ({} -> {} in MKV, target: {})",
                 output_path,
                 self.source_format,
-                target_codec.display_name()
+                target_codec.display_name(),
+                self.container_format.display_name()
             );
         } else {
             println!(
-                "[Video] Starting recording to {:?} (format: {})",
+                "[Video] Starting recording to {:?} (format: {}, target: {})",
                 output_path,
-                self.source_format
+                self.source_format,
+                self.container_format.display_name()
             );
         }
 
@@ -2088,10 +2095,51 @@ impl VideoCapturePipeline {
             ));
         };
 
-        let filename = self
-            .recording_path
-            .as_ref()
-            .and_then(|p| p.file_name())
+        // Post-recording remux: recording always produces MKV, remux to target container.
+        // FFV1 is skipped: GStreamer bug — matroskademux outputs caps with
+        // field name "ffvversion" but matroskamux expects "ffversion", causing
+        // not-negotiated error. FFV1 always stays MKV.
+        let mkv_path = self.recording_path.clone();
+        let is_ffv1 = self.encoding_codec == Some(crate::encoding::VideoCodec::Ffv1);
+
+        let (final_path, final_size) = if let Some(ref mkv_path) = mkv_path {
+            if !is_ffv1 && self.container_format != crate::encoding::ContainerFormat::Mkv {
+                // Remux MKV → target container (MP4, WebM)
+                match crate::encoding::AsyncVideoEncoder::remux_to_container(mkv_path, self.container_format) {
+                    Ok((path, size)) => {
+                        println!(
+                            "[Video] Remuxed to {}: {} bytes",
+                            self.container_format.display_name(),
+                            size
+                        );
+                        (path, size)
+                    }
+                    Err(e) => {
+                        println!("[Video] Warning: Failed to remux to {}: {}. Keeping MKV.",
+                            self.container_format.display_name(), e);
+                        (mkv_path.clone(), file_size)
+                    }
+                }
+            } else if !is_ffv1 {
+                // Target is MKV — remux in-place to fix duration header
+                match crate::encoding::AsyncVideoEncoder::remux_to_container(mkv_path, crate::encoding::ContainerFormat::Mkv) {
+                    Ok((path, size)) => (path, size),
+                    Err(e) => {
+                        println!("[Video] Warning: Failed to remux MKV duration: {}. Keeping as-is.", e);
+                        (mkv_path.clone(), file_size)
+                    }
+                }
+            } else {
+                // FFV1: skip remux entirely
+                (mkv_path.clone(), file_size)
+            }
+        } else {
+            // No recording path (shouldn't happen)
+            (PathBuf::new(), file_size)
+        };
+
+        let filename = final_path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("video.mkv")
             .to_string();
@@ -2111,7 +2159,7 @@ impl VideoCapturePipeline {
 
         println!(
             "[Video] Stopped recording {}, duration: {:?}, size: {} bytes",
-            filename, duration, file_size
+            filename, duration, final_size
         );
 
         Ok(VideoFileInfo {
@@ -2380,6 +2428,7 @@ impl VideoCaptureManager {
     pub fn start(
         &mut self,
         devices: &[(String, String, crate::config::VideoDeviceConfig)],
+        preferred_container: crate::encoding::ContainerFormat,
     ) -> Result<()> {
         // Stop any existing pipelines
         self.stop();
@@ -2428,6 +2477,8 @@ impl VideoCaptureManager {
 
             match pipeline_result {
                 Ok(mut pipeline) => {
+                    // Set container format from global preference + codec-specific rules
+                    pipeline.container_format = dev_config.effective_container(preferred_container);
                     // Set target resolution/fps for encoding pipelines
                     // Resolve "Match Source" sentinels (0 / 0.0 → source values)
                     if !dev_config.passthrough {
@@ -2478,7 +2529,7 @@ impl VideoCaptureManager {
 
             let safe_name = crate::session::sanitize_device_name(&pipeline.device_name);
 
-            // All output goes to MKV container
+            // Always record to MKV for crash safety. Remuxed to target container in stop_recording().
             let extension = "mkv";
             let filename = format!("video_{}.{}", safe_name, extension);
 

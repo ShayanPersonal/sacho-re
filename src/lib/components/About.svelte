@@ -87,6 +87,7 @@
         role="dialog"
         aria-modal="true"
         aria-label="About Sacho"
+        tabindex="-1"
         onclick={handleOverlayClick}
         onkeydown={handleKeydown}
     >
@@ -285,6 +286,7 @@
                 role="dialog"
                 aria-modal="true"
                 aria-label="Confirm reset"
+                tabindex="-1"
                 onclick={(e) => { if (e.target === e.currentTarget) confirmAction = null; }}
                 onkeydown={(e) => { if (e.key === "Escape") confirmAction = null; }}
             >

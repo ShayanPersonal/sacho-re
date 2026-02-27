@@ -27,7 +27,8 @@
       "WebFetch(domain:deepwiki.com)",
       "WebFetch(domain:gitlab.freedesktop.org)",
       "Bash(gst-launch-1.0:*)",
-      "Bash(gst-device-monitor-1.0:*)"
+      "Bash(gst-device-monitor-1.0:*)",
+      "Bash(npx svelte-check:*)"
     ]
   }
 }

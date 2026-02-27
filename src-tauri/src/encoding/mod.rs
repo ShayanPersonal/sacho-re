@@ -4,9 +4,7 @@
 // To add a new codec:
 // 1. Add variant to VideoCodec enum
 // 2. Add GStreamer caps name mapping in from_gst_caps_name()
-// 3. Add container mapping in container()
-// 4. Add file extension in container's extension()
-// 5. Update recording pipeline in recording/video.rs
+// 3. Update recording pipeline in recording/video.rs
 
 pub mod encoder;
 pub mod presets;
@@ -99,20 +97,6 @@ impl VideoCodec {
         }
     }
     
-    /// Get the appropriate container format for this codec
-    /// Note: Raw codec will be encoded before muxing, so this returns the target container
-    pub fn container(&self) -> ContainerFormat {
-        match self {
-            VideoCodec::Mjpeg => ContainerFormat::Mkv,
-            VideoCodec::Av1 => ContainerFormat::Mkv,
-            VideoCodec::Vp8 => ContainerFormat::Mkv,
-            VideoCodec::Vp9 => ContainerFormat::Mkv,
-            VideoCodec::Raw => ContainerFormat::Mkv,
-            VideoCodec::Ffv1 => ContainerFormat::Mkv,
-            VideoCodec::H264 => ContainerFormat::Mkv,
-        }
-    }
-    
     /// Get the GStreamer parser element name for this codec
     /// 
     /// Note: This is only used by the VideoWriter (recording/video.rs) for muxing.
@@ -186,41 +170,122 @@ impl VideoCodec {
 }
 
 /// Supported container formats
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ContainerFormat {
     /// Matroska (.mkv) - flexible, supports any codec
     Mkv,
+    /// WebM (.webm) - VP8/VP9/AV1 in Matroska subset
+    WebM,
+    /// MPEG-4 Part 14 (.mp4) - widely compatible
+    Mp4,
 }
 
 impl ContainerFormat {
+    /// All supported container formats (for iteration)
+    pub const ALL: &'static [ContainerFormat] = &[
+        ContainerFormat::Mp4,
+        ContainerFormat::Mkv,
+        ContainerFormat::WebM,
+    ];
+
     /// Get the file extension for this container
     pub fn extension(&self) -> &'static str {
         match self {
             ContainerFormat::Mkv => "mkv",
+            ContainerFormat::WebM => "webm",
+            ContainerFormat::Mp4 => "mp4",
         }
     }
-    
+
+    /// Human-readable display name
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            ContainerFormat::Mkv => "MKV",
+            ContainerFormat::WebM => "WebM",
+            ContainerFormat::Mp4 => "MP4",
+        }
+    }
+
     /// Get the GStreamer muxer element name
     pub fn gst_muxer(&self) -> &'static str {
         match self {
             ContainerFormat::Mkv => "matroskamux",
+            ContainerFormat::WebM => "webmmux",
+            ContainerFormat::Mp4 => "mp4mux",
         }
     }
-    
+
     /// Get the GStreamer demuxer element name
     pub fn gst_demuxer(&self) -> &'static str {
         match self {
             ContainerFormat::Mkv => "matroskademux",
+            ContainerFormat::WebM => "matroskademux", // WebM is a subset of Matroska
+            ContainerFormat::Mp4 => "qtdemux",
+        }
+    }
+
+    /// Whether this container's muxer supports the "writing-app" property.
+    /// matroskamux and webmmux support it; mp4mux does not.
+    pub fn has_writing_app_property(&self) -> bool {
+        match self {
+            ContainerFormat::Mkv | ContainerFormat::WebM => true,
+            ContainerFormat::Mp4 => false,
+        }
+    }
+
+    /// Returns the default container for a given codec.
+    pub fn default_container_for_codec(codec: VideoCodec) -> ContainerFormat {
+        match codec {
+            VideoCodec::Av1 => ContainerFormat::Mp4,
+            VideoCodec::Vp9 => ContainerFormat::Mp4,
+            VideoCodec::Vp8 => ContainerFormat::WebM,
+            VideoCodec::H264 => ContainerFormat::Mp4,
+            VideoCodec::Ffv1 => ContainerFormat::Mkv,
+            VideoCodec::Mjpeg => ContainerFormat::Mkv,
+            VideoCodec::Raw => ContainerFormat::Mkv,
         }
     }
 }
 
-/// Detect codec from file extension
+/// Detect container format from file extension
 pub fn codec_from_extension(ext: &str) -> Option<ContainerFormat> {
     match ext.to_lowercase().as_str() {
         "mkv" => Some(ContainerFormat::Mkv),
+        "webm" => Some(ContainerFormat::WebM),
+        "mp4" => Some(ContainerFormat::Mp4),
         _ => None,
+    }
+}
+
+/// Known video file extensions
+pub const VIDEO_EXTENSIONS: &[&str] = &[".mkv", ".webm", ".mp4"];
+
+/// Check if a filename ends with a known video extension
+pub fn is_video_extension(fname: &str) -> bool {
+    VIDEO_EXTENSIONS.iter().any(|ext| fname.ends_with(ext))
+}
+
+/// Strip a video extension from a filename, returning the stem
+pub fn strip_video_extension(fname: &str) -> &str {
+    for ext in VIDEO_EXTENSIONS {
+        if let Some(stem) = fname.strip_suffix(ext) {
+            return stem;
+        }
+    }
+    fname
+}
+
+/// Detect container format from a filename
+pub fn container_from_filename(fname: &str) -> Option<ContainerFormat> {
+    if fname.ends_with(".mkv") {
+        Some(ContainerFormat::Mkv)
+    } else if fname.ends_with(".webm") {
+        Some(ContainerFormat::WebM)
+    } else if fname.ends_with(".mp4") {
+        Some(ContainerFormat::Mp4)
+    } else {
+        None
     }
 }
 

@@ -467,9 +467,8 @@ fn worker_main(args: &[String]) {
         }
     };
 
-    let output_path = temp_dir
-        .path()
-        .join(format!("bench.{}", codec.container().extension()));
+    // Always encode to MKV (encoder always produces MKV)
+    let output_path = temp_dir.path().join("bench.mkv");
 
     let config = EncoderConfig {
         target_codec: codec,

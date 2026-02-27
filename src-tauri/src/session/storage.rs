@@ -106,8 +106,9 @@ pub fn read_flac_duration(path: &Path) -> anyhow::Result<f64> {
 }
 
 /// Read MKV/WebM duration by parsing EBML Segment > Info > Duration.
+/// Works for both MKV and WebM files (both are EBML-based).
 /// Only reads a few KB from the start of the file — no GStreamer needed.
-pub fn read_mkv_duration(path: &Path) -> anyhow::Result<f64> {
+pub fn read_ebml_duration(path: &Path) -> anyhow::Result<f64> {
     let mut file = std::fs::File::open(path)?;
     let file_size = file.metadata()?.len();
     // Read up to 64KB — Segment Info is almost always in the first few KB
@@ -395,10 +396,17 @@ pub fn scan_session_dir_for_index(
                 Ok(d) => durations.push(d),
                 Err(_) => any_duration_failed = true,
             }
-        } else if fname.ends_with(".mkv") {
+        } else if crate::encoding::is_video_extension(&fname) {
             has_video = true;
-            // Fast path: parse MKV header directly
-            let result = read_mkv_duration(&path).or_else(|_| {
+            // Fast path: parse container header directly
+            let result = if fname.ends_with(".mkv") || fname.ends_with(".webm") {
+                // EBML-based: parse MKV/WebM header
+                read_ebml_duration(&path)
+            } else {
+                // MP4: try fast parser, fall back to GStreamer Discoverer
+                Err(anyhow::anyhow!("Use discoverer for MP4"))
+            };
+            let result = result.or_else(|_| {
                 // Fallback: GStreamer Discoverer
                 if let Some(counter) = discoverer_fallback_count {
                     counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -738,12 +746,18 @@ pub fn build_session_from_directory(session_path: &Path) -> anyhow::Result<Sessi
                 device_name,
                 duration_secs,
             });
-        } else if fname.ends_with(".mkv") {
-            let sanitized = fname.trim_start_matches("video_").trim_end_matches(".mkv");
+        } else if crate::encoding::is_video_extension(&fname) {
+            let sanitized = crate::encoding::strip_video_extension(
+                fname.trim_start_matches("video_")
+            );
             let device_name = unsanitize_device_name(sanitized);
-            let duration_secs = read_mkv_duration(&path)
-                .or_else(|_| read_video_duration(&path))
-                .unwrap_or(0.0);
+            let duration_secs = if fname.ends_with(".mkv") || fname.ends_with(".webm") {
+                read_ebml_duration(&path)
+                    .or_else(|_| read_video_duration(&path))
+                    .unwrap_or(0.0)
+            } else {
+                read_video_duration(&path).unwrap_or(0.0)
+            };
 
             video_files.push(VideoFileInfo {
                 filename: fname,

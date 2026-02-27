@@ -705,85 +705,195 @@ pub fn repair_flac_file(file_path: &PathBuf) -> anyhow::Result<(u16, u32, f64, u
     Ok((channels, sample_rate, duration_secs, file_size))
 }
 
-/// Check if a Matroska file is unfinalized (missing duration or has zero segment size).
+/// Check if a video file is unfinalized (missing duration or has zero segment size).
+/// Since recording always produces MKV files, only EBML-based formats need checking.
+/// Finalized MP4/WebM files (from successful remux) don't need repair.
 pub fn video_file_needs_repair(file_path: &PathBuf) -> bool {
     use std::io::Read;
-    
+
     let Ok(mut file) = std::fs::File::open(file_path) else { return false; };
     let Ok(meta) = file.metadata() else { return false; };
     if meta.len() < 32 { return false; }
-    
-    // EBML header starts with 0x1A45DFA3
+
     let mut header = [0u8; 4];
     if file.read_exact(&mut header).is_err() { return false; }
-    if header != [0x1A, 0x45, 0xDF, 0xA3] { return false; }
-    
-    // Read the file looking for Segment Duration element (0x4489)
-    // A quick heuristic: scan the first 1KB for the Duration element
+
+    // Only EBML files (MKV/WebM) can be crash-recovered.
+    // Non-EBML files (finalized MP4/WebM from successful remux) are already good.
+    if header == [0x1A, 0x45, 0xDF, 0xA3] {
+        return ebml_file_needs_repair(&mut file, &meta);
+    }
+
+    false
+}
+
+/// Check if an EBML file (MKV/WebM) is unfinalized
+fn ebml_file_needs_repair(file: &mut std::fs::File, meta: &std::fs::Metadata) -> bool {
+    use std::io::Read;
+
     file.seek(SeekFrom::Start(0)).ok();
     let scan_size = meta.len().min(4096) as usize;
     let mut buf = vec![0u8; scan_size];
     if file.read_exact(&mut buf).is_err() { return false; }
-    
+
     // Look for Duration element ID (0x44 0x89) followed by a float
     for i in 0..buf.len().saturating_sub(12) {
         if buf[i] == 0x44 && buf[i + 1] == 0x89 {
-            // Found Duration element. Check if the float value is 0.0
-            // The size byte follows, then the float data
             if i + 2 < buf.len() {
                 let size = buf[i + 2];
                 if size == 0x88 && i + 11 < buf.len() {
-                    // 8-byte float (most common)
                     let val = f64::from_be_bytes([
                         buf[i+3], buf[i+4], buf[i+5], buf[i+6],
                         buf[i+7], buf[i+8], buf[i+9], buf[i+10]
                     ]);
                     return val == 0.0;
                 } else if size == 0x84 && i + 7 < buf.len() {
-                    // 4-byte float
                     let val = f32::from_be_bytes([buf[i+3], buf[i+4], buf[i+5], buf[i+6]]);
                     return val == 0.0;
                 }
             }
-            return false; // Found duration element, value is non-zero
+            return false;
         }
     }
-    
+
     // No Duration element found at all - needs repair
     true
 }
 
-/// Repair a video file (MKV) by remuxing through GStreamer to fix container metadata.
-/// The remuxed file replaces the original.
+/// Detect the video codec in an MKV file by probing with GStreamer.
+/// Returns None if the codec cannot be determined.
+pub fn detect_video_codec(file_path: &std::path::Path) -> Option<crate::encoding::VideoCodec> {
+    use gstreamer as gst;
+    use gstreamer::prelude::*;
+    use std::sync::{Arc, Mutex};
+
+    let pipeline = gst::Pipeline::new();
+
+    let filesrc = gst::ElementFactory::make("filesrc")
+        .property("location", file_path.to_string_lossy().to_string())
+        .build()
+        .ok()?;
+
+    let demux = gst::ElementFactory::make("matroskademux")
+        .build()
+        .ok()?;
+
+    let fakesink = gst::ElementFactory::make("fakesink")
+        .build()
+        .ok()?;
+
+    pipeline.add_many([&filesrc, &demux, &fakesink]).ok()?;
+    filesrc.link(&demux).ok()?;
+
+    let codec: Arc<Mutex<Option<crate::encoding::VideoCodec>>> = Arc::new(Mutex::new(None));
+    let codec_clone = codec.clone();
+    let fakesink_weak = fakesink.downgrade();
+
+    demux.connect_pad_added(move |_demux, src_pad| {
+        let pad_name = src_pad.name();
+        if pad_name.starts_with("video") {
+            if let Some(caps) = src_pad.current_caps() {
+                if let Some(s) = caps.structure(0) {
+                    *codec_clone.lock().unwrap() =
+                        crate::encoding::VideoCodec::from_gst_caps_name(s.name().as_str());
+                }
+            }
+            if let Some(fakesink) = fakesink_weak.upgrade() {
+                if let Some(sink_pad) = fakesink.static_pad("sink") {
+                    let _ = src_pad.link(&sink_pad);
+                }
+            }
+        }
+    });
+
+    pipeline.set_state(gst::State::Paused).ok()?;
+
+    let bus = pipeline.bus()?;
+    for msg in bus.iter_timed(gst::ClockTime::from_seconds(5)) {
+        match msg.view() {
+            gst::MessageView::AsyncDone(..) => break,
+            gst::MessageView::Error(..) => break,
+            _ => {}
+        }
+    }
+
+    pipeline.set_state(gst::State::Null).ok();
+    let result = *codec.lock().unwrap();
+    result
+}
+
+/// Repair a video file by remuxing through matroskademux → matroskamux.
+/// Since all recordings use MKV for crash safety, crashed video files are
+/// always repairable via matroskademux → matroskamux.
+///
 /// Returns (duration_secs, size_bytes).
 pub fn repair_video_file(file_path: &PathBuf) -> anyhow::Result<(f64, u64)> {
     use gstreamer as gst;
     use gstreamer::prelude::*;
-    
-    let extension = file_path.extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("mkv");
-    
+
     // Create a temp file for the remuxed output
-    let temp_path = file_path.with_extension(format!("{}.repair.tmp", extension));
-    
-    // Build pipeline: filesrc ! matroskademux ! matroskamux ! filesink
-    let pipeline_str = format!(
-        "filesrc location=\"{}\" ! matroskademux name=demux ! queue ! matroskamux name=mux ! filesink location=\"{}\"",
-        file_path.to_string_lossy().replace('\\', "/"),
-        temp_path.to_string_lossy().replace('\\', "/"),
-    );
-    
-    let pipeline = gst::parse::launch(&pipeline_str)
-        .map_err(|e| anyhow::anyhow!("Failed to create remux pipeline: {}", e))?;
-    
-    let pipeline = pipeline.dynamic_cast::<gst::Pipeline>()
-        .map_err(|_| anyhow::anyhow!("Failed to cast to pipeline"))?;
-    
+    let temp_path = file_path.with_extension("mkv.repair.tmp");
+
+    let pipeline = gst::Pipeline::new();
+
+    let filesrc = gst::ElementFactory::make("filesrc")
+        .property("location", file_path.to_string_lossy().to_string())
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create filesrc: {}", e))?;
+
+    let demux = gst::ElementFactory::make("matroskademux")
+        .name("demux")
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create matroskademux: {}", e))?;
+
+    let queue = gst::ElementFactory::make("queue")
+        .name("vqueue")
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create queue: {}", e))?;
+
+    let mux = gst::ElementFactory::make("matroskamux")
+        .name("mux")
+        .property("writing-app", "Sacho")
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create matroskamux: {}", e))?;
+
+    let filesink = gst::ElementFactory::make("filesink")
+        .property("location", temp_path.to_string_lossy().to_string())
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create filesink: {}", e))?;
+
+    pipeline.add_many([&filesrc, &demux, &queue, &mux, &filesink])
+        .map_err(|e| anyhow::anyhow!("Failed to add elements: {}", e))?;
+
+    // Static links
+    filesrc.link(&demux)
+        .map_err(|e| anyhow::anyhow!("Failed to link filesrc -> demux: {}", e))?;
+    queue.link(&mux)
+        .map_err(|e| anyhow::anyhow!("Failed to link queue -> mux: {}", e))?;
+    mux.link(&filesink)
+        .map_err(|e| anyhow::anyhow!("Failed to link mux -> filesink: {}", e))?;
+
+    // Handle dynamic pads from matroskademux
+    let queue_weak = queue.downgrade();
+    demux.connect_pad_added(move |_demux, src_pad| {
+        let pad_name = src_pad.name();
+        if pad_name.starts_with("video") {
+            if let Some(queue) = queue_weak.upgrade() {
+                if let Some(sink_pad) = queue.static_pad("sink") {
+                    if !sink_pad.is_linked() {
+                        if let Err(e) = src_pad.link(&sink_pad) {
+                            println!("[Sacho] Warning: Failed to link demux video pad: {:?}", e);
+                        }
+                    }
+                }
+            }
+        }
+    });
+
     // Start and wait for completion
     pipeline.set_state(gst::State::Playing)
-        .map_err(|e| anyhow::anyhow!("Failed to start remux: {}", e))?;
-    
+        .map_err(|e| anyhow::anyhow!("Failed to start remux: {:?}", e))?;
+
     let bus = pipeline.bus().ok_or_else(|| anyhow::anyhow!("No pipeline bus for video remux repair"))?;
     let mut duration_secs = 0.0;
 
@@ -809,64 +919,71 @@ pub fn repair_video_file(file_path: &PathBuf) -> anyhow::Result<(f64, u64)> {
             _ => {}
         }
     }
-    
+
     pipeline.set_state(gst::State::Null).ok();
-    
+
     // Replace original with remuxed file
     if temp_path.exists() {
         std::fs::rename(&temp_path, file_path)
             .map_err(|e| anyhow::anyhow!("Failed to replace original video: {}", e))?;
     }
-    
+
     let size = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
-    
+
     println!("[Sacho] Repaired video file: {} ({:.1}s, {} bytes)",
         file_path.display(), duration_secs, size);
-    
+
     Ok((duration_secs, size))
 }
 
-/// Combine a video MKV and an audio file into a single MKV with both tracks.
-/// The combined file replaces the original video file. Returns the new file size.
-pub fn combine_audio_video_mkv(
+/// Combine a video file and an audio file into a single container with both tracks.
+/// Supports MKV, WebM, and MP4. The combined file replaces the original video file.
+/// Returns the new file size.
+pub fn combine_audio_video(
     video_path: &PathBuf,
     audio_path: &PathBuf,
     audio_format: &crate::config::AudioFormat,
 ) -> anyhow::Result<u64> {
     use gstreamer as gst;
     use gstreamer::prelude::*;
-    
-    println!("[Sacho] Combining audio+video into single MKV: {:?} + {:?}",
+
+    let extension = video_path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("mkv");
+    let container = crate::encoding::codec_from_extension(extension)
+        .unwrap_or(crate::encoding::ContainerFormat::Mkv);
+
+    println!("[Sacho] Combining audio+video into single {}: {:?} + {:?}",
+        container.display_name(),
         video_path.file_name().unwrap_or_default(),
         audio_path.file_name().unwrap_or_default());
-    
-    let temp_path = video_path.with_extension("mkv.combine.tmp");
-    
-    // Build pipeline manually so we can handle dynamic pads from matroskademux
+
+    let temp_path = video_path.with_extension(format!("{}.combine.tmp", extension));
+
     let pipeline = gst::Pipeline::new();
-    
-    // ── Video source: filesrc ! matroskademux (dynamic pads) ──
+
+    // ── Video source: filesrc ! demuxer (dynamic pads) ──
     let video_filesrc = gst::ElementFactory::make("filesrc")
         .property("location", video_path.to_string_lossy().to_string())
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to create video filesrc: {}", e))?;
-    
-    let demux = gst::ElementFactory::make("matroskademux")
+
+    let demux = gst::ElementFactory::make(container.gst_demuxer())
         .name("demux")
         .build()
-        .map_err(|e| anyhow::anyhow!("Failed to create matroskademux: {}", e))?;
-    
+        .map_err(|e| anyhow::anyhow!("Failed to create {}: {}", container.gst_demuxer(), e))?;
+
     let video_queue = gst::ElementFactory::make("queue")
         .name("vqueue")
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to create video queue: {}", e))?;
-    
+
     // ── Audio source: filesrc ! parser ──
     let audio_filesrc = gst::ElementFactory::make("filesrc")
         .property("location", audio_path.to_string_lossy().to_string())
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to create audio filesrc: {}", e))?;
-    
+
     let audio_parser_name = match audio_format {
         crate::config::AudioFormat::Flac => "flacparse",
         crate::config::AudioFormat::Wav => "wavparse",
@@ -875,18 +992,20 @@ pub fn combine_audio_video_mkv(
         .name("aparser")
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to create {}: {}", audio_parser_name, e))?;
-    
+
     let audio_queue = gst::ElementFactory::make("queue")
         .name("aqueue")
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to create audio queue: {}", e))?;
-    
+
     // ── Muxer and sink ──
-    let mux = gst::ElementFactory::make("matroskamux")
-        .name("mux")
-        .property("writing-app", "Sacho")
-        .build()
-        .map_err(|e| anyhow::anyhow!("Failed to create matroskamux: {}", e))?;
+    let mut mux_builder = gst::ElementFactory::make(container.gst_muxer())
+        .name("mux");
+    if container.has_writing_app_property() {
+        mux_builder = mux_builder.property("writing-app", "Sacho");
+    }
+    let mux = mux_builder.build()
+        .map_err(|e| anyhow::anyhow!("Failed to create {}: {}", container.gst_muxer(), e))?;
     
     let filesink = gst::ElementFactory::make("filesink")
         .property("location", temp_path.to_string_lossy().to_string())
@@ -1621,7 +1740,7 @@ impl MidiMonitor {
         video_mgr.set_encode_during_preroll(encode_during_preroll);
 
         if !video_with_info.is_empty() {
-            if let Err(e) = video_mgr.start(&video_with_info) {
+            if let Err(e) = video_mgr.start(&video_with_info, config.preferred_video_container) {
                 println!("[Sacho] Failed to start video capture: {}", e);
             }
         }
@@ -2337,7 +2456,7 @@ fn stop_recording(
         .fold(0.0f64, |a, b| a.max(b));
     let duration_secs = target_duration.max(audio_max_duration);
     
-    // Combine audio+video into a single MKV if configured (exactly 1 of each)
+    // Combine audio+video into a single container if configured (exactly 1 of each)
     {
         let config = app_handle.state::<RwLock<Config>>();
         let config_read = config.read();
@@ -2347,13 +2466,13 @@ fn stop_recording(
         {
             let video_path = session_path.join(&video_files[0].filename);
             let audio_path = session_path.join(&audio_files[0].filename);
-            match combine_audio_video_mkv(&video_path, &audio_path, &config_read.audio_format) {
+            match combine_audio_video(&video_path, &audio_path, &config_read.audio_format) {
                 Ok(_new_size) => {
                     // Delete the separate audio file
                     let _ = std::fs::remove_file(&audio_path);
                     // Keep audio_files populated so the DB upsert sees has_audio=true.
                     // The physical audio file is gone; directory scan won't find it.
-                    println!("[Sacho] Combined audio+video into single MKV");
+                    println!("[Sacho] Combined audio+video into single container file");
                 }
                 Err(e) => {
                     println!("[Sacho] Failed to combine audio+video: {}. Keeping separate files.", e);

@@ -198,6 +198,18 @@
     // Whether encoding settings are active (not passthrough)
     const isEncoding = $derived(!passthrough);
 
+    // Effective codec for container selection: in passthrough mode, use source format's codec
+    const effectiveCodec = $derived<VideoCodec>(
+        passthrough
+            ? (selectedFormat === "MJPEG" ? "mjpeg"
+            : selectedFormat === "H264" ? "h264"
+            : selectedFormat === "AV1" ? "av1"
+            : selectedFormat === "VP8" ? "vp8"
+            : selectedFormat === "VP9" ? "vp9"
+            : encodingCodec ?? "av1")
+            : (encodingCodec ?? "av1"),
+    );
+
     // Whether the source format is 10-bit or higher
     const sourceIs10Bit = $derived(is10BitFormat(selectedFormat));
 
@@ -898,8 +910,6 @@
                         <span class="field-hint">
                             {#if encodingCodec === "ffv1"}
                                 FFV1 is always lossless, but higher values improve compression.
-                            {:else}
-
                             {/if}
                         </span>
                     </div>

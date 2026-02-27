@@ -457,28 +457,39 @@
                     </p>
                 </div>
                 <div class="setting-row">
-                    <label for="audio-format">
-                        <span class="setting-label">Audio Format</span>
-                        <span class="setting-description"
-                            >Format for recorded audio files</span
-                        >
-                    </label>
-                    <select
-                        id="audio-format"
-                        bind:value={localSettings.audio_format}
-                        onchange={autoSave}
-                    >
-                        <option value="wav">WAV (lossless, larger files)</option
-                        >
-                        <option value="flac"
-                            >FLAC (lossless, smaller files)</option
-                        >
-                    </select>
+                    <div class="format-fields">
+                        <div class="format-field">
+                            <label for="audio-format">
+                                <span class="setting-label">Audio Format</span>
+                            </label>
+                            <select
+                                id="audio-format"
+                                bind:value={localSettings.audio_format}
+                                onchange={autoSave}
+                            >
+                                <option value="wav">WAV (uses more disk space)</option>
+                                <option value="flac">FLAC (uses less disk space)</option>
+                            </select>
+                        </div>
+                        <div class="format-field">
+                            <label for="video-container">
+                                <span class="setting-label">Video Format</span>
+                            </label>
+                            <select
+                                id="video-container"
+                                bind:value={localSettings.preferred_video_container}
+                                onchange={autoSave}
+                            >
+                                <option value="mp4">MP4 (default)</option>
+                                <option value="mkv">MKV</option>
+                            </select>
+                        </div>
+                    </div>
                     <button
                         class="advanced-toggle"
                         onclick={() => (showAudioAdvanced = !showAudioAdvanced)}
                     >
-                        Advanced
+                        More
                         <svg
                             class="toggle-chevron"
                             class:open={showAudioAdvanced}
@@ -612,7 +623,7 @@
               </button>
               {#if showCombineHelp}
                 <div class="help-tooltip help-tooltip-right">
-                  Stores audio and video as a single MKV file instead of separate files. <br><br>Available when exactly one audio source and one video source is selected.
+                  Stores audio and video as a single container file instead of separate files. <br><br>Available when exactly one audio source and one video source is selected.
                 </div>
               {/if}
             </span>
@@ -1097,6 +1108,18 @@
 
     .setting-row:last-child {
         margin-bottom: 0;
+    }
+
+    .format-fields {
+        display: flex;
+        gap: 1rem;
+    }
+
+    .format-field {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
     }
 
     .inline-checkbox {

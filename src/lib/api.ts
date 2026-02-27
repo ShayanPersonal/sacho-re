@@ -34,6 +34,9 @@ export type VideoCodec =
   | "ffv1"
   | "h264";
 
+/** Supported container formats */
+export type ContainerFormat = "mkv" | "webm" | "mp4";
+
 /** Hardware encoder backend types */
 export type HardwareEncoderType =
   | "nvenc"
@@ -397,8 +400,10 @@ export interface Config {
   video_device_configs: Record<string, VideoDeviceConfig>;
   /** Whether to encode video during pre-roll (trades compute for memory, allows up to 30s pre-roll) */
   encode_during_preroll: boolean;
-  /** Whether to combine audio and video into a single MKV file */
+  /** Whether to combine audio and video into a single container file */
   combine_audio_video: boolean;
+  /** Preferred video container format. AV1/VP9/H.264 remux to this; FFV1 stays MKV, VP8 stays WebM. */
+  preferred_video_container: ContainerFormat;
   device_presets: DevicePreset[];
   current_preset: string | null;
 }

@@ -292,10 +292,40 @@ pub fn repair_session(
                     println!("[Sacho] Failed to repair FLAC {}: {}", fname, e);
                 }
             }
-        } else if fname.ends_with(".mkv") {
+        } else if crate::encoding::is_video_extension(&fname) {
             if crate::recording::monitor::video_file_needs_repair(&path) {
-                if let Err(e) = crate::recording::monitor::repair_video_file(&path) {
-                    println!("[Sacho] Failed to repair video {}: {}", fname, e);
+                match crate::recording::monitor::repair_video_file(&path) {
+                    Ok(_) => {
+                        // After repair, remux to preferred container if applicable.
+                        // Repaired files are always MKV. Determine target based on codec:
+                        // FFV1 → always MKV, VP8 → WebM, MJPEG/Raw → MKV, others → preferred.
+                        let preferred = config.preferred_video_container;
+                        if preferred != crate::encoding::ContainerFormat::Mkv {
+                            let target = match crate::recording::monitor::detect_video_codec(&path) {
+                                Some(crate::encoding::VideoCodec::Ffv1) => crate::encoding::ContainerFormat::Mkv,
+                                Some(crate::encoding::VideoCodec::Vp8) => crate::encoding::ContainerFormat::WebM,
+                                Some(crate::encoding::VideoCodec::Mjpeg) => crate::encoding::ContainerFormat::Mkv,
+                                Some(crate::encoding::VideoCodec::Raw) => crate::encoding::ContainerFormat::Mkv,
+                                Some(_) => preferred, // AV1, VP9, H264
+                                None => crate::encoding::ContainerFormat::Mkv, // Unknown codec, leave as MKV
+                            };
+                            if target != crate::encoding::ContainerFormat::Mkv {
+                                match crate::encoding::AsyncVideoEncoder::remux_to_container(&path, target) {
+                                    Ok((final_path, _)) => {
+                                        println!("[Sacho] Remuxed repaired video to {}: {}",
+                                            target.display_name(), final_path.display());
+                                    }
+                                    Err(e) => {
+                                        println!("[Sacho] Failed to remux repaired video to {}: {} (keeping as MKV)",
+                                            target.display_name(), e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("[Sacho] Failed to repair video {}: {}", fname, e);
+                    }
                 }
             }
         }
@@ -1223,7 +1253,7 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
                                     has_audio = true;
                                 } else if fname.ends_with(".mid") {
                                     has_midi = true;
-                                } else if fname.ends_with(".mkv") {
+                                } else if crate::encoding::is_video_extension(&fname) {
                                     has_video = true;
                                 }
                             }
@@ -1698,8 +1728,9 @@ pub async fn test_encoder_preset(
             .collect();
 
         let pre_roll = cfg.pre_roll_secs.min(5);
+        let preferred_container = cfg.preferred_video_container;
 
-        (info, pre_roll)
+        (info, pre_roll, preferred_container)
     };
 
     video_manager.lock().stop();
@@ -1714,11 +1745,11 @@ pub async fn test_encoder_preset(
 
     // 6. Restart video pipelines
     {
-        let (ref devices_info, pre_roll) = restart_info;
+        let (ref devices_info, pre_roll, preferred_container) = restart_info;
         let mut mgr = video_manager.lock();
         mgr.set_preroll_duration(pre_roll);
         if !devices_info.is_empty() {
-            if let Err(e) = mgr.start(devices_info) {
+            if let Err(e) = mgr.start(devices_info, preferred_container) {
                 println!("[EncoderTest] Warning: Failed to restart video pipelines: {}", e);
             }
         }
@@ -2032,8 +2063,9 @@ pub async fn auto_select_encoder_preset(
             .collect();
 
         let pre_roll = cfg.pre_roll_secs.min(5);
+        let preferred_container = cfg.preferred_video_container;
 
-        (info, pre_roll)
+        (info, pre_roll, preferred_container)
     };
 
     // Stop video pipelines (releases camera)
@@ -2050,11 +2082,11 @@ pub async fn auto_select_encoder_preset(
 
     // 6. Restart video pipelines regardless of test result
     {
-        let (ref devices_info, pre_roll) = restart_info;
+        let (ref devices_info, pre_roll, preferred_container) = restart_info;
         let mut mgr = video_manager.lock();
         mgr.set_preroll_duration(pre_roll);
         if !devices_info.is_empty() {
-            if let Err(e) = mgr.start(devices_info) {
+            if let Err(e) = mgr.start(devices_info, preferred_container) {
                 println!("[AutoSelect] Warning: Failed to restart video pipelines: {}", e);
             }
         }
@@ -2152,7 +2184,7 @@ async fn run_auto_select_test(
         // Create a temp file for the test encoder
         let temp_dir = std::env::temp_dir();
         let temp_file = temp_dir.join(format!("sacho_autoselect_test_{}.mkv", level));
-        
+
         // Create encoder with this preset
         let encoder_config = EncoderConfig {
             keyframe_interval: (effective_fps * 2.0).round() as u32,
