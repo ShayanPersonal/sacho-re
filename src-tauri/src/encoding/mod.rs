@@ -276,19 +276,6 @@ pub fn strip_video_extension(fname: &str) -> &str {
     fname
 }
 
-/// Detect container format from a filename
-pub fn container_from_filename(fname: &str) -> Option<ContainerFormat> {
-    if fname.ends_with(".mkv") {
-        Some(ContainerFormat::Mkv)
-    } else if fname.ends_with(".webm") {
-        Some(ContainerFormat::WebM)
-    } else if fname.ends_with(".mp4") {
-        Some(ContainerFormat::Mp4)
-    } else {
-        None
-    }
-}
-
 /// Returns the optimal intermediate pixel format for the given encoding codec and bit depth.
 /// - AV1: always P010_10LE — AV1 internally uses 10-bit, so feeding it 10-bit
 ///   avoids a lossy 8→10→8 round-trip. Upconverting 8-bit source is lossless.

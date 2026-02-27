@@ -2141,7 +2141,7 @@ impl VideoCapturePipeline {
         let filename = final_path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("video.mkv")
+            .unwrap_or("video")
             .to_string();
 
         self.is_recording = false;

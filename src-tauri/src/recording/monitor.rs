@@ -1033,7 +1033,7 @@ pub fn combine_audio_video(
     mux.link(&filesink)
         .map_err(|e| anyhow::anyhow!("Failed to link mux -> filesink: {}", e))?;
     
-    // Handle dynamic pads from matroskademux (video stream)
+    // Handle dynamic pads from demuxer (video stream)
     let vqueue_weak = video_queue.downgrade();
     demux.connect_pad_added(move |_demux, src_pad| {
         let pad_name = src_pad.name();
