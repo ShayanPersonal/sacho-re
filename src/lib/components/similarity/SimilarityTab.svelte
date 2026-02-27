@@ -29,7 +29,30 @@
   let animationProgress = $state(0);
   let animationStart = $state(0);
   let animationId = $state(0);
+  let hasAnimated = $state(false);
   const ANIMATION_DURATION = 800; // ms
+
+  // Golden spiral: r = C·φ^(2θ/π), so θ = π/(2·ln(φ)) · ln(r/C)
+  const PHI = (1 + Math.sqrt(5)) / 2;
+  const SPIRAL_K = Math.PI / (2 * Math.log(PHI));
+  const STAGGER = 0.5; // spread node starts over first 50% of animation
+
+  function goldenSpiralPos(
+    cx: number, cy: number,
+    finalAngle: number, finalDist: number,
+    progress: number, delay: number
+  ): { x: number; y: number } {
+    const nodeProgress = Math.max(0, (progress - delay) / (1 - delay));
+    if (nodeProgress <= 0) return { x: cx, y: cy };
+    const currentR = finalDist * nodeProgress;
+    // Angle offset from golden spiral path: as r grows, angle winds toward final
+    const spiralOffset = SPIRAL_K * Math.log(nodeProgress);
+    const currentAngle = finalAngle + spiralOffset;
+    return {
+      x: cx + Math.cos(currentAngle) * currentR,
+      y: cy + Math.sin(currentAngle) * currentR,
+    };
+  }
 
   // Hover state
   let hoveredIndex = $state<number | null>(null);
@@ -102,6 +125,12 @@
     // Access reactive deps
     const _ = $similarFiles;
     const __ = $selectedFileId;
+    if (hasAnimated) {
+      // Skip animation on subsequent selections — snap to final positions
+      animationProgress = 1;
+      return;
+    }
+    hasAnimated = true;
     animationProgress = 0;
     animationStart = performance.now();
     animate();
@@ -156,7 +185,7 @@
     // Subtle radial grid
     ctx.strokeStyle = isLightMode ? 'rgba(0, 0, 0, 0.04)' : 'rgba(255, 255, 255, 0.025)';
     ctx.lineWidth = 1;
-    const maxR = Math.min(w, h) * 0.42;
+    const maxR = Math.min(w, h) * 0.60;
     for (let i = 1; i <= 4; i++) {
       ctx.beginPath();
       ctx.arc(cx, cy, maxR * (i / 4), 0, Math.PI * 2);
@@ -220,13 +249,13 @@
       const result = $similarFiles[i];
       const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
       // Rank-based distance: rank 1 = closest
-      const dist = (result.rank / (n + 1)) * maxR;
-      const tx = cx + Math.cos(angle) * dist * progress;
-      const ty = cy + Math.sin(angle) * dist * progress;
+      const dist = Math.min((result.rank / (n + 1)) * maxR, maxR * 0.75);
+      const delay = (i / n) * STAGGER;
+      const pos = goldenSpiralPos(cx, cy, angle, dist, progress, delay);
 
       ctx.beginPath();
       ctx.moveTo(cx, cy);
-      ctx.lineTo(tx, ty);
+      ctx.lineTo(pos.x, pos.y);
       ctx.strokeStyle = isLightMode
         ? `rgba(160, 128, 48, ${0.1 * progress})`
         : `rgba(201, 169, 98, ${0.08 * progress})`;
@@ -238,9 +267,9 @@
     for (let i = 0; i < n; i++) {
       const result = $similarFiles[i];
       const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
-      const dist = (result.rank / (n + 1)) * maxR;
-      const tx = cx + Math.cos(angle) * dist * progress;
-      const ty = cy + Math.sin(angle) * dist * progress;
+      const dist = Math.min((result.rank / (n + 1)) * maxR, maxR * 0.75);
+      const delay = (i / n) * STAGGER;
+      const pos = goldenSpiralPos(cx, cy, angle, dist, progress, delay);
 
       const isHov = hoveredIndex === i;
       const radius = isHov ? 10 : 7;
@@ -250,7 +279,7 @@
       ctx.shadowBlur = isHov ? 12 : 4;
 
       ctx.beginPath();
-      ctx.arc(tx, ty, radius, 0, Math.PI * 2);
+      ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
       ctx.fillStyle = scoreColor(result.score);
       ctx.fill();
 
@@ -265,7 +294,7 @@
         ctx.font = '10px "DM Mono", monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
-        ctx.fillText(`${Math.round(result.score * 100)}%`, tx, ty - radius - 4);
+        ctx.fillText(`${Math.round(result.score * 100)}%`, pos.x, pos.y - radius - 4);
       }
     }
 
@@ -297,18 +326,18 @@
     const my = e.clientY - rect.top;
     const cx = canvasWidth / 2;
     const cy = canvasHeight / 2;
-    const maxR = Math.min(canvasWidth, canvasHeight) * 0.42;
+    const maxR = Math.min(canvasWidth, canvasHeight) * 0.60;
     const n = $similarFiles.length;
 
     let found: number | null = null;
     for (let i = 0; i < n; i++) {
       const result = $similarFiles[i];
       const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
-      const dist = (result.rank / (n + 1)) * maxR;
-      const tx = cx + Math.cos(angle) * dist * animationProgress;
-      const ty = cy + Math.sin(angle) * dist * animationProgress;
-      const dx = mx - tx;
-      const dy = my - ty;
+      const dist = Math.min((result.rank / (n + 1)) * maxR, maxR * 0.75);
+      const delay = (i / n) * STAGGER;
+      const pos = goldenSpiralPos(cx, cy, angle, dist, animationProgress, delay);
+      const dx = mx - pos.x;
+      const dy = my - pos.y;
       if (Math.sqrt(dx * dx + dy * dy) < 14) {
         found = i;
         tooltipX = e.clientX - rect.left;
