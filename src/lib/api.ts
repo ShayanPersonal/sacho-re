@@ -223,9 +223,9 @@ export function defaultPassthrough(format: string): boolean {
 /** Format preference order: modern compressed first, then raw by ecosystem compatibility.
  * Used by both computeDefaultConfig and the Configure modal to stay in sync. */
 export const FORMAT_PRIORITY: string[] = [
-  "AV1", "VP9", "MJPEG",
+  "MJPEG",
   "NV12", "I420", "YV12", "YUY2", "BGR", "BGRx",
-  "H264", "VP8",
+  "AV1", "VP9", "H264", "VP8",
 ];
 
 /** Sort an array of format strings by FORMAT_PRIORITY order. */

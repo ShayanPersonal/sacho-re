@@ -1080,6 +1080,16 @@ pub fn reset_settings(
     app: tauri::AppHandle,
     config: State<'_, RwLock<Config>>,
 ) -> Result<(), String> {
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+
+    // Delete custom sound files before resetting
+    {
+        let cfg = config.read();
+        for rel_path in [&cfg.custom_sound_start, &cfg.custom_sound_stop, &cfg.custom_sound_disconnect].into_iter().flatten() {
+            let _ = std::fs::remove_file(config_dir.join(rel_path));
+        }
+    }
+
     let mut cfg = config.write();
     *cfg = Config::default();
     cfg.save(&app).map_err(|e| e.to_string())?;
@@ -2267,6 +2277,21 @@ pub fn set_custom_sound(
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     let sounds_dir = config_dir.join("sounds");
     std::fs::create_dir_all(&sounds_dir).map_err(|e| e.to_string())?;
+
+    // Delete the old custom sound file if one exists
+    {
+        let cfg = config.read();
+        let old_path = match sound_type.as_str() {
+            "start" => cfg.custom_sound_start.as_ref(),
+            "stop" => cfg.custom_sound_stop.as_ref(),
+            "disconnect" => cfg.custom_sound_disconnect.as_ref(),
+            _ => None,
+        };
+        if let Some(rel_path) = old_path {
+            let full_path = config_dir.join(rel_path);
+            let _ = std::fs::remove_file(&full_path);
+        }
+    }
 
     let dest_filename = format!("{}_{}", sound_type, filename);
     let dest_path = sounds_dir.join(&dest_filename);

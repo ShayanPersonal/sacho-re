@@ -249,7 +249,6 @@
                         >. FFmpeg is a trademark of Fabrice Bellard, originator of
                         the FFmpeg project.
                     </p>
-                    <p class="notice-text">This software processes unrecognized media formats with media APIs provided by the host.</p>
                 </div>
 
                 <div class="disclaimer">
