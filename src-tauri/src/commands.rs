@@ -350,20 +350,24 @@ pub fn repair_session(
 pub fn delete_session(
     db: State<'_, SessionDatabase>,
     config: State<'_, RwLock<Config>>,
+    recording_cache: State<'_, RecordingSimilarityCache>,
     session_id: String,
 ) -> Result<(), String> {
     let config = config.read();
-    
+
     // Remove from database first (if this fails, filesystem stays intact)
     db.delete_session(&session_id)
         .map_err(|e| e.to_string())?;
-    
+
+    // Remove from recording similarity cache
+    recording_cache.remove(&session_id);
+
     // Session ID equals folder name, so construct path directly (O(1) instead of O(n))
     let session_path = config.storage_path.join(&session_id);
     if session_path.exists() {
         std::fs::remove_dir_all(&session_path).map_err(|e| e.to_string())?;
     }
-    
+
     Ok(())
 }
 
@@ -422,6 +426,7 @@ fn sanitize_title(title: &str) -> String {
 pub fn rename_session(
     db: State<'_, SessionDatabase>,
     config: State<'_, RwLock<Config>>,
+    recording_cache: State<'_, RecordingSimilarityCache>,
     session_id: String,
     new_title: String,
 ) -> Result<SessionSummary, String> {
@@ -461,9 +466,13 @@ pub fn rename_session(
     // Rename the folder on disk
     std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
 
-    // Update DB: rename (ID changed)
+    // Update DB: rename (ID changed, also updates session_features)
     db.rename_session(&session_id, &new_folder_name, &new_path.to_string_lossy())
         .map_err(|e| e.to_string())?;
+
+    // Update recording similarity cache
+    let new_title_opt = crate::session::extract_title_from_folder_name(&new_folder_name);
+    recording_cache.rename(&session_id, &new_folder_name, new_title_opt);
 
     // Return new summary by querying DB
     let filter = SessionFilter { search_query: None, ..Default::default() };
@@ -1091,18 +1100,472 @@ pub fn clear_midi_imports(
     db.clear_midi_imports().map_err(|e| e.to_string())
 }
 
+// ============================================================================
+// Recording Similarity (sessions with MIDI)
+// ============================================================================
+
+/// In-memory cache of deserialized recording features + metadata
+pub struct RecordingSimilarityCache {
+    inner: Mutex<Option<RecordingSimilarityCacheData>>,
+}
+
+struct RecordingSimilarityCacheData {
+    features: Vec<(String, ChunkedFileFeatures)>,
+    metadata: std::collections::HashMap<String, RecordingCachedMeta>,
+}
+
+#[derive(Clone, Serialize)]
+struct RecordingCachedMeta {
+    title: Option<String>,
+    timestamp: String,
+    duration_secs: f64,
+}
+
+impl RecordingSimilarityCache {
+    pub fn new() -> Self {
+        Self { inner: Mutex::new(None) }
+    }
+
+    /// Remove a session from the cache
+    pub fn remove(&self, session_id: &str) {
+        if let Some(data) = self.inner.lock().as_mut() {
+            data.features.retain(|(id, _)| id != session_id);
+            data.metadata.remove(session_id);
+        }
+    }
+
+    /// Rename a session in the cache (update its key)
+    pub fn rename(&self, old_id: &str, new_id: &str, new_title: Option<String>) {
+        if let Some(data) = self.inner.lock().as_mut() {
+            // Update features key
+            for (id, _) in &mut data.features {
+                if id == old_id {
+                    *id = new_id.to_string();
+                    break;
+                }
+            }
+            // Update metadata key and title
+            if let Some(mut meta) = data.metadata.remove(old_id) {
+                meta.title = new_title;
+                data.metadata.insert(new_id.to_string(), meta);
+            }
+        }
+    }
+}
+
+/// Load session features from DB into the recording cache
+pub fn warm_recording_similarity_cache(db: &SessionDatabase, cache: &RecordingSimilarityCache) {
+    use std::time::Instant;
+    let t0 = Instant::now();
+
+    let rows = match db.get_all_session_features() {
+        Ok(rows) => rows,
+        Err(e) => {
+            log::error!("Failed to load session features for cache: {}", e);
+            return;
+        }
+    };
+
+    // Also need session metadata (title, timestamp, duration)
+    let sessions = match db.query_sessions(&crate::session::SessionFilter {
+        has_midi: Some(true),
+        ..Default::default()
+    }) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("Failed to load sessions for recording cache: {}", e);
+            return;
+        }
+    };
+
+    let session_map: std::collections::HashMap<&str, &crate::session::SessionSummary> =
+        sessions.iter().map(|s| (s.id.as_str(), s)).collect();
+
+    let t1 = Instant::now();
+
+    let mut features = Vec::new();
+    let mut metadata = std::collections::HashMap::new();
+
+    for row in &rows {
+        if let Some(session) = session_map.get(row.session_id.as_str()) {
+            metadata.insert(row.session_id.clone(), RecordingCachedMeta {
+                title: session.title.clone(),
+                timestamp: session.timestamp.to_rfc3339(),
+                duration_secs: session.duration_secs,
+            });
+
+            if row.has_features {
+                if let Some(chunked) = row.chunked_features.as_ref()
+                    .and_then(|b| bincode::deserialize::<ChunkedFileFeatures>(b).ok())
+                {
+                    features.push((row.session_id.clone(), chunked));
+                }
+            }
+        }
+    }
+
+    let t2 = Instant::now();
+    let count = features.len();
+    *cache.inner.lock() = Some(RecordingSimilarityCacheData { features, metadata });
+
+    eprintln!(
+        "[recording similarity cache] db_fetch={:.0}ms  deserialize={:.0}ms  sessions={}",
+        t1.duration_since(t0).as_secs_f64() * 1000.0,
+        t2.duration_since(t1).as_secs_f64() * 1000.0,
+        count,
+    );
+}
+
+/// Sync session features at startup: compute features for sessions that need them
+pub fn sync_session_features(app: &tauri::AppHandle) -> Result<usize, String> {
+    use rayon::prelude::*;
+    use std::time::Instant;
+
+    let t0 = Instant::now();
+
+    let db = app.state::<SessionDatabase>();
+    let config = app.state::<RwLock<Config>>();
+    let recording_cache = app.state::<RecordingSimilarityCache>();
+    let storage_path = config.read().storage_path.clone();
+
+    // Get all sessions with MIDI
+    let midi_sessions = db.query_sessions(&crate::session::SessionFilter {
+        has_midi: Some(true),
+        ..Default::default()
+    }).map_err(|e| e.to_string())?;
+
+    // Get existing features
+    let existing = db.get_all_session_features().map_err(|e| e.to_string())?;
+    let existing_map: std::collections::HashMap<&str, &crate::session::SessionFeatureRow> =
+        existing.iter().map(|r| (r.session_id.as_str(), r)).collect();
+
+    // Find sessions needing computation
+    let mut to_compute: Vec<(&crate::session::SessionSummary, std::path::PathBuf)> = Vec::new();
+    let valid_ids: std::collections::HashSet<&str> = midi_sessions.iter().map(|s| s.id.as_str()).collect();
+
+    for session in &midi_sessions {
+        let session_path = storage_path.join(&session.id);
+        if !session_path.exists() { continue; }
+
+        // Count MIDI files in directory
+        let midi_count = count_midi_files(&session_path);
+
+        match existing_map.get(session.id.as_str()) {
+            Some(existing_row) if existing_row.midi_file_count == midi_count as i32 => {
+                // Already computed with same file count, skip
+            }
+            _ => {
+                to_compute.push((session, session_path));
+            }
+        }
+    }
+
+    // Delete features for sessions that no longer exist
+    let stale_ids: Vec<&str> = existing.iter()
+        .filter(|r| !valid_ids.contains(r.session_id.as_str()))
+        .map(|r| r.session_id.as_str())
+        .collect();
+    if !stale_ids.is_empty() {
+        let _ = db.delete_session_features_by_ids(&stale_ids);
+    }
+
+    if to_compute.is_empty() {
+        // Just warm the cache
+        warm_recording_similarity_cache(&db, &recording_cache);
+        let _ = app.emit("recording-features-synced", ());
+        eprintln!("[sync_session_features] nothing to compute, warmed cache in {:.0}ms",
+            t0.elapsed().as_secs_f64() * 1000.0);
+        return Ok(0);
+    }
+
+    let computed_count = to_compute.len();
+    eprintln!("[sync_session_features] computing features for {} sessions", computed_count);
+
+    // Parallel feature extraction
+    let results: Vec<crate::session::SessionFeatureRow> = to_compute.par_iter().filter_map(|(session, session_path)| {
+        compute_session_feature_row(&session.id, session_path)
+    }).collect();
+
+    // Batch upsert to DB
+    if let Err(e) = db.upsert_session_features_batch(&results) {
+        log::error!("Failed to batch upsert session features: {}", e);
+    }
+
+    // Warm the cache
+    warm_recording_similarity_cache(&db, &recording_cache);
+    let _ = app.emit("recording-features-synced", ());
+
+    eprintln!("[sync_session_features] computed={} total={:.0}ms",
+        computed_count, t0.elapsed().as_secs_f64() * 1000.0);
+
+    Ok(computed_count)
+}
+
+/// Compute features for a single session and update DB + cache
+pub fn compute_and_cache_session_features(app: &tauri::AppHandle, session_id: &str, session_path: &std::path::Path) {
+    use std::time::Instant;
+    let t0 = Instant::now();
+
+    let db = app.state::<SessionDatabase>();
+    let recording_cache = app.state::<RecordingSimilarityCache>();
+
+    if let Some(row) = compute_session_feature_row(session_id, session_path) {
+        // Save to DB
+        if let Err(e) = db.upsert_session_feature(&row) {
+            log::error!("Failed to upsert session feature for {}: {}", session_id, e);
+            return;
+        }
+
+        // Add to cache without full rebuild
+        if row.has_features {
+            if let Some(chunked) = row.chunked_features.as_ref()
+                .and_then(|b| bincode::deserialize::<ChunkedFileFeatures>(b).ok())
+            {
+                // Get session metadata for cache
+                if let Ok(sessions) = db.query_sessions(&crate::session::SessionFilter {
+                    search_query: None,
+                    ..Default::default()
+                }) {
+                    if let Some(session) = sessions.iter().find(|s| s.id == session_id) {
+                        let meta = RecordingCachedMeta {
+                            title: session.title.clone(),
+                            timestamp: session.timestamp.to_rfc3339(),
+                            duration_secs: session.duration_secs,
+                        };
+
+                        let mut guard = recording_cache.inner.lock();
+                        if let Some(data) = guard.as_mut() {
+                            // Remove old entry if present
+                            data.features.retain(|(id, _)| id != session_id);
+                            data.features.push((session_id.to_string(), chunked));
+                            data.metadata.insert(session_id.to_string(), meta);
+                        } else {
+                            let mut metadata = std::collections::HashMap::new();
+                            metadata.insert(session_id.to_string(), meta);
+                            *guard = Some(RecordingSimilarityCacheData {
+                                features: vec![(session_id.to_string(), chunked)],
+                                metadata,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        eprintln!("[compute_session_features] session={} time={:.0}ms",
+            session_id, t0.elapsed().as_secs_f64() * 1000.0);
+
+        // Emit event for frontend
+        let _ = app.emit("session-features-computed", session_id);
+    }
+}
+
+/// Compute a SessionFeatureRow for a single session directory
+fn compute_session_feature_row(session_id: &str, session_path: &std::path::Path) -> Option<crate::session::SessionFeatureRow> {
+    use crate::similarity::{midi_parser, features};
+
+    let midi_files = collect_session_midi_files(session_path);
+    if midi_files.is_empty() {
+        return None;
+    }
+
+    let midi_count = midi_files.len() as i32;
+
+    // Parse and extract features from each MIDI file
+    let per_file_features: Vec<ChunkedFileFeatures> = midi_files.iter().filter_map(|path| {
+        match midi_parser::parse_midi(path) {
+            Ok(midi_parser::MidiParseResult { events, ticks_per_beat, tempo_map }) => {
+                Some(features::extract_chunked_features(&events, ticks_per_beat, &tempo_map))
+            }
+            Err(e) => {
+                log::warn!("Failed to parse MIDI {}: {}", path.display(), e);
+                None
+            }
+        }
+    }).collect();
+
+    if per_file_features.is_empty() {
+        return None;
+    }
+
+    // Average features across files
+    let averaged = features::average_chunked_features(&per_file_features);
+
+    let has_features = averaged.chunks.iter()
+        .any(|c| c.melodic.is_some() || c.harmonic.is_some());
+
+    let chunked_bin = bincode::serialize(&averaged).ok();
+
+    Some(crate::session::SessionFeatureRow {
+        session_id: session_id.to_string(),
+        chunked_features: chunked_bin,
+        has_features,
+        midi_file_count: midi_count,
+        computed_at: chrono::Utc::now().to_rfc3339(),
+    })
+}
+
+/// Collect midi_*.mid files from a session directory
+fn collect_session_midi_files(session_path: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(session_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with("midi_") && name.ends_with(".mid") {
+                    files.push(path);
+                }
+            }
+        }
+    }
+    files
+}
+
+/// Count midi_*.mid files in a session directory
+fn count_midi_files(session_path: &std::path::Path) -> usize {
+    std::fs::read_dir(session_path)
+        .map(|entries| {
+            entries.flatten().filter(|e| {
+                e.file_name().to_str()
+                    .map(|n| n.starts_with("midi_") && n.ends_with(".mid"))
+                    .unwrap_or(false)
+            }).count()
+        })
+        .unwrap_or(0)
+}
+
+// --- Recording Similarity Tauri Commands ---
+
+#[derive(Debug, Serialize)]
+pub struct RecordingSimFile {
+    pub session_id: String,
+    pub title: Option<String>,
+    pub timestamp: String,
+    pub duration_secs: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SessionSimilarityResult {
+    pub session_id: String,
+    pub title: Option<String>,
+    pub timestamp: String,
+    pub duration_secs: f64,
+    pub score: f32,
+    pub rank: u32,
+    pub match_offset_secs: f32,
+}
+
+#[tauri::command]
+pub fn get_recording_similarity_files(
+    cache: State<'_, RecordingSimilarityCache>,
+) -> Vec<RecordingSimFile> {
+    let guard = cache.inner.lock();
+    let Some(data) = guard.as_ref() else { return Vec::new() };
+
+    let mut files: Vec<RecordingSimFile> = data.metadata.iter().map(|(id, meta)| {
+        RecordingSimFile {
+            session_id: id.clone(),
+            title: meta.title.clone(),
+            timestamp: meta.timestamp.clone(),
+            duration_secs: meta.duration_secs,
+        }
+    }).collect();
+
+    // Sort by timestamp descending
+    files.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    files
+}
+
+#[tauri::command]
+pub fn get_similar_sessions(
+    session_id: String,
+    mode: String,
+    cache: State<'_, RecordingSimilarityCache>,
+) -> Result<Vec<SessionSimilarityResult>, String> {
+    use crate::similarity::scoring;
+
+    let sim_mode = match mode.as_str() {
+        "harmonic" => scoring::SimilarityMode::Harmonic,
+        _ => scoring::SimilarityMode::Melodic,
+    };
+
+    let guard = cache.inner.lock();
+    let cache_data = match guard.as_ref() {
+        Some(data) => data,
+        None => return Ok(Vec::new()),
+    };
+
+    let similar = scoring::find_most_similar_chunked(&session_id, &cache_data.features, sim_mode, 12, 0.05);
+
+    let results: Vec<SessionSimilarityResult> = similar.iter().enumerate().filter_map(|(i, result)| {
+        let meta = cache_data.metadata.get(&result.file_id)?;
+        Some(SessionSimilarityResult {
+            session_id: result.file_id.clone(),
+            title: meta.title.clone(),
+            timestamp: meta.timestamp.clone(),
+            duration_secs: meta.duration_secs,
+            score: result.score,
+            rank: (i + 1) as u32,
+            match_offset_secs: result.match_offset_secs,
+        })
+    }).collect();
+
+    Ok(results)
+}
+
+#[tauri::command]
+pub fn get_session_similar_preview(
+    session_id: String,
+    cache: State<'_, RecordingSimilarityCache>,
+) -> Result<Vec<SessionSimilarityResult>, String> {
+    use crate::similarity::scoring;
+
+    let guard = cache.inner.lock();
+    let cache_data = match guard.as_ref() {
+        Some(data) => data,
+        None => return Ok(Vec::new()),
+    };
+
+    let similar = scoring::find_most_similar_chunked(
+        &session_id, &cache_data.features, scoring::SimilarityMode::Melodic, 3, 0.05,
+    );
+
+    let results: Vec<SessionSimilarityResult> = similar.iter().enumerate().filter_map(|(i, result)| {
+        let meta = cache_data.metadata.get(&result.file_id)?;
+        Some(SessionSimilarityResult {
+            session_id: result.file_id.clone(),
+            title: meta.title.clone(),
+            timestamp: meta.timestamp.clone(),
+            duration_secs: meta.duration_secs,
+            score: result.score,
+            rank: (i + 1) as u32,
+            match_offset_secs: result.match_offset_secs,
+        })
+    }).collect();
+
+    Ok(results)
+}
+
 #[tauri::command]
 pub async fn reset_cache(
     app: tauri::AppHandle,
     db: State<'_, SessionDatabase>,
     cache: State<'_, SimilarityCache>,
+    recording_cache: State<'_, RecordingSimilarityCache>,
 ) -> Result<usize, String> {
     *cache.inner.lock() = None;
+    *recording_cache.inner.lock() = None;
     db.clear_sessions().map_err(|e| e.to_string())?;
     let app_clone = app.clone();
-    tokio::task::spawn_blocking(move || {
-        rescan_sessions_blocking(&app_clone)
-    }).await.map_err(|e| e.to_string())?
+    let count = tokio::task::spawn_blocking(move || {
+        let result = rescan_sessions_blocking(&app_clone);
+        // Re-sync recording features after rescan
+        if let Err(e) = sync_session_features(&app_clone) {
+            log::error!("Failed to re-sync session features after cache reset: {}", e);
+        }
+        result
+    }).await.map_err(|e| e.to_string())??;
+    Ok(count)
 }
 
 #[tauri::command]
@@ -1131,7 +1594,12 @@ pub async fn rescan_sessions(
     app: tauri::AppHandle,
 ) -> Result<usize, String> {
     tokio::task::spawn_blocking(move || {
-        rescan_sessions_blocking(&app)
+        let result = rescan_sessions_blocking(&app);
+        // Re-sync recording features after rescan (new folder, changed files, etc.)
+        if let Err(e) = sync_session_features(&app) {
+            log::error!("Failed to sync session features after rescan: {}", e);
+        }
+        result
     }).await.map_err(|e| e.to_string())?
 }
 

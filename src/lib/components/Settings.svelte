@@ -483,7 +483,7 @@
                                     </button>
                                     {#if showAudioFormatHelp}
                                         <div class="help-tooltip" use:positionTooltip>
-                                            Does not affect playback quality.
+                                            Does not affect playback quality. FLAC uses less disk space.
                                         </div>
                                     {/if}
                                 </span>
@@ -495,7 +495,7 @@
                                 onchange={autoSave}
                             >
                                 <option value="flac">.flac (default)</option>
-                                <option value="wav">.wav (larger files)</option>
+                                <option value="wav">.wav</option>
                             </select>
                         </div>
                         <div class="format-field">
@@ -513,7 +513,7 @@
                                     </button>
                                     {#if showVideoContainerHelp}
                                         <div class="help-tooltip" use:positionTooltip>
-                                            Does not affect video quality or file size. <br />.mp4 has wider compatibility with other programs.
+                                            Does not affect video quality or disk usage. MP4 has wider compatibility with other programs.
                                         </div>
                                     {/if}
                                 </span>

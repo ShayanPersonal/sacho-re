@@ -127,6 +127,103 @@ pub fn extract_harmonic(events: &[NoteEvent], ticks_per_beat: u16) -> Option<Har
     })
 }
 
+/// Average chunked features from multiple MIDI files into a single set.
+/// Used for multi-MIDI sessions (e.g. multiple MIDI devices).
+pub fn average_chunked_features(all: &[ChunkedFileFeatures]) -> ChunkedFileFeatures {
+    if all.is_empty() {
+        return ChunkedFileFeatures { chunks: vec![] };
+    }
+    if all.len() == 1 {
+        return all[0].clone();
+    }
+
+    // Group chunks by offset bucket (rounded to 0.1s to avoid float comparison)
+    let mut buckets: std::collections::BTreeMap<i32, Vec<&ChunkFeatures>> = std::collections::BTreeMap::new();
+    for file_features in all {
+        for chunk in &file_features.chunks {
+            let key = (chunk.offset_secs * 10.0).round() as i32;
+            buckets.entry(key).or_default().push(chunk);
+        }
+    }
+
+    let chunks = buckets.into_iter().map(|(key, chunk_group)| {
+        let offset_secs = key as f32 / 10.0;
+
+        // Average melodic features
+        let melodic_refs: Vec<&MelodicFeatures> = chunk_group.iter()
+            .filter_map(|c| c.melodic.as_ref())
+            .collect();
+        let melodic = average_melodic(&melodic_refs);
+
+        // Average harmonic features
+        let harmonic_refs: Vec<&HarmonicFeatures> = chunk_group.iter()
+            .filter_map(|c| c.harmonic.as_ref())
+            .collect();
+        let harmonic = average_harmonic(&harmonic_refs);
+
+        ChunkFeatures { offset_secs, melodic, harmonic }
+    }).collect();
+
+    ChunkedFileFeatures { chunks }
+}
+
+fn average_melodic(features: &[&MelodicFeatures]) -> Option<MelodicFeatures> {
+    if features.is_empty() {
+        return None;
+    }
+    let n = features.len() as f32;
+    let len_ih = features[0].interval_histogram.len();
+    let len_ib = features[0].interval_bigrams.len();
+    let len_ct = features[0].contour_trigrams.len();
+    let len_pc = features[0].pitch_class_histogram.len();
+
+    let mut interval_histogram = vec![0.0f32; len_ih];
+    let mut interval_bigrams = vec![0.0f32; len_ib];
+    let mut contour_trigrams = vec![0.0f32; len_ct];
+    let mut pitch_class_histogram = vec![0.0f32; len_pc];
+
+    for f in features {
+        for (i, v) in f.interval_histogram.iter().enumerate() { interval_histogram[i] += v; }
+        for (i, v) in f.interval_bigrams.iter().enumerate() { interval_bigrams[i] += v; }
+        for (i, v) in f.contour_trigrams.iter().enumerate() { contour_trigrams[i] += v; }
+        for (i, v) in f.pitch_class_histogram.iter().enumerate() { pitch_class_histogram[i] += v; }
+    }
+
+    for v in &mut interval_histogram { *v /= n; }
+    for v in &mut interval_bigrams { *v /= n; }
+    for v in &mut contour_trigrams { *v /= n; }
+    for v in &mut pitch_class_histogram { *v /= n; }
+
+    Some(MelodicFeatures {
+        interval_histogram,
+        interval_bigrams,
+        contour_trigrams,
+        pitch_class_histogram,
+    })
+}
+
+fn average_harmonic(features: &[&HarmonicFeatures]) -> Option<HarmonicFeatures> {
+    if features.is_empty() {
+        return None;
+    }
+    let n = features.len() as f32;
+    let len_ch = features[0].chroma.len();
+    let len_pc = features[0].pc_transitions.len();
+
+    let mut chroma = vec![0.0f32; len_ch];
+    let mut pc_transitions = vec![0.0f32; len_pc];
+
+    for f in features {
+        for (i, v) in f.chroma.iter().enumerate() { chroma[i] += v; }
+        for (i, v) in f.pc_transitions.iter().enumerate() { pc_transitions[i] += v; }
+    }
+
+    for v in &mut chroma { *v /= n; }
+    for v in &mut pc_transitions { *v /= n; }
+
+    Some(HarmonicFeatures { chroma, pc_transitions })
+}
+
 fn l1_normalize(arr: &mut [f32]) {
     let sum: f32 = arr.iter().sum();
     if sum > 0.0 {

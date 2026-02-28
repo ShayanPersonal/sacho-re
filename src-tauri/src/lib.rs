@@ -150,13 +150,19 @@ pub fn run() {
             };
             app.manage(session_db);
 
-            // Initialize similarity cache and warm it in the background
+            // Initialize similarity caches and warm them in the background
             app.manage(commands::SimilarityCache::new());
+            app.manage(commands::RecordingSimilarityCache::new());
             let handle = app_handle.clone();
             std::thread::spawn(move || {
                 let db = handle.state::<session::SessionDatabase>();
                 let cache = handle.state::<commands::SimilarityCache>();
                 commands::warm_similarity_cache(&db, &cache);
+
+                // Sync session features (compute for new sessions, warm cache)
+                if let Err(e) = commands::sync_session_features(&handle) {
+                    log::error!("Failed to sync session features: {}", e);
+                }
             });
 
             // Initialize device health state (before MIDI monitor so it's available)
@@ -235,6 +241,9 @@ pub fn run() {
             commands::get_app_stats,
             commands::get_disconnected_devices,
             commands::restart_device_pipelines,
+            commands::get_recording_similarity_files,
+            commands::get_similar_sessions,
+            commands::get_session_similar_preview,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Sacho")

@@ -1,20 +1,23 @@
 <script lang="ts">
-    import type { SessionMetadata } from "$lib/api";
+    import type { SessionMetadata, SessionSimilarityResult } from "$lib/api";
     import {
         formatDuration,
         formatDate,
         readSessionFile,
         checkVideoCodec,
         repairSession,
+        getSessionSimilarPreview,
     } from "$lib/api";
     import {
         updateNotes,
         selectedSession,
+        selectSession,
         renameCurrentSession,
     } from "$lib/stores/sessions";
     import { revealItemInDir } from "@tauri-apps/plugin-opener";
     import { convertFileSrc } from "@tauri-apps/api/core";
     import { onMount, onDestroy } from "svelte";
+    import { listen, type UnlistenFn } from "@tauri-apps/api/event";
     import * as Tone from "tone";
     import { Midi } from "@tonejs/midi";
     import VideoPlayer from "./VideoPlayer.svelte";
@@ -200,6 +203,34 @@
             console.error("Failed to repair session:", e);
         } finally {
             isRepairing = false;
+        }
+    }
+
+    // Similar recordings preview
+    let similarRecordings = $state<SessionSimilarityResult[]>([]);
+    let hasMidi = $derived(session.midi_files.length > 0);
+
+    $effect(() => {
+        if (hasMidi) {
+            getSessionSimilarPreview(session.id).then(results => {
+                similarRecordings = results;
+            }).catch(() => {
+                similarRecordings = [];
+            });
+        } else {
+            similarRecordings = [];
+        }
+    });
+
+    let featuresUnlisten: UnlistenFn | undefined;
+
+    function formatTimestamp(ts: string): string {
+        try {
+            const d = new Date(ts);
+            return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+        } catch {
+            return ts;
         }
     }
 
@@ -774,12 +805,20 @@
         animationFrame = requestAnimationFrame(tick);
     }
 
-    onMount(() => {
+    onMount(async () => {
         animationFrame = requestAnimationFrame(tick);
+        featuresUnlisten = await listen('session-features-computed', (event) => {
+            if (event.payload === session.id && hasMidi) {
+                getSessionSimilarPreview(session.id).then(results => {
+                    similarRecordings = results;
+                }).catch(() => {});
+            }
+        });
     });
 
     onDestroy(() => {
         cancelAnimationFrame(animationFrame);
+        featuresUnlisten?.();
         synth?.dispose();
         pause();
         flushPendingTitle();
@@ -1108,7 +1147,29 @@
             </div>
         </div>
 
-        <div class="detail-content"></div>
+        <div class="detail-content">
+            {#if hasMidi && similarRecordings.length > 0}
+                <div class="similar-section">
+                    <h3 class="similar-title">Similar Recordings</h3>
+                    <div class="similar-list">
+                        {#each similarRecordings as result (result.session_id)}
+                            <button
+                                class="similar-item"
+                                onclick={() => selectSession(result.session_id)}
+                                title={result.title || result.timestamp}
+                            >
+                                <span class="similar-name">
+                                    {result.title || formatTimestamp(result.timestamp)}
+                                </span>
+                                <span class="similar-score">
+                                    {Math.round(result.score * 100)}%
+                                </span>
+                            </button>
+                        {/each}
+                    </div>
+                </div>
+            {/if}
+        </div>
     </div>
 
     <div class="detail-actions">
@@ -2032,5 +2093,83 @@
     :global(body.light-mode) .repair-btn:hover:not(:disabled) {
         background: rgba(180, 130, 0, 0.18);
         border-color: rgba(180, 130, 0, 0.35);
+    }
+
+    /* ---- Similar Recordings ---- */
+    .similar-section {
+        padding: 0.75rem 0 0;
+    }
+
+    .similar-title {
+        font-size: 0.75rem;
+        font-weight: 500;
+        color: #6a6a6a;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        margin: 0 0 0.5rem;
+    }
+
+    .similar-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .similar-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.5rem 0.625rem;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        border-radius: 0.25rem;
+        color: #8a8a8a;
+        font-family: inherit;
+        font-size: 0.8125rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        text-align: left;
+    }
+
+    .similar-item:hover {
+        background: rgba(201, 169, 98, 0.06);
+        border-color: rgba(201, 169, 98, 0.15);
+        color: #b8b8b8;
+    }
+
+    .similar-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .similar-score {
+        font-size: 0.75rem;
+        color: #c9a962;
+        font-family: "DM Mono", "SF Mono", Menlo, monospace;
+        flex-shrink: 0;
+        margin-left: 0.5rem;
+    }
+
+    :global(body.light-mode) .similar-title {
+        color: #7a7a7a;
+    }
+
+    :global(body.light-mode) .similar-item {
+        background: rgba(0, 0, 0, 0.02);
+        border-color: rgba(0, 0, 0, 0.06);
+        color: #5a5a5a;
+    }
+
+    :global(body.light-mode) .similar-item:hover {
+        background: rgba(160, 128, 48, 0.08);
+        border-color: rgba(160, 128, 48, 0.2);
+        color: #3a3a3a;
+    }
+
+    :global(body.light-mode) .similar-score {
+        color: #8a6a20;
     }
 </style>

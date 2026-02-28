@@ -15,5 +15,3 @@ There should be two types of similarity scores computer separately: melodic simi
 Looks like this website has information on latest research in determining melodic and/or harmonic similarity: https://music-ir.org/mirex/wiki/MIREX_HOME
 
 here's an algorithm from 2015, there may be better ways to do melody similarity now (this assumes the input is monophonic for example) https://github.com/julian-urbano/MelodyShape
-
-For similarity scoring, plan out how to do accurate melodic and harmonic similarity matching.

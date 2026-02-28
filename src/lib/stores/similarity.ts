@@ -1,12 +1,16 @@
 // Similarity explorer store
 
 import { writable, derived, get } from 'svelte/store';
-import type { MidiImportInfo, SimilarityResult, SimilarityMode } from '$lib/api';
-import { importMidiFolder, getMidiImports, getSimilarFiles, clearMidiImports, readSessionFile } from '$lib/api';
+import type { MidiImportInfo, SimilarityResult, SimilarityMode, SimilaritySourceMode, RecordingSimFile, SessionSimilarityResult } from '$lib/api';
+import { importMidiFolder, getMidiImports, getSimilarFiles, clearMidiImports, readSessionFile, getRecordingSimilarityFiles, getSimilarSessions } from '$lib/api';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { Midi } from '@tonejs/midi';
 
+// --- Source Mode ---
+export const sourceMode = writable<SimilaritySourceMode>("recordings");
+
+// --- Import Mode Stores ---
 export const importedFiles = writable<MidiImportInfo[]>([]);
 export const selectedFileId = writable<string | null>(null);
 export const similarFiles = writable<SimilarityResult[]>([]);
@@ -26,6 +30,18 @@ export const selectedFile = derived(
   [importedFiles, selectedFileId],
   ([$files, $id]) => $id ? $files.find(f => f.id === $id) ?? null : null
 );
+
+// --- Recording Mode Stores ---
+export const recordingFiles = writable<RecordingSimFile[]>([]);
+export const selectedRecordingId = writable<string | null>(null);
+export const similarSessions = writable<SessionSimilarityResult[]>([]);
+
+export const selectedRecording = derived(
+  [recordingFiles, selectedRecordingId],
+  ([$files, $id]) => $id ? $files.find(f => f.session_id === $id) ?? null : null
+);
+
+// --- Import Mode Functions ---
 
 export async function importFolder() {
   const selected = await open({ directory: true, title: "Select MIDI Folder" });
@@ -72,20 +88,37 @@ export async function selectFile(id: string) {
 
 export async function switchMode(mode: SimilarityMode) {
   similarityMode.set(mode);
-  let currentId: string | null = null;
-  selectedFileId.subscribe(id => currentId = id)();
-  if (currentId) {
-    isComputing.set(true);
-    try {
-      const results = await getSimilarFiles(currentId, mode);
-      similarFiles.set(results);
-      const selected = get(importedFiles).find(f => f.id === currentId);
-      const allVisible = [...results.map(r => r.file), ...(selected ? [selected] : [])];
-      fetchDurations(allVisible);
-    } catch (error) {
-      console.error('Failed to get similar files:', error);
-    } finally {
-      isComputing.set(false);
+
+  const currentSourceMode = get(sourceMode);
+
+  if (currentSourceMode === "recordings") {
+    const currentId = get(selectedRecordingId);
+    if (currentId) {
+      isComputing.set(true);
+      try {
+        const results = await getSimilarSessions(currentId, mode);
+        similarSessions.set(results);
+      } catch (error) {
+        console.error('Failed to get similar sessions:', error);
+      } finally {
+        isComputing.set(false);
+      }
+    }
+  } else {
+    const currentId = get(selectedFileId);
+    if (currentId) {
+      isComputing.set(true);
+      try {
+        const results = await getSimilarFiles(currentId, mode);
+        similarFiles.set(results);
+        const selected = get(importedFiles).find(f => f.id === currentId);
+        const allVisible = [...results.map(r => r.file), ...(selected ? [selected] : [])];
+        fetchDurations(allVisible);
+      } catch (error) {
+        console.error('Failed to get similar files:', error);
+      } finally {
+        isComputing.set(false);
+      }
     }
   }
 }
@@ -138,7 +171,51 @@ export async function fetchDurations(files: MidiImportInfo[]) {
   });
 }
 
-// Load previously imported files on module init
+// --- Recording Mode Functions ---
+
+export async function loadRecordingFiles() {
+  try {
+    const files = await getRecordingSimilarityFiles();
+    recordingFiles.set(files);
+  } catch (error) {
+    console.error('Failed to load recording files:', error);
+  }
+}
+
+export async function selectRecording(sessionId: string) {
+  selectedRecordingId.set(sessionId);
+  isComputing.set(true);
+  try {
+    let mode: SimilarityMode = "melodic";
+    similarityMode.subscribe(m => mode = m)();
+    const results = await getSimilarSessions(sessionId, mode);
+    similarSessions.set(results);
+  } catch (error) {
+    console.error('Failed to get similar sessions:', error);
+    similarSessions.set([]);
+  } finally {
+    isComputing.set(false);
+  }
+}
+
+// --- Event Listeners ---
+
+let featuresUnlisten: UnlistenFn | undefined;
+let syncUnlisten: UnlistenFn | undefined;
+
+async function setupEventListeners() {
+  featuresUnlisten = await listen('session-features-computed', () => {
+    loadRecordingFiles();
+  });
+  syncUnlisten = await listen('recording-features-synced', () => {
+    loadRecordingFiles();
+  });
+}
+
+setupEventListeners();
+
+// --- Init ---
+
 async function init() {
   try {
     const files = await getMidiImports();
@@ -146,6 +223,9 @@ async function init() {
   } catch {
     // Silently fail on init — no imports yet
   }
+
+  // Also load recording files
+  loadRecordingFiles();
 }
 
 init();

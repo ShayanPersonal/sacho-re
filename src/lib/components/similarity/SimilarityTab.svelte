@@ -14,10 +14,17 @@
     switchMode,
     clearImports,
     fileDurations,
+    sourceMode,
+    recordingFiles,
+    selectedRecordingId,
+    similarSessions,
+    selectedRecording,
+    selectRecording,
   } from '$lib/stores/similarity';
-  import type { SimilarityMode, MidiImportInfo } from '$lib/api';
+  import type { SimilarityMode, SimilaritySourceMode } from '$lib/api';
   import { formatDuration } from '$lib/api';
   import { settings } from '$lib/stores/settings';
+  import { selectSession } from '$lib/stores/sessions';
   import MidiFileDetail from './MidiFileDetail.svelte';
 
   let isLightMode = $derived(!($settings?.dark_mode ?? false));
@@ -61,9 +68,9 @@
   let tooltipX = $state(0);
   let tooltipY = $state(0);
 
-  // Detail panel state
+  // Detail panel state (import mode)
   interface InspectedFile {
-    file: MidiImportInfo;
+    file: import('$lib/api').MidiImportInfo;
     score: number | null;
     rank: number | null;
     matchOffsetSecs: number | null;
@@ -79,6 +86,83 @@
   const ITEM_HEIGHT = 34; // px per file-item row
   const OVERSCAN = 10;
 
+  // --- Common node model for canvas visualization ---
+  interface VizNode {
+    id: string;
+    label: string;
+    score: number;
+    rank: number;
+    matchOffsetSecs: number;
+    durationSecs: number | undefined;
+  }
+
+  // Normalize both result types into a common model
+  let vizNodes = $derived.by((): VizNode[] => {
+    if ($sourceMode === 'recordings') {
+      return $similarSessions.map((r) => ({
+        id: r.session_id,
+        label: r.title || formatTimestamp(r.timestamp),
+        score: r.score,
+        rank: r.rank,
+        matchOffsetSecs: r.match_offset_secs,
+        durationSecs: r.duration_secs,
+      }));
+    } else {
+      return $similarFiles.map((r) => ({
+        id: r.file.id,
+        label: r.file.file_name,
+        score: r.score,
+        rank: r.rank,
+        matchOffsetSecs: r.match_offset_secs,
+        durationSecs: $fileDurations.get(r.file.id),
+      }));
+    }
+  });
+
+  // Center node info
+  let centerLabel = $derived.by(() => {
+    if ($sourceMode === 'recordings') {
+      const rec = $selectedRecording;
+      if (!rec) return null;
+      return rec.title || formatTimestamp(rec.timestamp);
+    } else {
+      const file = $selectedFile;
+      if (!file) return null;
+      return file.file_name;
+    }
+  });
+
+  let centerDuration = $derived.by(() => {
+    if ($sourceMode === 'recordings') {
+      return $selectedRecording?.duration_secs;
+    } else {
+      const file = $selectedFile;
+      return file ? $fileDurations.get(file.id) : undefined;
+    }
+  });
+
+  let hasSelection = $derived(
+    $sourceMode === 'recordings' ? $selectedRecordingId !== null : $selectedFileId !== null
+  );
+
+  let hasFeatures = $derived.by(() => {
+    if ($sourceMode === 'recordings') {
+      return $selectedRecordingId !== null; // recordings always have features if in the list
+    }
+    return $selectedFile?.has_features ?? false;
+  });
+
+  function formatTimestamp(ts: string): string {
+    try {
+      const d = new Date(ts);
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+        + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return ts;
+    }
+  }
+
+  // --- Import mode filtering ---
   let filteredFiles = $derived(
     searchQuery.trim()
       ? $importedFiles.filter(f => f.file_name.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -98,9 +182,48 @@
     };
   });
 
+  // --- Recording mode filtering ---
+  let recordingSearchQuery = $state('');
+
+  let filteredRecordings = $derived(
+    recordingSearchQuery.trim()
+      ? $recordingFiles.filter(f =>
+          (f.title || '').toLowerCase().includes(recordingSearchQuery.toLowerCase()) ||
+          f.timestamp.toLowerCase().includes(recordingSearchQuery.toLowerCase())
+        )
+      : $recordingFiles
+  );
+
+  let recScrollTop = $state(0);
+  let recListHeight = $state(400);
+  let recFileListEl = $state<HTMLDivElement | null>(null);
+
+  let recVirtualSlice = $derived.by(() => {
+    const total = filteredRecordings.length;
+    const startIdx = Math.max(0, Math.floor(recScrollTop / ITEM_HEIGHT) - OVERSCAN);
+    const visibleCount = Math.ceil(recListHeight / ITEM_HEIGHT) + OVERSCAN * 2;
+    const endIdx = Math.min(total, startIdx + visibleCount);
+    return {
+      items: filteredRecordings.slice(startIdx, endIdx),
+      startIdx,
+      totalHeight: total * ITEM_HEIGHT,
+      offsetY: startIdx * ITEM_HEIGHT,
+    };
+  });
+
+  function handleRecListScroll(e: Event) {
+    const el = e.target as HTMLDivElement;
+    recScrollTop = el.scrollTop;
+  }
+
   function handleFileListScroll(e: Event) {
     const el = e.target as HTMLDivElement;
     scrollTop = el.scrollTop;
+  }
+
+  function handleSourceModeChange(mode: SimilaritySourceMode) {
+    sourceMode.set(mode);
+    inspectedResult = null;
   }
 
   onMount(() => {
@@ -111,11 +234,14 @@
           canvasHeight = entry.contentRect.height;
         } else if (entry.target === fileListEl) {
           listHeight = entry.contentRect.height;
+        } else if (entry.target === recFileListEl) {
+          recListHeight = entry.contentRect.height;
         }
       }
     });
     if (canvasContainer) resizeObserver.observe(canvasContainer);
     if (fileListEl) resizeObserver.observe(fileListEl);
+    if (recFileListEl) resizeObserver.observe(recFileListEl);
     return () => {
       resizeObserver.disconnect();
       if (animationId) cancelAnimationFrame(animationId);
@@ -125,8 +251,8 @@
   // Restart animation when selection changes
   $effect(() => {
     // Access reactive deps
-    const _ = $similarFiles;
-    const __ = $selectedFileId;
+    const _ = vizNodes;
+    const __ = hasSelection;
     if (hasAnimated) {
       // Skip animation on subsequent selections — snap to final positions
       animationProgress = 1;
@@ -141,6 +267,7 @@
   // Clear inspected result when the center file changes (sidebar click or double-click recenter)
   $effect(() => {
     const _ = $selectedFileId;
+    const __ = $selectedRecordingId;
     inspectedResult = null;
   });
 
@@ -194,25 +321,34 @@
       ctx.stroke();
     }
 
-    if (!$selectedFileId || ($similarFiles.length === 0 && !$selectedFile)) {
+    if (!hasSelection || (vizNodes.length === 0 && !centerLabel)) {
       // Empty/no-selection state
       ctx.fillStyle = isLightMode ? '#8a8a8a' : '#4a4a4a';
       ctx.font = '14px Roboto, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      if ($importedFiles.length === 0) {
-        ctx.fillText('Import a folder of MIDI files to get started', cx, cy);
-      } else if (!$selectedFileId) {
-        ctx.fillText('Select a file from the sidebar', cx, cy);
-      } else if ($isComputing) {
-        ctx.fillText('Computing similarity...', cx, cy);
+      if ($sourceMode === 'recordings') {
+        if ($recordingFiles.length === 0) {
+          ctx.fillText('No recordings with MIDI data found', cx, cy);
+        } else if (!$selectedRecordingId) {
+          ctx.fillText('Select a recording from the sidebar', cx, cy);
+        } else if ($isComputing) {
+          ctx.fillText('Computing similarity...', cx, cy);
+        }
+      } else {
+        if ($importedFiles.length === 0) {
+          ctx.fillText('Import a folder of MIDI files to get started', cx, cy);
+        } else if (!$selectedFileId) {
+          ctx.fillText('Select a file from the sidebar', cx, cy);
+        } else if ($isComputing) {
+          ctx.fillText('Computing similarity...', cx, cy);
+        }
       }
       return;
     }
 
-    // Selected file with no features: show center node + message
-    if ($selectedFile && !$selectedFile.has_features) {
-      // Draw center node so user can click to preview
+    // Selected file with no features (import mode only)
+    if ($sourceMode === 'import' && $selectedFile && !$selectedFile.has_features) {
       ctx.shadowColor = isLightMode ? 'rgba(130, 130, 130, 0.4)' : 'rgba(130, 130, 130, 0.3)';
       ctx.shadowBlur = 10;
       ctx.beginPath();
@@ -221,7 +357,6 @@
       ctx.fill();
       ctx.shadowBlur = 0;
 
-      // File name
       ctx.fillStyle = isLightMode ? '#2a2a2a' : '#e8e6e3';
       ctx.font = '11px Roboto, sans-serif';
       ctx.textAlign = 'center';
@@ -231,7 +366,6 @@
         : $selectedFile.file_name;
       ctx.fillText(name, cx, cy + 18);
 
-      // Message
       ctx.fillStyle = isLightMode ? '#8a8a8a' : '#5a5a5a';
       ctx.font = '12px Roboto, sans-serif';
       ctx.textBaseline = 'middle';
@@ -239,18 +373,18 @@
       return;
     }
 
-    if ($similarFiles.length === 0) {
+    if (vizNodes.length === 0) {
       return;
     }
 
-    const n = $similarFiles.length;
+    const n = vizNodes.length;
     const progress = animationProgress;
 
     // Draw satellite nodes
     for (let i = 0; i < n; i++) {
-      const result = $similarFiles[i];
+      const node = vizNodes[i];
       const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
-      const dist = Math.min((result.rank / (n + 1)) * maxR, maxR * 0.75);
+      const dist = Math.min((node.rank / (n + 1)) * maxR, maxR * 0.75);
       const delay = (i / n) * STAGGER;
       const pos = goldenSpiralPos(cx, cy, angle, dist, progress, delay);
 
@@ -258,12 +392,12 @@
       const radius = isHov ? 10 : 7;
 
       // Shadow
-      ctx.shadowColor = scoreColor(result.score);
+      ctx.shadowColor = scoreColor(node.score);
       ctx.shadowBlur = isHov ? 12 : 4;
 
       ctx.beginPath();
       ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
-      ctx.fillStyle = scoreColor(result.score);
+      ctx.fillStyle = scoreColor(node.score);
       ctx.fill();
 
       ctx.shadowBlur = 0;
@@ -277,23 +411,22 @@
         ctx.font = '10px "DM Mono", monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
-        ctx.fillText(`${Math.round(result.score * 100)}%`, pos.x, pos.y - radius - 4);
+        ctx.fillText(`${Math.round(node.score * 100)}%`, pos.x, pos.y - radius - 4);
 
         // Duration label to the right of node
-        const dur = $fileDurations.get(result.file.id);
-        if (dur !== undefined) {
+        if (node.durationSecs !== undefined) {
           ctx.fillStyle = isLightMode
             ? `rgba(120, 120, 120, ${labelAlpha * 0.5})`
             : `rgba(100, 100, 100, ${labelAlpha * 0.5})`;
           ctx.font = '9px "DM Mono", monospace';
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
-          ctx.fillText(formatDuration(Math.floor(dur)), pos.x + radius + 5, pos.y);
+          ctx.fillText(formatDuration(Math.floor(node.durationSecs)), pos.x + radius + 5, pos.y);
         }
       }
     }
 
-    // Draw center node (selected file)
+    // Draw center node (selected file/recording)
     ctx.shadowColor = isLightMode ? 'rgba(160, 128, 48, 0.6)' : 'rgba(201, 169, 98, 0.5)';
     ctx.shadowBlur = 16;
     ctx.beginPath();
@@ -303,22 +436,21 @@
     ctx.shadowBlur = 0;
 
     // Center label
-    if ($selectedFile) {
+    if (centerLabel) {
       ctx.fillStyle = isLightMode ? '#2a2a2a' : '#e8e6e3';
       ctx.font = '11px Roboto, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      const name = $selectedFile.file_name.length > 20
-        ? $selectedFile.file_name.slice(0, 18) + '...'
-        : $selectedFile.file_name;
+      const name = centerLabel.length > 24
+        ? centerLabel.slice(0, 22) + '...'
+        : centerLabel;
       ctx.fillText(name, cx, cy + 18);
 
       // Duration below name
-      const centerDur = $fileDurations.get($selectedFile.id);
-      if (centerDur !== undefined) {
+      if (centerDuration !== undefined) {
         ctx.fillStyle = isLightMode ? 'rgba(120, 120, 120, 0.7)' : 'rgba(100, 100, 100, 0.6)';
         ctx.font = '9px "DM Mono", monospace';
-        ctx.fillText(formatDuration(Math.floor(centerDur)), cx, cy + 32);
+        ctx.fillText(formatDuration(Math.floor(centerDuration)), cx, cy + 32);
       }
     }
   });
@@ -330,13 +462,13 @@
     const cx = canvasWidth / 2;
     const cy = canvasHeight / 2;
     const maxR = Math.min(canvasWidth, canvasHeight) * 0.60;
-    const n = $similarFiles.length;
+    const n = vizNodes.length;
 
     let found: number | null = null;
     for (let i = 0; i < n; i++) {
-      const result = $similarFiles[i];
+      const node = vizNodes[i];
       const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
-      const dist = Math.min((result.rank / (n + 1)) * maxR, maxR * 0.75);
+      const dist = Math.min((node.rank / (n + 1)) * maxR, maxR * 0.75);
       const delay = (i / n) * STAGGER;
       const pos = goldenSpiralPos(cx, cy, angle, dist, animationProgress, delay);
       const dx = mx - pos.x;
@@ -351,7 +483,7 @@
     hoveredIndex = found;
 
     // Check center node (radius 12)
-    if (found === null && $selectedFileId) {
+    if (found === null && hasSelection) {
       const dcx = mx - cx;
       const dcy = my - cy;
       hoveredCenter = Math.sqrt(dcx * dcx + dcy * dcy) < 16;
@@ -363,22 +495,37 @@
   }
 
   function handleCanvasClick(e: MouseEvent) {
-    if (hoveredIndex !== null) {
-      const clicked = $similarFiles[hoveredIndex];
-      inspectedResult = { file: clicked.file, score: clicked.score, rank: clicked.rank, matchOffsetSecs: clicked.match_offset_secs };
-    } else if (hoveredCenter && $selectedFile) {
-      inspectedResult = { file: $selectedFile, score: null, rank: null, matchOffsetSecs: null };
+    if ($sourceMode === 'recordings') {
+      // In recording mode, clicking a satellite navigates to that session
+      if (hoveredIndex !== null) {
+        const node = vizNodes[hoveredIndex];
+        selectRecording(node.id);
+      } else if (hoveredCenter && $selectedRecordingId) {
+        // Clicking center could open session detail
+        selectSession($selectedRecordingId);
+      }
     } else {
-      // Click on empty canvas background dismisses the panel
-      inspectedResult = null;
+      if (hoveredIndex !== null) {
+        const clicked = $similarFiles[hoveredIndex];
+        inspectedResult = { file: clicked.file, score: clicked.score, rank: clicked.rank, matchOffsetSecs: clicked.match_offset_secs };
+      } else if (hoveredCenter && $selectedFile) {
+        inspectedResult = { file: $selectedFile, score: null, rank: null, matchOffsetSecs: null };
+      } else {
+        // Click on empty canvas background dismisses the panel
+        inspectedResult = null;
+      }
     }
   }
 
   function handleCanvasDoubleClick(e: MouseEvent) {
     if (hoveredIndex !== null) {
-      const clicked = $similarFiles[hoveredIndex];
+      const node = vizNodes[hoveredIndex];
       inspectedResult = null;
-      selectFile(clicked.file.id);
+      if ($sourceMode === 'recordings') {
+        selectRecording(node.id);
+      } else {
+        selectFile(node.id);
+      }
     }
   }
 
@@ -395,32 +542,48 @@
     </div>
 
     <div class="sidebar-actions-top">
-      <div class="import-wrapper">
+      <!-- Source mode toggle -->
+      <div class="source-toggle">
         <button
-          class="action-btn primary"
-          onclick={importFolder}
-          disabled={$isImporting}
-        >
-          {#if $isImporting && $importProgress}
-            Importing {$importProgress.current} / {$importProgress.total}
-          {:else if $isImporting}
-            Importing...
-          {:else}
-            Import Folder
-          {/if}
-        </button>
-        {#if $isImporting && $importProgress}
-          <div class="import-progress-track">
-            <div
-              class="import-progress-bar"
-              style="width: {($importProgress.current / $importProgress.total) * 100}%"
-            ></div>
-          </div>
-          <div class="import-file-name" title={$importProgress.file_name}>
-            {$importProgress.file_name}
-          </div>
-        {/if}
+          class="source-btn"
+          class:active={$sourceMode === 'recordings'}
+          onclick={() => handleSourceModeChange('recordings')}
+        >Recordings</button>
+        <button
+          class="source-btn"
+          class:active={$sourceMode === 'import'}
+          onclick={() => handleSourceModeChange('import')}
+        >Import</button>
       </div>
+
+      {#if $sourceMode === 'import'}
+        <div class="import-wrapper">
+          <button
+            class="action-btn primary"
+            onclick={importFolder}
+            disabled={$isImporting}
+          >
+            {#if $isImporting && $importProgress}
+              Importing {$importProgress.current} / {$importProgress.total}
+            {:else if $isImporting}
+              Importing...
+            {:else}
+              Import Folder
+            {/if}
+          </button>
+          {#if $isImporting && $importProgress}
+            <div class="import-progress-track">
+              <div
+                class="import-progress-bar"
+                style="width: {($importProgress.current / $importProgress.total) * 100}%"
+              ></div>
+            </div>
+            <div class="import-file-name" title={$importProgress.file_name}>
+              {$importProgress.file_name}
+            </div>
+          {/if}
+        </div>
+      {/if}
 
       <div class="mode-toggle">
         <button
@@ -436,59 +599,117 @@
       </div>
     </div>
 
-    {#if $importedFiles.length > 0}
-      <div class="search-wrapper">
-        <input
-          class="search-input"
-          type="text"
-          placeholder="Search {$importedFiles.length.toLocaleString()} files..."
-          bind:value={searchQuery}
-        />
-      </div>
-    {/if}
-
-    <div
-      class="file-list"
-      bind:this={fileListEl}
-      onscroll={handleFileListScroll}
-    >
-      {#if $importedFiles.length === 0}
-        <div class="empty-state">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32">
-            <path d="M9 18V5l12-2v13" />
-            <circle cx="6" cy="18" r="3" />
-            <circle cx="18" cy="16" r="3" />
-          </svg>
-          <span>No MIDI files imported</span>
-        </div>
-      {:else}
-        <div style="height: {virtualSlice.totalHeight}px; position: relative;">
-          <div style="position: absolute; top: {virtualSlice.offsetY}px; left: 0; right: 0;">
-            {#each virtualSlice.items as file (file.id)}
-              <button
-                class="file-item"
-                class:selected={$selectedFileId === file.id}
-                class:muted={!file.has_features}
-                onclick={() => selectFile(file.id)}
-              >
-                <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M9 18V5l12-2v13" />
-                  <circle cx="6" cy="18" r="3" />
-                  <circle cx="18" cy="16" r="3" />
-                </svg>
-                <span class="file-name" title={file.file_name}>{file.file_name}</span>
-              </button>
-            {/each}
-          </div>
+    {#if $sourceMode === 'recordings'}
+      <!-- Recording mode sidebar -->
+      {#if $recordingFiles.length > 0}
+        <div class="search-wrapper">
+          <input
+            class="search-input"
+            type="text"
+            placeholder="Search {$recordingFiles.length.toLocaleString()} recordings..."
+            bind:value={recordingSearchQuery}
+          />
         </div>
       {/if}
-    </div>
 
-    {#if $importedFiles.length > 0}
-      <div class="sidebar-footer">
-        <span class="file-count">{$importedFiles.length} files</span>
-        <button class="action-btn danger-text" onclick={clearImports}>Clear</button>
+      <div
+        class="file-list"
+        bind:this={recFileListEl}
+        onscroll={handleRecListScroll}
+      >
+        {#if $recordingFiles.length === 0}
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32">
+              <circle cx="12" cy="12" r="10" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+            <span>No recordings with MIDI data</span>
+          </div>
+        {:else}
+          <div style="height: {recVirtualSlice.totalHeight}px; position: relative;">
+            <div style="position: absolute; top: {recVirtualSlice.offsetY}px; left: 0; right: 0;">
+              {#each recVirtualSlice.items as rec (rec.session_id)}
+                <button
+                  class="file-item"
+                  class:selected={$selectedRecordingId === rec.session_id}
+                  onclick={() => selectRecording(rec.session_id)}
+                >
+                  <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="12" cy="12" r="10" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                  <span class="file-name" title={rec.title || rec.timestamp}>
+                    {rec.title || formatTimestamp(rec.timestamp)}
+                  </span>
+                  <span class="file-duration">{formatDuration(Math.floor(rec.duration_secs))}</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
       </div>
+
+      {#if $recordingFiles.length > 0}
+        <div class="sidebar-footer">
+          <span class="file-count">{$recordingFiles.length} recordings</span>
+        </div>
+      {/if}
+    {:else}
+      <!-- Import mode sidebar (existing) -->
+      {#if $importedFiles.length > 0}
+        <div class="search-wrapper">
+          <input
+            class="search-input"
+            type="text"
+            placeholder="Search {$importedFiles.length.toLocaleString()} files..."
+            bind:value={searchQuery}
+          />
+        </div>
+      {/if}
+
+      <div
+        class="file-list"
+        bind:this={fileListEl}
+        onscroll={handleFileListScroll}
+      >
+        {#if $importedFiles.length === 0}
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32">
+              <path d="M9 18V5l12-2v13" />
+              <circle cx="6" cy="18" r="3" />
+              <circle cx="18" cy="16" r="3" />
+            </svg>
+            <span>No MIDI files imported</span>
+          </div>
+        {:else}
+          <div style="height: {virtualSlice.totalHeight}px; position: relative;">
+            <div style="position: absolute; top: {virtualSlice.offsetY}px; left: 0; right: 0;">
+              {#each virtualSlice.items as file (file.id)}
+                <button
+                  class="file-item"
+                  class:selected={$selectedFileId === file.id}
+                  class:muted={!file.has_features}
+                  onclick={() => selectFile(file.id)}
+                >
+                  <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M9 18V5l12-2v13" />
+                    <circle cx="6" cy="18" r="3" />
+                    <circle cx="18" cy="16" r="3" />
+                  </svg>
+                  <span class="file-name" title={file.file_name}>{file.file_name}</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
+
+      {#if $importedFiles.length > 0}
+        <div class="sidebar-footer">
+          <span class="file-count">{$importedFiles.length} files</span>
+          <button class="action-btn danger-text" onclick={clearImports}>Clear</button>
+        </div>
+      {/if}
     {/if}
   </div>
 
@@ -504,19 +725,18 @@
         onmouseleave={handleCanvasLeave}
       ></canvas>
 
-      {#if hoveredIndex !== null && $similarFiles[hoveredIndex]}
-        {@const result = $similarFiles[hoveredIndex]}
-        {@const hovDur = $fileDurations.get(result.file.id)}
+      {#if hoveredIndex !== null && vizNodes[hoveredIndex]}
+        {@const node = vizNodes[hoveredIndex]}
         <div
           class="tooltip"
           style="left: {tooltipX}px; top: {tooltipY - 10}px"
         >
           <div class="tooltip-content">
-            <div class="tooltip-name">{result.file.file_name}</div>
+            <div class="tooltip-name">{node.label}</div>
             <div class="tooltip-meta">
-              <span class="tooltip-score">{Math.round(result.score * 100)}% similar</span>
-              {#if hovDur !== undefined}
-                <span class="tooltip-duration">{formatDuration(Math.floor(hovDur))}</span>
+              <span class="tooltip-score">{Math.round(node.score * 100)}% similar</span>
+              {#if node.durationSecs !== undefined}
+                <span class="tooltip-duration">{formatDuration(Math.floor(node.durationSecs))}</span>
               {/if}
             </div>
           </div>
@@ -578,6 +798,40 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+  }
+
+  .source-toggle {
+    display: flex;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.25rem;
+    overflow: hidden;
+  }
+
+  .source-btn {
+    flex: 1;
+    padding: 0.4375rem 0.5rem;
+    background: transparent;
+    border: none;
+    color: #5a5a5a;
+    font-family: inherit;
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .source-btn:first-child {
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .source-btn.active {
+    background: rgba(201, 169, 98, 0.15);
+    color: #c9a962;
+  }
+
+  .source-btn:hover:not(.active) {
+    color: #8a8a8a;
   }
 
   .action-btn {
@@ -796,6 +1050,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .file-duration {
+    font-size: 0.6875rem;
+    color: #5a5a5a;
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
+    flex-shrink: 0;
+  }
+
+  .file-item.selected .file-duration {
+    color: rgba(201, 169, 98, 0.6);
   }
 
   .sidebar-footer {
@@ -902,6 +1169,27 @@
     color: #2a2a2a;
   }
 
+  :global(body.light-mode) .source-toggle {
+    border-color: rgba(0, 0, 0, 0.12);
+  }
+
+  :global(body.light-mode) .source-btn {
+    color: #7a7a7a;
+  }
+
+  :global(body.light-mode) .source-btn:first-child {
+    border-right-color: rgba(0, 0, 0, 0.12);
+  }
+
+  :global(body.light-mode) .source-btn.active {
+    background: rgba(160, 128, 48, 0.15);
+    color: #8a6a20;
+  }
+
+  :global(body.light-mode) .source-btn:hover:not(.active) {
+    color: #4a4a4a;
+  }
+
   :global(body.light-mode) .action-btn {
     border-color: rgba(0, 0, 0, 0.12);
     color: #5a5a5a;
@@ -993,6 +1281,14 @@
     background: rgba(160, 128, 48, 0.12);
     border-color: rgba(160, 128, 48, 0.25);
     color: #8a6a20;
+  }
+
+  :global(body.light-mode) .file-duration {
+    color: #9a9a9a;
+  }
+
+  :global(body.light-mode) .file-item.selected .file-duration {
+    color: rgba(138, 106, 32, 0.6);
   }
 
   :global(body.light-mode) .file-count {

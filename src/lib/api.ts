@@ -450,6 +450,25 @@ export interface SimilarityResult {
 
 export type SimilarityMode = "melodic" | "harmonic";
 
+export type SimilaritySourceMode = "recordings" | "import";
+
+export interface RecordingSimFile {
+  session_id: string;
+  title: string | null;
+  timestamp: string;
+  duration_secs: number;
+}
+
+export interface SessionSimilarityResult {
+  session_id: string;
+  title: string | null;
+  timestamp: string;
+  duration_secs: number;
+  score: number;
+  rank: number;
+  match_offset_secs: number;
+}
+
 // ============================================================================
 // Device Commands
 // ============================================================================
@@ -773,6 +792,18 @@ export async function getSimilarFiles(fileId: string, mode: SimilarityMode): Pro
 
 export async function clearMidiImports(): Promise<void> {
   return invoke("clear_midi_imports");
+}
+
+export async function getRecordingSimilarityFiles(): Promise<RecordingSimFile[]> {
+  return invoke("get_recording_similarity_files");
+}
+
+export async function getSimilarSessions(sessionId: string, mode: SimilarityMode): Promise<SessionSimilarityResult[]> {
+  return invoke("get_similar_sessions", { sessionId, mode });
+}
+
+export async function getSessionSimilarPreview(sessionId: string): Promise<SessionSimilarityResult[]> {
+  return invoke("get_session_similar_preview", { sessionId });
 }
 
 export interface RescanProgress {

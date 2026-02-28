@@ -77,6 +77,14 @@ impl SessionDatabase {
                 imported_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS session_features (
+                session_id TEXT PRIMARY KEY,
+                chunked_features BLOB,
+                has_features INTEGER NOT NULL DEFAULT 0,
+                midi_file_count INTEGER NOT NULL DEFAULT 0,
+                computed_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(timestamp DESC);
             -- Full-text search for notes
             CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
@@ -238,6 +246,7 @@ impl SessionDatabase {
 
         for id in deleted_ids {
             tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+            tx.execute("DELETE FROM session_features WHERE session_id = ?1", params![id])?;
             count += 1;
         }
 
@@ -267,6 +276,10 @@ impl SessionDatabase {
             "UPDATE sessions SET id = ?1, path = ?2, title = ?3 WHERE id = ?4",
             params![new_id, new_path, super::extract_title_from_folder_name(new_id), old_id],
         )?;
+        conn.execute(
+            "UPDATE session_features SET session_id = ?1 WHERE session_id = ?2",
+            params![new_id, old_id],
+        )?;
         Ok(())
     }
 
@@ -275,6 +288,10 @@ impl SessionDatabase {
         let conn = self.conn.lock();
         conn.execute(
             "DELETE FROM sessions WHERE id = ?1",
+            params![session_id],
+        )?;
+        conn.execute(
+            "DELETE FROM session_features WHERE session_id = ?1",
             params![session_id],
         )?;
         Ok(())
@@ -461,7 +478,87 @@ impl SessionDatabase {
         // Rebuild FTS index after content table is cleared
         conn.execute("INSERT INTO sessions_fts(sessions_fts) VALUES('rebuild')", [])?;
         conn.execute("DELETE FROM midi_imports", [])?;
+        conn.execute("DELETE FROM session_features", [])?;
         conn.execute_batch("VACUUM")?;
+        Ok(())
+    }
+
+    /// Get all session feature rows
+    pub fn get_all_session_features(&self) -> anyhow::Result<Vec<SessionFeatureRow>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT session_id, chunked_features, has_features, midi_file_count, computed_at FROM session_features"
+        )?;
+
+        let mut rows = Vec::new();
+        let mut result = stmt.query([])?;
+        while let Some(row) = result.next()? {
+            rows.push(SessionFeatureRow {
+                session_id: row.get(0)?,
+                chunked_features: row.get(1)?,
+                has_features: row.get(2)?,
+                midi_file_count: row.get(3)?,
+                computed_at: row.get(4)?,
+            });
+        }
+        Ok(rows)
+    }
+
+    /// Insert or replace a single session feature
+    pub fn upsert_session_feature(&self, feature: &SessionFeatureRow) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            r#"
+            INSERT OR REPLACE INTO session_features (
+                session_id, chunked_features, has_features, midi_file_count, computed_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5)
+            "#,
+            params![
+                feature.session_id,
+                feature.chunked_features,
+                feature.has_features,
+                feature.midi_file_count,
+                feature.computed_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Batch insert/replace session features in a single transaction
+    pub fn upsert_session_features_batch(&self, features: &[SessionFeatureRow]) -> anyhow::Result<()> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+
+        for f in features {
+            tx.execute(
+                r#"
+                INSERT OR REPLACE INTO session_features (
+                    session_id, chunked_features, has_features, midi_file_count, computed_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5)
+                "#,
+                params![
+                    f.session_id,
+                    f.chunked_features,
+                    f.has_features,
+                    f.midi_file_count,
+                    f.computed_at,
+                ],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Delete session features for given session IDs
+    pub fn delete_session_features_by_ids(&self, ids: &[&str]) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        for id in ids {
+            conn.execute(
+                "DELETE FROM session_features WHERE session_id = ?1",
+                params![id],
+            )?;
+        }
         Ok(())
     }
 }
@@ -510,6 +607,16 @@ pub struct UpdatedSessionData {
     pub notes: String,
     pub notes_modified_at: String,
     pub title: Option<String>,
+}
+
+/// Precomputed features for a recording session (similarity analysis)
+#[derive(Debug, Clone)]
+pub struct SessionFeatureRow {
+    pub session_id: String,
+    pub chunked_features: Option<Vec<u8>>,
+    pub has_features: bool,
+    pub midi_file_count: i32,
+    pub computed_at: String,
 }
 
 /// Imported MIDI file for similarity analysis

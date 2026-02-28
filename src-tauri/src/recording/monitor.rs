@@ -2533,6 +2533,16 @@ fn stop_recording(
     
     let _ = app_handle.emit("recording-stopped", serde_json::to_string(&metadata).unwrap_or_default());
     println!("[Sacho] Recording stopped, duration: {} sec", duration_secs);
+
+    // Compute similarity features for sessions with MIDI
+    if !metadata.midi_files.is_empty() {
+        let handle = app_handle.clone();
+        let sid = session_id.clone();
+        let spath = session_path.clone();
+        std::thread::spawn(move || {
+            crate::commands::compute_and_cache_session_features(&handle, &sid, &spath);
+        });
+    }
 }
 
 
