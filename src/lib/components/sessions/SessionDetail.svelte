@@ -220,17 +220,27 @@
 
     // Similar recordings preview
     let similarRecordings = $state<SessionSimilarityResult[]>([]);
+    let loadingSimilar = $state(false);
     let hasMidi = $derived(session.midi_files.length > 0);
 
     $effect(() => {
         if (hasMidi) {
+            loadingSimilar = true;
+            similarRecordings = [];
+            let cancelled = false;
+
             getSessionSimilarPreview(session.id).then(results => {
-                similarRecordings = results;
+                if (!cancelled) similarRecordings = results;
             }).catch(() => {
-                similarRecordings = [];
+                if (!cancelled) similarRecordings = [];
+            }).finally(() => {
+                if (!cancelled) loadingSimilar = false;
             });
+
+            return () => { cancelled = true; };
         } else {
             similarRecordings = [];
+            loadingSimilar = false;
         }
     });
 
@@ -821,9 +831,12 @@
         animationFrame = requestAnimationFrame(tick);
         featuresUnlisten = await listen('session-features-computed', (event) => {
             if (event.payload === session.id && hasMidi) {
+                loadingSimilar = true;
                 getSessionSimilarPreview(session.id).then(results => {
                     similarRecordings = results;
-                }).catch(() => {});
+                }).catch(() => {}).finally(() => {
+                    loadingSimilar = false;
+                });
             }
         });
     });
@@ -1176,23 +1189,33 @@
         </div>
 
         <div class="detail-content">
-            {#if hasMidi && similarRecordings.length > 0}
+            {#if hasMidi}
                 <div class="similar-section">
                     <h3 class="similar-title">Similar Recordings</h3>
                     <div class="similar-list">
-                        {#each similarRecordings as result (result.session_id)}
-                            <button
-                                class="similar-item"
-                                onclick={() => selectSession(result.session_id)}
-                                title={result.title || result.timestamp}
-                            >
-                                <span class="similar-name">
-                                    {result.title || formatTimestamp(result.timestamp)}
-                                </span>
-                                <span class="similar-score">
-                                    {Math.round(result.score * 100)}%
-                                </span>
-                            </button>
+                        {#each { length: 3 } as _, i}
+                            {#if similarRecordings[i]}
+                                <button
+                                    class="similar-item"
+                                    onclick={() => selectSession(similarRecordings[i].session_id)}
+                                    title={similarRecordings[i].title || similarRecordings[i].timestamp}
+                                >
+                                    <span class="similar-name">
+                                        {similarRecordings[i].title || formatTimestamp(similarRecordings[i].timestamp)}
+                                    </span>
+                                    <span class="similar-score">
+                                        {Math.round(similarRecordings[i].score * 100)}%
+                                    </span>
+                                </button>
+                            {:else}
+                                <div class="similar-item similar-placeholder">
+                                    {#if loadingSimilar}
+                                        <span class="similar-name placeholder-text">...</span>
+                                    {:else}
+                                        <span class="similar-name placeholder-text">--</span>
+                                    {/if}
+                                </div>
+                            {/if}
                         {/each}
                     </div>
                 </div>
@@ -1323,6 +1346,7 @@
         position: relative;
         width: 100%;
         max-width: 400px;
+        aspect-ratio: 16 / 9;
         margin: 0 auto 0.5rem;
         border-radius: 0.25rem;
         overflow: hidden;
@@ -1332,8 +1356,9 @@
 
     .video-container video {
         width: 100%;
+        height: 100%;
+        object-fit: contain;
         display: block;
-        min-height: 200px;
     }
 
     .video-switch {
@@ -1357,7 +1382,7 @@
         color: #6b6b6b;
     }
 
-    /* These overlays need their own dimensions since there's no video element behind them */
+    /* These overlays fill the fixed-size video container */
     .video-unsupported-overlay,
     .video-loading-overlay {
         display: flex;
@@ -1366,9 +1391,8 @@
         justify-content: center;
         gap: 0.5rem;
         color: #5a5a5a;
-        min-height: 200px;
         width: 100%;
-        aspect-ratio: 16 / 9;
+        height: 100%;
     }
 
     .video-unsupported-overlay {
@@ -2195,6 +2219,30 @@
         background: rgba(160, 128, 48, 0.08);
         border-color: rgba(160, 128, 48, 0.2);
         color: #3a3a3a;
+    }
+
+    .similar-placeholder {
+        cursor: default;
+    }
+
+    .similar-placeholder:hover {
+        background: rgba(255, 255, 255, 0.02);
+        border-color: rgba(255, 255, 255, 0.04);
+        color: #8a8a8a;
+    }
+
+    .placeholder-text {
+        color: #4a4a4a;
+    }
+
+    :global(body.light-mode) .similar-placeholder:hover {
+        background: rgba(0, 0, 0, 0.02);
+        border-color: rgba(0, 0, 0, 0.06);
+        color: #5a5a5a;
+    }
+
+    :global(body.light-mode) .placeholder-text {
+        color: #b0b0b0;
     }
 
     :global(body.light-mode) .similar-score {

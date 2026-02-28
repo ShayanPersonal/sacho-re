@@ -152,7 +152,7 @@ pub fn run() {
 
             // Initialize similarity caches and warm them in the background
             app.manage(commands::SimilarityCache::new());
-            app.manage(commands::RecordingSimilarityCache::new());
+            app.manage(Arc::new(commands::RecordingSimilarityCache::new()));
             let handle = app_handle.clone();
             std::thread::spawn(move || {
                 let db = handle.state::<session::SessionDatabase>();

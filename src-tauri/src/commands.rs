@@ -368,7 +368,7 @@ pub fn repair_session(
 pub fn delete_session(
     db: State<'_, SessionDatabase>,
     config: State<'_, RwLock<Config>>,
-    recording_cache: State<'_, RecordingSimilarityCache>,
+    recording_cache: State<'_, Arc<RecordingSimilarityCache>>,
     session_id: String,
 ) -> Result<(), String> {
     let config = config.read();
@@ -444,7 +444,7 @@ fn sanitize_title(title: &str) -> String {
 pub fn rename_session(
     db: State<'_, SessionDatabase>,
     config: State<'_, RwLock<Config>>,
-    recording_cache: State<'_, RecordingSimilarityCache>,
+    recording_cache: State<'_, Arc<RecordingSimilarityCache>>,
     session_id: String,
     new_title: String,
 ) -> Result<SessionSummary, String> {
@@ -1243,7 +1243,7 @@ pub fn sync_session_features(app: &tauri::AppHandle) -> Result<usize, String> {
 
     let db = app.state::<SessionDatabase>();
     let config = app.state::<RwLock<Config>>();
-    let recording_cache = app.state::<RecordingSimilarityCache>();
+    let recording_cache = app.state::<Arc<RecordingSimilarityCache>>();
     let storage_path = config.read().storage_path.clone();
 
     // Get all sessions with MIDI
@@ -1325,7 +1325,7 @@ pub fn compute_and_cache_session_features(app: &tauri::AppHandle, session_id: &s
     let t0 = Instant::now();
 
     let db = app.state::<SessionDatabase>();
-    let recording_cache = app.state::<RecordingSimilarityCache>();
+    let recording_cache = app.state::<Arc<RecordingSimilarityCache>>();
 
     if let Some(row) = compute_session_feature_row(session_id, session_path) {
         // Save to DB
@@ -1475,7 +1475,7 @@ pub struct SessionSimilarityResult {
 
 #[tauri::command]
 pub fn get_recording_similarity_files(
-    cache: State<'_, RecordingSimilarityCache>,
+    cache: State<'_, Arc<RecordingSimilarityCache>>,
 ) -> Vec<RecordingSimFile> {
     let guard = cache.inner.lock();
     let Some(data) = guard.as_ref() else { return Vec::new() };
@@ -1498,7 +1498,7 @@ pub fn get_recording_similarity_files(
 pub fn get_similar_sessions(
     session_id: String,
     mode: String,
-    cache: State<'_, RecordingSimilarityCache>,
+    cache: State<'_, Arc<RecordingSimilarityCache>>,
 ) -> Result<Vec<SessionSimilarityResult>, String> {
     use crate::similarity::scoring;
 
@@ -1532,36 +1532,40 @@ pub fn get_similar_sessions(
 }
 
 #[tauri::command]
-pub fn get_session_similar_preview(
+pub async fn get_session_similar_preview(
     session_id: String,
-    cache: State<'_, RecordingSimilarityCache>,
+    cache: State<'_, Arc<RecordingSimilarityCache>>,
 ) -> Result<Vec<SessionSimilarityResult>, String> {
-    use crate::similarity::scoring;
+    let cache_arc = cache.inner().clone();
 
-    let guard = cache.inner.lock();
-    let cache_data = match guard.as_ref() {
-        Some(data) => data,
-        None => return Ok(Vec::new()),
-    };
+    tokio::task::spawn_blocking(move || {
+        use crate::similarity::scoring;
 
-    let similar = scoring::find_most_similar_chunked(
-        &session_id, &cache_data.features, scoring::SimilarityMode::Melodic, 3, 0.05,
-    );
+        let guard = cache_arc.inner.lock();
+        let cache_data = match guard.as_ref() {
+            Some(data) => data,
+            None => return Ok(Vec::new()),
+        };
 
-    let results: Vec<SessionSimilarityResult> = similar.iter().enumerate().filter_map(|(i, result)| {
-        let meta = cache_data.metadata.get(&result.file_id)?;
-        Some(SessionSimilarityResult {
-            session_id: result.file_id.clone(),
-            title: meta.title.clone(),
-            timestamp: meta.timestamp.clone(),
-            duration_secs: meta.duration_secs,
-            score: result.score,
-            rank: (i + 1) as u32,
-            match_offset_secs: result.match_offset_secs,
-        })
-    }).collect();
+        let similar = scoring::find_most_similar_chunked(
+            &session_id, &cache_data.features, scoring::SimilarityMode::Melodic, 3, 0.05,
+        );
 
-    Ok(results)
+        let results: Vec<SessionSimilarityResult> = similar.iter().enumerate().filter_map(|(i, result)| {
+            let meta = cache_data.metadata.get(&result.file_id)?;
+            Some(SessionSimilarityResult {
+                session_id: result.file_id.clone(),
+                title: meta.title.clone(),
+                timestamp: meta.timestamp.clone(),
+                duration_secs: meta.duration_secs,
+                score: result.score,
+                rank: (i + 1) as u32,
+                match_offset_secs: result.match_offset_secs,
+            })
+        }).collect();
+
+        Ok(results)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1569,7 +1573,7 @@ pub async fn reset_cache(
     app: tauri::AppHandle,
     db: State<'_, SessionDatabase>,
     cache: State<'_, SimilarityCache>,
-    recording_cache: State<'_, RecordingSimilarityCache>,
+    recording_cache: State<'_, Arc<RecordingSimilarityCache>>,
 ) -> Result<usize, String> {
     *cache.inner.lock() = None;
     *recording_cache.inner.lock() = None;
