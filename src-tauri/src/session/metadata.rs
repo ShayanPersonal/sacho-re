@@ -48,6 +48,18 @@ pub struct SessionMetadata {
 
     /// Session title (extracted from folder name)
     pub title: Option<String>,
+
+    /// True if a .sacho_recording lock file exists in the session folder.
+    #[serde(default)]
+    pub recording_in_progress: bool,
+
+    /// ISO 8601 timestamp from the lock file (last heartbeat). Null if no lock.
+    #[serde(default)]
+    pub recording_lock_updated_at: Option<String>,
+
+    /// True if the lock file's hostname matches this machine. Null/false if no lock.
+    #[serde(default)]
+    pub recording_lock_is_local: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

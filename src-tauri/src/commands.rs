@@ -264,6 +264,21 @@ pub fn repair_session(
         return Err(format!("Session folder not found: {}", session_id));
     }
 
+    // Guard: block repair if a fresh remote recording lock exists
+    if let Some(lock) = crate::session::read_recording_lock(&session_path) {
+        let current_host = sysinfo::System::host_name().unwrap_or_default();
+        let is_local = lock.hostname == current_host;
+
+        if !is_local {
+            if let Ok(updated) = chrono::DateTime::parse_from_rfc3339(&lock.updated_at) {
+                let age = chrono::Utc::now() - updated.with_timezone(&chrono::Utc);
+                if age < chrono::Duration::hours(1) {
+                    return Err("Cannot repair: recording may be in progress on another device.".into());
+                }
+            }
+        }
+    }
+
     // Scan directory and repair files
     let entries = std::fs::read_dir(&session_path).map_err(|e| e.to_string())?;
 
@@ -339,6 +354,9 @@ pub fn repair_session(
     if let Err(e) = db.upsert_session(&metadata) {
         println!("[Sacho] Failed to update DB after repair: {}", e);
     }
+
+    // Remove stale lock file after successful repair
+    crate::session::remove_recording_lock(&session_path);
 
     println!("[Sacho] Repaired session {}: {} MIDI, {} audio, {} video files",
         session_id, metadata.midi_files.len(), metadata.audio_files.len(), metadata.video_files.len());

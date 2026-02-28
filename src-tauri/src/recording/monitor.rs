@@ -1193,6 +1193,8 @@ pub struct CaptureState {
     /// MIDI timestamp offset in microseconds (equals sync_preroll_duration)
     /// This is added to real-time MIDI timestamps to align with pre-roll content
     pub midi_timestamp_offset_us: u64,
+    /// Flag to stop the recording lock heartbeat thread
+    pub heartbeat_stop: Option<Arc<AtomicBool>>,
 }
 
 impl CaptureState {
@@ -1210,6 +1212,7 @@ impl CaptureState {
             audio_trigger_states: Vec::new(),
             pre_roll_secs,
             midi_timestamp_offset_us: 0,
+            heartbeat_stop: None,
         }
     }
     
@@ -1251,6 +1254,7 @@ impl Default for CaptureState {
             audio_trigger_states: Vec::new(),
             pre_roll_secs: 2,
             midi_timestamp_offset_us: 0,
+            heartbeat_stop: None,
         }
     }
 }
@@ -2162,7 +2166,24 @@ fn start_recording(
         capture_state.lock().is_starting = false;
         return;
     }
-    
+
+    // Create recording lock file
+    if let Err(e) = crate::session::create_recording_lock(&session_path) {
+        println!("[Sacho] Warning: Failed to create recording lock: {}", e);
+    }
+
+    // Spawn heartbeat thread to refresh lock every 60 seconds
+    let heartbeat_path = session_path.clone();
+    let heartbeat_stop = Arc::new(AtomicBool::new(false));
+    let heartbeat_flag = heartbeat_stop.clone();
+    std::thread::spawn(move || {
+        while !heartbeat_flag.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_secs(60));
+            if heartbeat_flag.load(Ordering::Relaxed) { break; }
+            crate::session::touch_recording_lock(&heartbeat_path);
+        }
+    });
+
     // Capture the instant BEFORE video starts - this is our sync reference point
     // The video pre-roll duration is relative to this instant
     let video_start_instant = Instant::now();
@@ -2313,6 +2334,7 @@ fn start_recording(
         state.is_starting = false;
         state.is_recording = true;
         state.recording_started_at = Some(Instant::now());
+        state.heartbeat_stop = Some(heartbeat_stop);
         
         println!("[Sacho] Recording started with {} pre-roll MIDI events, {} pre-roll audio samples (sync pre-roll: {:?})", 
             midi_preroll_count, audio_preroll_samples, sync_preroll_duration);
@@ -2358,27 +2380,32 @@ fn stop_recording(
         if !state.is_recording {
             return;
         }
-        
+
+        // Stop the heartbeat thread
+        if let Some(flag) = state.heartbeat_stop.take() {
+            flag.store(true, Ordering::Relaxed);
+        }
+
         let duration = state.start_time
             .map(|st| st.elapsed().as_secs_f64())
             .unwrap_or(0.0);
-        
+
         let path = state.session_path.take();
-        
+
         // Take MIDI writers out of the state
         let midi_ws: HashMap<String, MidiStreamWriter> = std::mem::take(&mut state.midi_writers);
-        
+
         // Take audio writers out of the state (replace with None)
         let audio_ws: Vec<Option<AudioStreamWriter>> = state.audio_writers.iter_mut()
             .map(|w| w.take())
             .collect();
-        
+
         state.is_recording = false;
         state.is_starting = false;
         state.start_time = None;
         state.recording_started_at = None;
         state.midi_timestamp_offset_us = 0;
-        
+
         (path, midi_ws, audio_ws, duration)
     };
     
@@ -2515,6 +2542,9 @@ fn stop_recording(
         video_files,
         notes: String::new(),
         title: None,
+        recording_in_progress: false,
+        recording_lock_updated_at: None,
+        recording_lock_is_local: false,
     };
     
     let db = app_handle.state::<SessionDatabase>();
@@ -2533,6 +2563,9 @@ fn stop_recording(
     
     let _ = app_handle.emit("recording-stopped", serde_json::to_string(&metadata).unwrap_or_default());
     println!("[Sacho] Recording stopped, duration: {} sec", duration_secs);
+
+    // Remove recording lock file (files are finalized, safe to remove)
+    crate::session::remove_recording_lock(&session_path);
 
     // Compute similarity features for sessions with MIDI
     if !metadata.midi_files.is_empty() {

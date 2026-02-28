@@ -194,6 +194,18 @@
         session.midi_files.some((f) => f.needs_repair),
     );
 
+    let lockIsStale = $derived.by(() => {
+        if (!session.recording_lock_updated_at) return false;
+        const lastHeartbeat = new Date(session.recording_lock_updated_at).getTime();
+        return Date.now() - lastHeartbeat > 60 * 60 * 1000;
+    });
+
+    let canRepair = $derived(
+        !session.recording_in_progress ||
+        session.recording_lock_is_local ||
+        lockIsStale
+    );
+
     async function handleRepairSession() {
         isRepairing = true;
         try {
@@ -984,17 +996,33 @@
                             d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"
                         />
                     </svg>
-                    <span class="interrupted-text"
-                        >This recording may have been interrupted. Click Repair
-                        to recover files.</span
-                    >
-                    <button
-                        class="repair-btn"
-                        onclick={handleRepairSession}
-                        disabled={isRepairing}
-                    >
-                        {isRepairing ? "Repairing..." : "Repair"}
-                    </button>
+                    {#if session.recording_in_progress && !session.recording_lock_is_local && !lockIsStale}
+                        <span class="interrupted-text"
+                            >A recording may still be in progress on another device.
+                            Do not repair until the recording is complete.</span
+                        >
+                    {:else}
+                        {#if session.recording_in_progress && session.recording_lock_is_local}
+                            <span class="interrupted-text"
+                                >This recording was interrupted. Click Repair to recover files.</span
+                            >
+                        {:else if session.recording_in_progress && lockIsStale}
+                            <span class="interrupted-text"
+                                >A recording on another device appears to have been interrupted.</span
+                            >
+                        {:else}
+                            <span class="interrupted-text"
+                                >This recording may have been interrupted. Click Repair to recover files.</span
+                            >
+                        {/if}
+                        <button
+                            class="repair-btn"
+                            onclick={handleRepairSession}
+                            disabled={isRepairing}
+                        >
+                            {isRepairing ? "Repairing..." : "Repair"}
+                        </button>
+                    {/if}
                 </div>
             {/if}
 

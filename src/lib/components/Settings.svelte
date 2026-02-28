@@ -471,7 +471,7 @@
                         <div class="format-field">
                             <div class="label-with-help">
                                 <label for="audio-format">
-                                    <span class="setting-label">Audio File Type</span>
+                                    <span class="setting-label">Audio Storage Format</span>
                                 </label>
                                 <span class="setting-label-with-help">
                                     <button
@@ -483,7 +483,7 @@
                                     </button>
                                     {#if showAudioFormatHelp}
                                         <div class="help-tooltip" use:positionTooltip>
-                                            Does not affect playback quality. FLAC uses less disk space.
+                                            .flac and .wav have the same playback quality. .flac uses less disk space.
                                         </div>
                                     {/if}
                                 </span>
@@ -513,7 +513,7 @@
                                     </button>
                                     {#if showVideoContainerHelp}
                                         <div class="help-tooltip" use:positionTooltip>
-                                            Does not affect video quality or disk usage. MP4 has wider compatibility with other programs.
+                                            Does not affect playback quality or disk usage. MP4 has wider compatibility with other programs.
                                         </div>
                                     {/if}
                                 </span>
@@ -598,7 +598,7 @@
                                             >24-bit (default)</option
                                         >
                                         <option value="float32" disabled
-                                            >32-bit float (use WAV)</option
+                                            >32-bit float (select .wav if you need this)</option
                                         >
                                     </select>
                                 {/if}

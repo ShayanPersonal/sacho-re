@@ -20,12 +20,10 @@
         disconnectedDeviceInfos,
         disconnectBannerDismissed,
     } from "$lib/stores/devices";
+    import { activeTab } from "$lib/stores/navigation";
 
     // Devices and Settings tabs are locked while recording
     let recordingLocked = $derived($isRecording || $isStopping);
-
-    type Tab = "sessions" | "similarity" | "devices" | "settings";
-    let activeTab: Tab = $state("sessions");
 
     // Reactive dark mode from settings (default is light mode)
     let isDarkMode = $derived($settings?.dark_mode ?? false);
@@ -50,8 +48,8 @@
     <nav class="tabs">
         <button
             class="tab"
-            class:active={activeTab === "sessions"}
-            onclick={() => (activeTab = "sessions")}
+            class:active={$activeTab === "sessions"}
+            onclick={() => ($activeTab = "sessions")}
         >
             <svg
                 class="tab-icon icon-recordings"
@@ -68,8 +66,8 @@
 
         <button
             class="tab"
-            class:active={activeTab === "similarity"}
-            onclick={() => (activeTab = "similarity")}
+            class:active={$activeTab === "similarity"}
+            onclick={() => ($activeTab = "similarity")}
         >
             <svg
                 class="tab-icon icon-visualize"
@@ -86,8 +84,8 @@
         </button>
         <button
             class="tab"
-            class:active={activeTab === "devices"}
-            onclick={() => (activeTab = "devices")}
+            class:active={$activeTab === "devices"}
+            onclick={() => ($activeTab = "devices")}
         >
             <svg
                 class="tab-icon icon-devices"
@@ -106,8 +104,8 @@
         </button>
         <button
             class="tab"
-            class:active={activeTab === "settings"}
-            onclick={() => (activeTab = "settings")}
+            class:active={$activeTab === "settings"}
+            onclick={() => ($activeTab = "settings")}
         >
             <svg
                 class="tab-icon icon-settings"
@@ -158,11 +156,11 @@
     {/if}
 
     <main class="content">
-        {#if activeTab === "sessions"}
+        {#if $activeTab === "sessions"}
             <SessionBrowser />
-        {:else if activeTab === "similarity"}
+        {:else if $activeTab === "similarity"}
             <SimilarityTab />
-        {:else if activeTab === "devices"}
+        {:else if $activeTab === "devices"}
             <div class="lockable-content">
                 <DevicePanel />
                 {#if recordingLocked}
@@ -190,7 +188,7 @@
                     </div>
                 {/if}
             </div>
-        {:else if activeTab === "settings"}
+        {:else if $activeTab === "settings"}
             <div class="lockable-content">
                 <Settings />
                 {#if recordingLocked}

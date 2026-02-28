@@ -337,6 +337,9 @@ export interface SessionMetadata {
   video_files: VideoFileInfo[];
   notes: string;
   title: string | null;
+  recording_in_progress: boolean;
+  recording_lock_updated_at: string | null;
+  recording_lock_is_local: boolean;
 }
 
 export interface AudioFileInfo {

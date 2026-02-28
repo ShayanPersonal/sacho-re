@@ -6,6 +6,59 @@ use std::path::Path;
 use std::io::{Read, Seek, SeekFrom};
 use chrono::{DateTime, Datelike, FixedOffset, Local, NaiveDate, NaiveDateTime, Utc, TimeZone};
 use gstreamer_pbutils;
+use serde::{Serialize, Deserialize};
+
+// ============================================================================
+// Recording lock file helpers
+// ============================================================================
+
+pub const LOCK_FILE_NAME: &str = ".sacho_recording";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordingLockInfo {
+    pub hostname: String,
+    pub pid: u32,
+    pub updated_at: String,
+}
+
+pub fn create_recording_lock(session_path: &Path) -> anyhow::Result<()> {
+    let lock = RecordingLockInfo {
+        hostname: sysinfo::System::host_name().unwrap_or_default(),
+        pid: std::process::id(),
+        updated_at: Utc::now().to_rfc3339(),
+    };
+    let json = serde_json::to_string_pretty(&lock)?;
+    std::fs::write(session_path.join(LOCK_FILE_NAME), json)?;
+    Ok(())
+}
+
+pub fn touch_recording_lock(session_path: &Path) {
+    let lock_path = session_path.join(LOCK_FILE_NAME);
+    if lock_path.exists() {
+        let lock = RecordingLockInfo {
+            hostname: sysinfo::System::host_name().unwrap_or_default(),
+            pid: std::process::id(),
+            updated_at: Utc::now().to_rfc3339(),
+        };
+        if let Ok(json) = serde_json::to_string_pretty(&lock) {
+            let _ = std::fs::write(&lock_path, json);
+        }
+    }
+}
+
+pub fn remove_recording_lock(session_path: &Path) {
+    let _ = std::fs::remove_file(session_path.join(LOCK_FILE_NAME));
+}
+
+pub fn has_recording_lock(session_path: &Path) -> bool {
+    session_path.join(LOCK_FILE_NAME).exists()
+}
+
+pub fn read_recording_lock(session_path: &Path) -> Option<RecordingLockInfo> {
+    let lock_path = session_path.join(LOCK_FILE_NAME);
+    let data = std::fs::read_to_string(&lock_path).ok()?;
+    serde_json::from_str(&data).ok()
+}
 
 // ============================================================================
 // Read-only header parsing functions
@@ -707,6 +760,10 @@ pub fn build_session_from_directory(session_path: &Path) -> anyhow::Result<Sessi
             continue;
         }
 
+        if fname == LOCK_FILE_NAME {
+            continue;
+        }
+
         if fname.ends_with(".mid") {
             // Extract device name: "midi_Device_Name.mid" → "Device Name"
             let sanitized = fname.trim_start_matches("midi_").trim_end_matches(".mid");
@@ -780,6 +837,15 @@ pub fn build_session_from_directory(session_path: &Path) -> anyhow::Result<Sessi
         Some(folder_name.clone())
     };
 
+    // Read recording lock info
+    let lock_info = read_recording_lock(session_path);
+    let recording_in_progress = lock_info.is_some();
+    let recording_lock_updated_at = lock_info.as_ref().map(|l| l.updated_at.clone());
+    let recording_lock_is_local = lock_info
+        .as_ref()
+        .map(|l| l.hostname == sysinfo::System::host_name().unwrap_or_default())
+        .unwrap_or(false);
+
     Ok(SessionMetadata {
         id: folder_name,
         timestamp,
@@ -790,5 +856,8 @@ pub fn build_session_from_directory(session_path: &Path) -> anyhow::Result<Sessi
         video_files,
         notes,
         title,
+        recording_in_progress,
+        recording_lock_updated_at,
+        recording_lock_is_local,
     })
 }

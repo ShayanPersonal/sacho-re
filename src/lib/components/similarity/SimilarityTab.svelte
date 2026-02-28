@@ -26,6 +26,8 @@
   import { settings } from '$lib/stores/settings';
   import { selectSession } from '$lib/stores/sessions';
   import MidiFileDetail from './MidiFileDetail.svelte';
+  import RecordingNodeDetail from './RecordingNodeDetail.svelte';
+  import type { SessionSimilarityResult } from '$lib/api';
 
   let isLightMode = $derived(!($settings?.dark_mode ?? false));
 
@@ -76,6 +78,14 @@
     matchOffsetSecs: number | null;
   }
   let inspectedResult = $state<InspectedFile | null>(null);
+
+  // Detail panel state (recording mode)
+  interface InspectedRecording {
+    recording: SessionSimilarityResult;
+    isCenter: boolean;
+  }
+  let inspectedRecording = $state<InspectedRecording | null>(null);
+
   let hoveredCenter = $state(false);
 
   // Search + virtual scroll for large file lists
@@ -224,6 +234,7 @@
   function handleSourceModeChange(mode: SimilaritySourceMode) {
     sourceMode.set(mode);
     inspectedResult = null;
+    inspectedRecording = null;
   }
 
   onMount(() => {
@@ -269,6 +280,7 @@
     const _ = $selectedFileId;
     const __ = $selectedRecordingId;
     inspectedResult = null;
+    inspectedRecording = null;
   });
 
   function animate() {
@@ -496,13 +508,24 @@
 
   function handleCanvasClick(e: MouseEvent) {
     if ($sourceMode === 'recordings') {
-      // In recording mode, clicking a satellite navigates to that session
       if (hoveredIndex !== null) {
-        const node = vizNodes[hoveredIndex];
-        selectRecording(node.id);
-      } else if (hoveredCenter && $selectedRecordingId) {
-        // Clicking center could open session detail
-        selectSession($selectedRecordingId);
+        const result = $similarSessions[hoveredIndex];
+        inspectedRecording = { recording: result, isCenter: false };
+      } else if (hoveredCenter && $selectedRecording) {
+        inspectedRecording = {
+          recording: {
+            session_id: $selectedRecording.session_id,
+            title: $selectedRecording.title,
+            timestamp: $selectedRecording.timestamp,
+            duration_secs: $selectedRecording.duration_secs,
+            score: 0,
+            rank: 0,
+            match_offset_secs: 0,
+          },
+          isCenter: true,
+        };
+      } else {
+        inspectedRecording = null;
       }
     } else {
       if (hoveredIndex !== null) {
@@ -511,7 +534,6 @@
       } else if (hoveredCenter && $selectedFile) {
         inspectedResult = { file: $selectedFile, score: null, rank: null, matchOffsetSecs: null };
       } else {
-        // Click on empty canvas background dismisses the panel
         inspectedResult = null;
       }
     }
@@ -713,7 +735,7 @@
     {/if}
   </div>
 
-  <div class="canvas-area" class:has-detail={inspectedResult !== null}>
+  <div class="canvas-area" class:has-detail={inspectedResult !== null || inspectedRecording !== null}>
     <div class="canvas-container" bind:this={canvasContainer}>
       <canvas
         bind:this={canvas}
@@ -758,6 +780,14 @@
       rank={inspectedResult.rank}
       matchOffsetSecs={inspectedResult.matchOffsetSecs}
       onClose={() => inspectedResult = null}
+    />
+  {/if}
+
+  {#if inspectedRecording}
+    <RecordingNodeDetail
+      recording={inspectedRecording.recording}
+      isCenter={inspectedRecording.isCenter}
+      onClose={() => inspectedRecording = null}
     />
   {/if}
 </div>
