@@ -384,23 +384,23 @@
     .ring {
         transform-box: fill-box;
         transform-origin: center;
-        animation: ring-expand 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.1s both;
+        animation: ring-expand 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.2s both;
     }
 
     @keyframes ring-expand {
-        0% { transform: scale(0.82); opacity: 0.4; }
+        0% { transform: scale(0.93); opacity: 0.7; }
         100% { transform: scale(1); opacity: 1; }
     }
 
     /* Ray wave — starts as ring expand is finishing */
-    .ray-0 { animation: ray-pump-0 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.3s, ray-pump-0-end 0.42s cubic-bezier(0.33, 1, 0.68, 1) 1.04s; }
-    .ray-1 { animation: ray-pump-1 0.38s cubic-bezier(0.33, 1, 0.68, 1) 0.4s; }
-    .ray-2 { animation: ray-pump-2 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.5s; }
-    .ray-3 { animation: ray-pump-3 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.58s; }
-    .ray-4 { animation: ray-pump-4 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.66s; }
-    .ray-5 { animation: ray-pump-5 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.74s; }
-    .ray-6 { animation: ray-pump-6 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.84s; }
-    .ray-7 { animation: ray-pump-7 0.38s cubic-bezier(0.33, 1, 0.68, 1) 0.94s; }
+    .ray-0 { animation: ray-pump-0 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.4s, ray-pump-0-end 0.42s cubic-bezier(0.33, 1, 0.68, 1) 1.14s; }
+    .ray-1 { animation: ray-pump-1 0.38s cubic-bezier(0.33, 1, 0.68, 1) 0.5s; }
+    .ray-2 { animation: ray-pump-2 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.6s; }
+    .ray-3 { animation: ray-pump-3 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.68s; }
+    .ray-4 { animation: ray-pump-4 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.76s; }
+    .ray-5 { animation: ray-pump-5 0.35s cubic-bezier(0.33, 1, 0.68, 1) 0.84s; }
+    .ray-6 { animation: ray-pump-6 0.42s cubic-bezier(0.33, 1, 0.68, 1) 0.94s; }
+    .ray-7 { animation: ray-pump-7 0.38s cubic-bezier(0.33, 1, 0.68, 1) 1.04s; }
 
     @keyframes ray-pump-0 { /* top */
         0%, 100% { transform: translate(0, 0); }
@@ -436,7 +436,7 @@
     }
     @keyframes ray-pump-7 { /* top-left */
         0%, 100% { transform: translate(0, 0); }
-        50% { transform: translate(-2.5px, -2.5px); }
+        50% { transform: translate(-3.5px, -3.5px); }
     }
 
     .about-title {
