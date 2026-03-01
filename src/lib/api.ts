@@ -470,6 +470,12 @@ export interface SessionSimilarityResult {
   score: number;
   rank: number;
   match_offset_secs: number;
+  mode: string;
+}
+
+export interface SessionSimilarPreview {
+  results: SessionSimilarityResult[];
+  min_note_count: number;
 }
 
 // ============================================================================
@@ -805,7 +811,7 @@ export async function getSimilarSessions(sessionId: string, mode: SimilarityMode
   return invoke("get_similar_sessions", { sessionId, mode });
 }
 
-export async function getSessionSimilarPreview(sessionId: string): Promise<SessionSimilarityResult[]> {
+export async function getSessionSimilarPreview(sessionId: string): Promise<SessionSimilarPreview> {
   return invoke("get_session_similar_preview", { sessionId });
 }
 

@@ -1471,6 +1471,13 @@ pub struct SessionSimilarityResult {
     pub score: f32,
     pub rank: u32,
     pub match_offset_secs: f32,
+    pub mode: String,
+}
+
+#[derive(Serialize)]
+pub struct SessionSimilarPreview {
+    pub results: Vec<SessionSimilarityResult>,
+    pub min_note_count: usize,
 }
 
 #[tauri::command]
@@ -1495,47 +1502,58 @@ pub fn get_recording_similarity_files(
 }
 
 #[tauri::command]
-pub fn get_similar_sessions(
+pub async fn get_similar_sessions(
     session_id: String,
     mode: String,
     cache: State<'_, Arc<RecordingSimilarityCache>>,
 ) -> Result<Vec<SessionSimilarityResult>, String> {
-    use crate::similarity::scoring;
+    let cache_arc = cache.inner().clone();
 
-    let sim_mode = match mode.as_str() {
-        "harmonic" => scoring::SimilarityMode::Harmonic,
-        _ => scoring::SimilarityMode::Melodic,
-    };
+    tokio::task::spawn_blocking(move || {
+        use crate::similarity::scoring;
 
-    let guard = cache.inner.lock();
-    let cache_data = match guard.as_ref() {
-        Some(data) => data,
-        None => return Ok(Vec::new()),
-    };
+        let sim_mode = match mode.as_str() {
+            "harmonic" => scoring::SimilarityMode::Harmonic,
+            _ => scoring::SimilarityMode::Melodic,
+        };
 
-    let similar = scoring::find_most_similar_chunked(&session_id, &cache_data.features, sim_mode, 12, 0.05);
+        let guard = cache_arc.inner.lock();
+        let cache_data = match guard.as_ref() {
+            Some(data) => data,
+            None => return Ok(Vec::new()),
+        };
 
-    let results: Vec<SessionSimilarityResult> = similar.iter().enumerate().filter_map(|(i, result)| {
-        let meta = cache_data.metadata.get(&result.file_id)?;
-        Some(SessionSimilarityResult {
-            session_id: result.file_id.clone(),
-            title: meta.title.clone(),
-            timestamp: meta.timestamp.clone(),
-            duration_secs: meta.duration_secs,
-            score: result.score,
-            rank: (i + 1) as u32,
-            match_offset_secs: result.match_offset_secs,
-        })
-    }).collect();
+        let mode_str = match sim_mode {
+            scoring::SimilarityMode::Harmonic => "harmonic",
+            scoring::SimilarityMode::Melodic => "melodic",
+        };
 
-    Ok(results)
+        let similar = scoring::find_most_similar_chunked(&session_id, &cache_data.features, sim_mode, 12, 0.05);
+
+        let results: Vec<SessionSimilarityResult> = similar.iter().enumerate().filter_map(|(i, result)| {
+            let meta = cache_data.metadata.get(&result.file_id)?;
+            Some(SessionSimilarityResult {
+                session_id: result.file_id.clone(),
+                title: meta.title.clone(),
+                timestamp: meta.timestamp.clone(),
+                duration_secs: meta.duration_secs,
+                score: result.score,
+                rank: (i + 1) as u32,
+                match_offset_secs: result.match_offset_secs,
+                mode: mode_str.to_string(),
+            })
+        }).collect();
+
+        Ok(results)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn get_session_similar_preview(
     session_id: String,
     cache: State<'_, Arc<RecordingSimilarityCache>>,
-) -> Result<Vec<SessionSimilarityResult>, String> {
+) -> Result<SessionSimilarPreview, String> {
+    use crate::similarity::features::MIN_NOTE_COUNT;
     let cache_arc = cache.inner().clone();
 
     tokio::task::spawn_blocking(move || {
@@ -1544,7 +1562,7 @@ pub async fn get_session_similar_preview(
         let guard = cache_arc.inner.lock();
         let cache_data = match guard.as_ref() {
             Some(data) => data,
-            None => return Ok(Vec::new()),
+            None => return Ok(SessionSimilarPreview { results: Vec::new(), min_note_count: MIN_NOTE_COUNT }),
         };
 
         let similar = scoring::find_most_similar_chunked(
@@ -1561,10 +1579,11 @@ pub async fn get_session_similar_preview(
                 score: result.score,
                 rank: (i + 1) as u32,
                 match_offset_secs: result.match_offset_secs,
+                mode: "melodic".to_string(),
             })
         }).collect();
 
-        Ok(results)
+        Ok(SessionSimilarPreview { results, min_note_count: MIN_NOTE_COUNT })
     }).await.map_err(|e| e.to_string())?
 }
 
@@ -1880,12 +1899,14 @@ fn rescan_sessions_blocking(app: &tauri::AppHandle) -> Result<usize, String> {
 // ============================================================================
 
 #[tauri::command]
-pub fn read_session_file(session_path: String, filename: String) -> Result<Vec<u8>, String> {
-    use std::path::Path;
-    use std::fs;
-    
-    let path = Path::new(&session_path).join(&filename);
-    fs::read(&path).map_err(|e| format!("Failed to read file {}: {}", filename, e))
+pub async fn read_session_file(session_path: String, filename: String) -> Result<Vec<u8>, String> {
+    tokio::task::spawn_blocking(move || {
+        use std::path::Path;
+        use std::fs;
+
+        let path = Path::new(&session_path).join(&filename);
+        fs::read(&path).map_err(|e| format!("Failed to read file {}: {}", filename, e))
+    }).await.map_err(|e| e.to_string())?
 }
 
 // ============================================================================
@@ -1928,18 +1949,20 @@ pub struct VideoFrameData {
 /// Check if a video file's codec is supported for playback
 /// This probes the actual codec from the file, not just the container
 #[tauri::command]
-pub fn check_video_codec(session_path: String, filename: String) -> Result<VideoCodecCheck, String> {
-    use std::path::Path;
-    use crate::video;
-    
-    let path = Path::new(&session_path).join(&filename);
-    let codec_info = video::probe_video_codec(&path).map_err(|e| e.to_string())?;
-    
-    Ok(VideoCodecCheck {
-        codec: codec_info.codec,
-        is_playable: codec_info.is_supported,
-        reason: codec_info.reason,
-    })
+pub async fn check_video_codec(session_path: String, filename: String) -> Result<VideoCodecCheck, String> {
+    tokio::task::spawn_blocking(move || {
+        use std::path::Path;
+        use crate::video;
+
+        let path = Path::new(&session_path).join(&filename);
+        let codec_info = video::probe_video_codec(&path).map_err(|e| e.to_string())?;
+
+        Ok(VideoCodecCheck {
+            codec: codec_info.codec,
+            is_playable: codec_info.is_supported,
+            reason: codec_info.reason,
+        })
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

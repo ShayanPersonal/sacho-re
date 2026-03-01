@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { MidiImportInfo } from '$lib/api';
   import { formatDuration, readSessionFile } from '$lib/api';
+  import { computeChunkSeekTime } from '$lib/midi-utils';
   import { revealItemInDir } from '@tauri-apps/plugin-opener';
   import { onMount, onDestroy, untrack } from 'svelte';
   import * as Tone from 'tone';
@@ -94,11 +95,8 @@
 
         duration = midiData.duration || 0;
 
-        // Seek to 0.3s before the first note at or after the chunk offset
-        const chunkStart = (matchOffsetSecs != null && matchOffsetSecs > 0 && matchOffsetSecs < duration)
-          ? matchOffsetSecs : 0;
-        const firstNote = midiNotes.find(n => n.time >= chunkStart);
-        const seekTo = firstNote ? Math.max(0, firstNote.time - 0.3) : chunkStart;
+        // Seek to just before the first note of the matching chunk
+        const seekTo = computeChunkSeekTime(matchOffsetSecs, duration, midiNotes);
         if (seekTo > 0) {
           currentTime = seekTo;
           lastMidiTime = seekTo;

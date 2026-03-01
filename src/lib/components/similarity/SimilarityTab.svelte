@@ -521,6 +521,7 @@
             score: 0,
             rank: 0,
             match_offset_secs: 0,
+            mode: 'melodic',
           },
           isCenter: true,
         };

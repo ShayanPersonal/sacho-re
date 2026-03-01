@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use super::melody::{self, MelodyNote};
 use super::midi_parser::{NoteEvent, TempoEvent, tick_to_seconds};
 
+/// Minimum number of notes required for similarity feature extraction.
+pub const MIN_NOTE_COUNT: usize = 4;
+
 /// Combined features for a MIDI file
 #[derive(Debug, Clone)]
 pub struct MidiFileFeatures {
@@ -33,9 +36,9 @@ pub struct HarmonicFeatures {
     pub pc_transitions: Vec<f32>,
 }
 
-/// Extract melodic features from skyline melody. Returns None if < 4 notes.
+/// Extract melodic features from skyline melody. Returns None if too few notes.
 pub fn extract_melodic(melody: &[MelodyNote]) -> Option<MelodicFeatures> {
-    if melody.len() < 4 {
+    if melody.len() < MIN_NOTE_COUNT {
         return None;
     }
 
@@ -96,9 +99,9 @@ pub fn extract_melodic(melody: &[MelodyNote]) -> Option<MelodicFeatures> {
     })
 }
 
-/// Extract harmonic features from all note events. Returns None if < 4 notes.
+/// Extract harmonic features from all note events. Returns None if too few notes.
 pub fn extract_harmonic(events: &[NoteEvent], ticks_per_beat: u16) -> Option<HarmonicFeatures> {
-    if events.len() < 4 {
+    if events.len() < MIN_NOTE_COUNT {
         return None;
     }
 

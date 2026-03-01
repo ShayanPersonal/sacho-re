@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { SessionSimilarityResult } from '$lib/api';
   import { formatDuration, readSessionFile, getSessionDetail } from '$lib/api';
+  import { computeChunkSeekTime } from '$lib/midi-utils';
   import { selectSession } from '$lib/stores/sessions';
   import { activeTab } from '$lib/stores/navigation';
   import { onMount, onDestroy, untrack } from 'svelte';
@@ -102,11 +103,10 @@
 
         duration = midiData.duration || 0;
 
-        // Seek to chunk offset if available
-        const chunkStart = (!isCenter && recording.match_offset_secs > 0 && recording.match_offset_secs < duration)
-          ? recording.match_offset_secs : 0;
-        const firstNote = midiNotes.find(n => n.time >= chunkStart);
-        const seekTo = firstNote ? Math.max(0, firstNote.time - 0.3) : chunkStart;
+        // Seek to just before the first note of the matching chunk
+        const seekTo = computeChunkSeekTime(
+          isCenter ? null : recording.match_offset_secs, duration, midiNotes,
+        );
         if (seekTo > 0) {
           currentTime = seekTo;
           lastMidiTime = seekTo;

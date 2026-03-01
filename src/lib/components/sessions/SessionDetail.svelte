@@ -1,5 +1,5 @@
 <script lang="ts">
-    import type { SessionMetadata, SessionSimilarityResult } from "$lib/api";
+    import type { SessionMetadata, SessionSimilarityResult, SessionSimilarPreview } from "$lib/api";
     import {
         formatDuration,
         formatDate,
@@ -13,14 +13,19 @@
         selectedSession,
         selectSession,
         renameCurrentSession,
+        pendingSeekOffset,
     } from "$lib/stores/sessions";
+    import { computeChunkSeekTime } from "$lib/midi-utils";
     import { revealItemInDir } from "@tauri-apps/plugin-opener";
     import { convertFileSrc } from "@tauri-apps/api/core";
     import { onMount, onDestroy } from "svelte";
+    import { get } from "svelte/store";
     import { listen, type UnlistenFn } from "@tauri-apps/api/event";
     import * as Tone from "tone";
     import { Midi } from "@tonejs/midi";
     import VideoPlayer from "./VideoPlayer.svelte";
+    import { activeTab } from "$lib/stores/navigation";
+    import { selectRecording } from "$lib/stores/similarity";
 
     interface Props {
         session: SessionMetadata;
@@ -45,6 +50,7 @@
     let videoUnsupportedCodec = $state<string | null>(null); // Detected unsupported codec
     let detectedCodec = $state<string | null>(null); // Actual codec detected by probing
     let isCheckingCodec = $state(false); // Loading state for codec check
+    let videoBuffering = $state(false); // True while video is waiting for data
 
     // Fallback time tracking when no video/audio is playing
     let playStartTime = 0;
@@ -221,16 +227,22 @@
     // Similar recordings preview
     let similarRecordings = $state<SessionSimilarityResult[]>([]);
     let loadingSimilar = $state(false);
+    let minNoteCount = $state(4); // default, updated from backend
     let hasMidi = $derived(session.midi_files.length > 0);
+    let hasEnoughNotes = $derived(
+        hasMidi && session.midi_files.some(f => f.event_count >= minNoteCount)
+    );
 
     $effect(() => {
-        if (hasMidi) {
+        if (hasEnoughNotes) {
             loadingSimilar = true;
             similarRecordings = [];
             let cancelled = false;
 
-            getSessionSimilarPreview(session.id).then(results => {
-                if (!cancelled) similarRecordings = results;
+            getSessionSimilarPreview(session.id).then(preview => {
+                if (cancelled) return;
+                similarRecordings = preview.results;
+                minNoteCount = preview.min_note_count;
             }).catch(() => {
                 if (!cancelled) similarRecordings = [];
             }).finally(() => {
@@ -484,33 +496,28 @@
         // Reset all playback state
         pause();
         isPlaying = false;
-        currentTime = 0;
         videoIndex = 0;
         audioIndex = 0;
         midiIndex = 0;
-        lastMidiTime = 0;
         videoError = null;
         detectedCodec = null;
         useCustomPlayer = false; // Try native player first for new session
+
+        // Apply pending seek offset immediately so state is correct before new elements mount
+        const roughOffset = get(pendingSeekOffset) ?? 0;
+        videoBuffering = roughOffset > 0 && session.video_files.length > 0;
+        currentTime = roughOffset;
+        lastMidiTime = roughOffset;
         playStartTime = 0;
-        playStartOffset = 0;
+        playStartOffset = roughOffset;
 
         // Reset per-track volumes
         audioVolumes = new Array(session.audio_files.length).fill(0);
         // Disconnect previous audio routing (new elements will reconnect via $effect)
         connectedAudioElement = null;
 
-        // Clean up MIDI state from previous session
-        if (synth) {
-            synth.dispose();
-            synth = null;
-        }
-        midiData = null;
-        midiNotes = [];
-
-        // Reset media elements to beginning
-        if (videoElement) videoElement.currentTime = 0;
-        if (audioElement) audioElement.currentTime = 0;
+        // MIDI state is cleaned up by the MIDI load effect (which re-runs when session changes).
+        // Don't dispose synth here — Tone.js disposal is synchronous and can block the UI.
     });
 
     // Load MIDI when current MIDI file changes (handles index changes within a session)
@@ -541,21 +548,19 @@
                 if (cancelled) return;
 
                 console.log("[MIDI] File size:", midiBytes.length, "bytes");
-                console.log(
-                    "[MIDI] First 20 bytes:",
-                    Array.from(midiBytes.slice(0, 20)),
-                );
 
-                midiData = new Midi(midiBytes);
+                const parsed = new Midi(midiBytes);
+                if (cancelled) return;
+
                 console.log(
                     "[MIDI] Parsed - tracks:",
-                    midiData.tracks.length,
+                    parsed.tracks.length,
                     "duration:",
-                    midiData.duration,
+                    parsed.duration,
                 );
 
                 // Create synth - use a more piano-like sound
-                synth = new Tone.PolySynth(Tone.Synth, {
+                const newSynth = new Tone.PolySynth(Tone.Synth, {
                     oscillator: {
                         type: "fmsine",
                         modulationType: "sine",
@@ -569,18 +574,22 @@
                         release: 1.2,
                     },
                 }).toDestination();
-                synth.volume.value = -8;
+                newSynth.volume.value = -8;
+
+                // If cancelled while synth was being created, dispose immediately
+                if (cancelled) {
+                    newSynth.dispose();
+                    return;
+                }
+
+                // Commit to component state only after all heavy work is done
+                midiData = parsed;
+                synth = newSynth;
 
                 // Extract notes
-                if (midiData.tracks.length > 0) {
-                    midiNotes = midiData.tracks
+                if (parsed.tracks.length > 0) {
+                    midiNotes = parsed.tracks
                         .flatMap((track) => {
-                            console.log(
-                                "[MIDI] Track notes:",
-                                track.notes.length,
-                                "name:",
-                                track.name,
-                            );
                             return track.notes.map((note) => ({
                                 time: note.time,
                                 note: note.name,
@@ -589,16 +598,19 @@
                             }));
                         })
                         .sort((a, b) => a.time - b.time);
-                    console.log(
-                        "[MIDI] Total notes extracted:",
-                        midiNotes.length,
-                    );
-                    if (midiNotes.length > 0) {
-                        console.log("[MIDI] First note:", midiNotes[0]);
-                        console.log(
-                            "[MIDI] Last note:",
-                            midiNotes[midiNotes.length - 1],
-                        );
+                }
+
+                // Fine-tune seek position to just before the first note of the chunk
+                const offset = get(pendingSeekOffset);
+                if (offset != null) {
+                    pendingSeekOffset.set(null);
+                    const seekTo = computeChunkSeekTime(offset, parsed.duration || 0, midiNotes);
+                    if (seekTo !== currentTime) {
+                        currentTime = seekTo;
+                        lastMidiTime = seekTo;
+                        playStartOffset = seekTo;
+                        if (videoElement) videoElement.currentTime = seekTo;
+                        if (audioElement) audioElement.currentTime = seekTo;
                     }
                 }
             } catch (e) {
@@ -832,8 +844,9 @@
         featuresUnlisten = await listen('session-features-computed', (event) => {
             if (event.payload === session.id && hasMidi) {
                 loadingSimilar = true;
-                getSessionSimilarPreview(session.id).then(results => {
-                    similarRecordings = results;
+                getSessionSimilarPreview(session.id).then(preview => {
+                    similarRecordings = preview.results;
+                    minNoteCount = preview.min_note_count;
                 }).catch(() => {}).finally(() => {
                     loadingSimilar = false;
                 });
@@ -924,7 +937,13 @@
                                 src={videoSrc}
                                 onended={handleEnded}
                                 onerror={handleVideoError}
-                                onloadeddata={resetVideoError}
+                                onloadedmetadata={(e) => {
+                                    if (currentTime > 0) e.currentTarget.currentTime = currentTime;
+                                }}
+                                onloadeddata={() => { resetVideoError(); videoBuffering = false; }}
+                                onwaiting={() => videoBuffering = true}
+                                oncanplay={() => videoBuffering = false}
+                                onseeked={() => videoBuffering = false}
                                 muted={audioMuted}
                                 playsinline
                                 preload="metadata"
@@ -939,6 +958,10 @@
                                 <span class="error-hint"
                                     >Use an external player for this video</span
                                 >
+                            </div>
+                        {:else if videoBuffering}
+                            <div class="video-buffering-overlay">
+                                <span class="buffering-text">Buffering...</span>
                             </div>
                         {/if}
                     {/if}
@@ -1127,6 +1150,9 @@
                                 bind:this={audioElement}
                                 src={audioSrc}
                                 onended={handleEnded}
+                                onloadedmetadata={(e) => {
+                                    if (currentTime > 0) e.currentTarget.currentTime = currentTime;
+                                }}
                                 muted={audioMuted}
                                 crossorigin="anonymous"
                                 preload="metadata"
@@ -1174,30 +1200,22 @@
                     </div>
                 {/if}
             </div>
-
-            <!-- Notes Input -->
-            <div class="notes-section">
-                <textarea
-                    class="notes-input"
-                    placeholder="Notes..."
-                    value={notesValue}
-                    oninput={handleNotesChange}
-                    onblur={handleNotesBlur}
-                    rows="3"
-                ></textarea>
-            </div>
         </div>
 
-        <div class="detail-content">
-            {#if hasMidi}
-                <div class="similar-section">
-                    <h3 class="similar-title">Similar Recordings</h3>
+        <div class="detail-sidebar">
+            <div class="similar-section">
+                <h3 class="similar-title">Similar Recordings</h3>
+                {#if !hasMidi}
+                    <p class="similar-hint">No MIDI tracks.</p>
+                {:else if !hasEnoughNotes}
+                    <p class="similar-hint">Not enough MIDI data.</p>
+                {:else}
                     <div class="similar-list">
                         {#each { length: 3 } as _, i}
                             {#if similarRecordings[i]}
                                 <button
                                     class="similar-item"
-                                    onclick={() => selectSession(similarRecordings[i].session_id)}
+                                    onclick={() => { pendingSeekOffset.set(similarRecordings[i].match_offset_secs); selectSession(similarRecordings[i].session_id); }}
                                     title={similarRecordings[i].title || similarRecordings[i].timestamp}
                                 >
                                     <span class="similar-name">
@@ -1218,8 +1236,27 @@
                             {/if}
                         {/each}
                     </div>
-                </div>
-            {/if}
+                    <button
+                        class="similar-visualizer-btn"
+                        onclick={() => { selectRecording(session.id); $activeTab = 'similarity'; }}
+                    >
+                        View more &rarr;
+                    </button>
+                {/if}
+            </div>
+
+            <!-- Notes Input -->
+            <hr class="sidebar-divider" />
+            <div class="notes-section">
+                <textarea
+                    class="notes-input"
+                    placeholder="Notes..."
+                    value={notesValue}
+                    oninput={handleNotesChange}
+                    onblur={handleNotesBlur}
+                    rows="3"
+                ></textarea>
+            </div>
         </div>
     </div>
 
@@ -1258,10 +1295,12 @@
     .detail-scrollable {
         flex: 1;
         overflow-y: auto;
-        min-height: 0; /* Allow scrolling when content overflows */
+        min-height: 0;
         display: flex;
-        flex-direction: column;
+        flex-direction: row;
+        flex-wrap: wrap;
         gap: 1rem;
+        align-items: flex-start;
     }
 
     .detail-header {
@@ -1339,15 +1378,15 @@
         border: 1px solid rgba(255, 255, 255, 0.06);
         border-radius: 0.25rem;
         padding: 1rem;
-        flex-shrink: 0;
+        flex: 1 1 24rem;
+        min-width: 0;
     }
 
     .video-container {
         position: relative;
         width: 100%;
-        max-width: 400px;
         aspect-ratio: 16 / 9;
-        margin: 0 auto 0.5rem;
+        margin-bottom: 0.5rem;
         border-radius: 0.25rem;
         overflow: hidden;
         background: #0c0c0b;
@@ -1403,6 +1442,24 @@
         background: #0c0c0b;
     }
 
+    .video-buffering-overlay {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        padding: 0.375rem 0;
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
+        text-align: center;
+        pointer-events: none;
+    }
+
+    .buffering-text {
+        font-size: 0.6875rem;
+        color: rgba(255, 255, 255, 0.5);
+        letter-spacing: 0.03em;
+        animation: pulse 1.5s ease-in-out infinite;
+    }
+
     .loading-text {
         font-size: 0.8125rem;
         color: #6b6b6b;
@@ -1445,8 +1502,7 @@
 
     .no-video {
         width: 100%;
-        max-width: 400px;
-        margin: 0 auto 1rem;
+        margin-bottom: 1rem;
         aspect-ratio: 16/9;
         background: rgba(0, 0, 0, 0.5);
         border-radius: 0.25rem;
@@ -1531,13 +1587,6 @@
         display: flex;
         flex-direction: column;
         gap: 0.5rem;
-    }
-
-    /* Notes Section */
-    .notes-section {
-        margin-top: 1rem;
-        padding-top: 1rem;
-        border-top: 1px solid rgba(255, 255, 255, 0.06);
     }
 
     .notes-input {
@@ -1750,8 +1799,10 @@
         color: #fff;
     }
 
-    /* Content */
-    .detail-content {
+    /* Sidebar */
+    .detail-sidebar {
+        flex: 1 1 12rem;
+        min-width: 10rem;
         display: flex;
         flex-direction: column;
         gap: 1rem;
@@ -1882,6 +1933,14 @@
         color: #6a6a6a;
     }
 
+    :global(body.light-mode) .video-buffering-overlay {
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.15));
+    }
+
+    :global(body.light-mode) .buffering-text {
+        color: rgba(0, 0, 0, 0.45);
+    }
+
     :global(body.light-mode) .error-icon {
         opacity: 0.5;
     }
@@ -2010,10 +2069,6 @@
     :global(body.light-mode) .switch-btn.video-switch:hover {
         background: rgba(255, 255, 255, 0.95);
         color: #1a1a1a;
-    }
-
-    :global(body.light-mode) .notes-section {
-        border-top-color: rgba(0, 0, 0, 0.08);
     }
 
     :global(body.light-mode) .notes-input {
@@ -2161,6 +2216,12 @@
         margin: 0 0 0.5rem;
     }
 
+    .similar-hint {
+        font-size: 0.75rem;
+        color: #4a4a4a;
+        margin: 0;
+    }
+
     .similar-list {
         display: flex;
         flex-direction: column;
@@ -2205,8 +2266,36 @@
         margin-left: 0.5rem;
     }
 
+    .similar-visualizer-btn {
+        display: inline-block;
+        margin-top: 0.375rem;
+        padding: 0;
+        background: none;
+        border: none;
+        color: #6a6a6a;
+        font-family: inherit;
+        font-size: 0.6875rem;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        transition: color 0.15s ease;
+    }
+
+    .similar-visualizer-btn:hover {
+        color: #c9a962;
+    }
+
+    .sidebar-divider {
+        border: none;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        margin: 0.75rem 0 0;
+    }
+
     :global(body.light-mode) .similar-title {
         color: #7a7a7a;
+    }
+
+    :global(body.light-mode) .similar-hint {
+        color: #9a9a9a;
     }
 
     :global(body.light-mode) .similar-item {
@@ -2247,5 +2336,17 @@
 
     :global(body.light-mode) .similar-score {
         color: #8a6a20;
+    }
+
+    :global(body.light-mode) .similar-visualizer-btn {
+        color: #9a9a9a;
+    }
+
+    :global(body.light-mode) .similar-visualizer-btn:hover {
+        color: #8a6a20;
+    }
+
+    :global(body.light-mode) .sidebar-divider {
+        border-top-color: rgba(0, 0, 0, 0.08);
     }
 </style>

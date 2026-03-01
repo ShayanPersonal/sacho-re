@@ -25,6 +25,9 @@ export const sessionFilter = writable<SessionFilter>({
 // Loading state
 export const isLoading = writable(false);
 
+// Pending seek offset — set before navigating to a session, consumed after MIDI loads
+export const pendingSeekOffset = writable<number | null>(null);
+
 // Scan progress (non-null only during first-time scan of new sessions)
 export const scanProgress = writable<RescanProgress | null>(null);
 
@@ -129,14 +132,19 @@ export function addNewSession(metadata: SessionMetadata) {
   selectSession(metadata.id);
 }
 
+let selectSessionSeq = 0;
+
 export async function selectSession(sessionId: string | null) {
+  const seq = ++selectSessionSeq;
   selectedSessionId.set(sessionId);
-  
+
   if (sessionId) {
     try {
       const detail = await getSessionDetail(sessionId);
+      if (seq !== selectSessionSeq) return; // stale
       selectedSession.set(detail);
     } catch (error) {
+      if (seq !== selectSessionSeq) return;
       console.error('Failed to fetch session detail:', error);
       selectedSession.set(null);
     }

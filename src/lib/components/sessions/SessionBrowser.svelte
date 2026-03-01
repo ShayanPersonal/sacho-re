@@ -120,6 +120,41 @@
     }
   }
 
+  // Scroll the session list to reveal the selected session (e.g. after clicking "Similar")
+  let prevSelectedId = '';
+  $effect(() => {
+    const id = $selectedSessionId;
+    if (!id || id === prevSelectedId) return;
+    prevSelectedId = id;
+
+    // Ensure the group containing this session is expanded
+    for (const [group, groupSessions] of Object.entries($groupedSessions)) {
+      if (groupSessions.some(s => s.id === id)) {
+        if (!expandedGroups.has(group)) {
+          expandedGroups = new Set([...expandedGroups, group]);
+        }
+        break;
+      }
+    }
+
+    // Wait a tick for flatItems to recompute after group expansion, then scroll
+    requestAnimationFrame(() => {
+      const idx = flatItems.findIndex(
+        item => item.type === 'session' && item.session.id === id
+      );
+      if (idx >= 0 && listEl) {
+        const targetTop = idx * ITEM_HEIGHT;
+        const targetBottom = targetTop + ITEM_HEIGHT;
+        const viewTop = listEl.scrollTop;
+        const viewBottom = viewTop + listHeight;
+        // Only scroll if the item isn't already visible
+        if (targetTop < viewTop || targetBottom > viewBottom) {
+          listEl.scrollTop = targetTop - listHeight / 2 + ITEM_HEIGHT / 2;
+        }
+      }
+    });
+  });
+
   function formatSessionLabel(timestamp: string): string {
     const date = new Date(timestamp);
     const now = new Date();
