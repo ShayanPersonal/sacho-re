@@ -1046,6 +1046,7 @@ pub fn get_midi_imports(
 pub fn get_similar_files(
     file_id: String,
     mode: String,
+    top_n: Option<usize>,
     cache: State<'_, SimilarityCache>,
 ) -> Result<Vec<SimilarityResult>, String> {
     use crate::similarity::scoring;
@@ -1065,7 +1066,8 @@ pub fn get_similar_files(
     };
 
     let target_found = cache_data.features.iter().any(|(id, _)| id == &file_id);
-    let similar = scoring::find_most_similar_chunked(&file_id, &cache_data.features, sim_mode, 12, 0.05);
+    let n = top_n.unwrap_or(20).min(30);
+    let similar = scoring::find_most_similar_chunked(&file_id, &cache_data.features, sim_mode, n, 0.05);
     let t2 = Instant::now();
 
     if similar.is_empty() {
@@ -1507,6 +1509,7 @@ pub fn get_recording_similarity_files(
 pub async fn get_similar_sessions(
     session_id: String,
     mode: String,
+    top_n: Option<usize>,
     cache: State<'_, Arc<RecordingSimilarityCache>>,
 ) -> Result<Vec<SessionSimilarityResult>, String> {
     let cache_arc = cache.inner().clone();
@@ -1530,7 +1533,8 @@ pub async fn get_similar_sessions(
             scoring::SimilarityMode::Melodic => "melodic",
         };
 
-        let similar = scoring::find_most_similar_chunked(&session_id, &cache_data.features, sim_mode, 12, 0.05);
+        let n = top_n.unwrap_or(20).min(30);
+        let similar = scoring::find_most_similar_chunked(&session_id, &cache_data.features, sim_mode, n, 0.05);
 
         let results: Vec<SessionSimilarityResult> = similar.iter().enumerate().filter_map(|(i, result)| {
             let meta = cache_data.metadata.get(&result.file_id)?;

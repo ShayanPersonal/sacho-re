@@ -25,7 +25,7 @@
     import { Midi } from "@tonejs/midi";
     import VideoPlayer from "./VideoPlayer.svelte";
     import { activeTab } from "$lib/stores/navigation";
-    import { selectRecording } from "$lib/stores/similarity";
+    import { selectRecording, sourceMode } from "$lib/stores/similarity";
 
     interface Props {
         session: SessionMetadata;
@@ -1238,7 +1238,7 @@
                     </div>
                     <button
                         class="similar-visualizer-btn"
-                        onclick={() => { selectRecording(session.id); $activeTab = 'similarity'; }}
+                        onclick={() => { $sourceMode = 'recordings'; selectRecording(session.id); $activeTab = 'similarity'; }}
                     >
                         View more &rarr;
                     </button>

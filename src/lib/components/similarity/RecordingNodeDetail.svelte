@@ -308,7 +308,7 @@
 
   <div class="action-section">
     <button class="goto-btn" onclick={goToSession}>
-      Go to Session
+      View recording &rarr;
     </button>
   </div>
 </div>
@@ -538,23 +538,20 @@
   }
 
   .goto-btn {
-    width: 100%;
-    padding: 0.5rem 0.75rem;
-    background: transparent;
-    border: 1px solid rgba(201, 169, 98, 0.3);
-    border-radius: 0.25rem;
-    color: #c9a962;
+    display: inline-block;
+    padding: 0;
+    background: none;
+    border: none;
+    color: #6a6a6a;
     font-family: inherit;
-    font-size: 0.75rem;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
+    font-size: 0.6875rem;
+    letter-spacing: 0.02em;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: color 0.15s ease;
   }
 
   .goto-btn:hover {
-    background: rgba(201, 169, 98, 0.1);
-    border-color: rgba(201, 169, 98, 0.4);
+    color: #c9a962;
   }
 
   /* Light mode */
@@ -651,11 +648,10 @@
   }
 
   :global(body.light-mode) .goto-btn {
-    border-color: rgba(160, 128, 48, 0.4);
-    color: #8a6a20;
+    color: #9a9a9a;
   }
 
   :global(body.light-mode) .goto-btn:hover {
-    background: rgba(160, 128, 48, 0.1);
+    color: #8a6a20;
   }
 </style>

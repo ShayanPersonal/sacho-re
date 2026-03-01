@@ -17,6 +17,7 @@ export const similarFiles = writable<SimilarityResult[]>([]);
 export const similarityMode = writable<SimilarityMode>("melodic");
 export const isImporting = writable(false);
 export const isComputing = writable(false);
+export const resultCount = writable(20);
 
 export interface ImportProgress {
   current: number;
@@ -72,7 +73,8 @@ export async function selectFile(id: string) {
   try {
     let mode: SimilarityMode = "melodic";
     similarityMode.subscribe(m => mode = m)();
-    const results = await getSimilarFiles(id, mode);
+    const n = get(resultCount);
+    const results = await getSimilarFiles(id, mode, n);
     similarFiles.set(results);
     // Fetch durations for visible nodes (center + satellites)
     const selected = get(importedFiles).find(f => f.id === id);
@@ -91,12 +93,14 @@ export async function switchMode(mode: SimilarityMode) {
 
   const currentSourceMode = get(sourceMode);
 
+  const n = get(resultCount);
+
   if (currentSourceMode === "recordings") {
     const currentId = get(selectedRecordingId);
     if (currentId) {
       isComputing.set(true);
       try {
-        const results = await getSimilarSessions(currentId, mode);
+        const results = await getSimilarSessions(currentId, mode, n);
         similarSessions.set(results);
       } catch (error) {
         console.error('Failed to get similar sessions:', error);
@@ -109,7 +113,7 @@ export async function switchMode(mode: SimilarityMode) {
     if (currentId) {
       isComputing.set(true);
       try {
-        const results = await getSimilarFiles(currentId, mode);
+        const results = await getSimilarFiles(currentId, mode, n);
         similarFiles.set(results);
         const selected = get(importedFiles).find(f => f.id === currentId);
         const allVisible = [...results.map(r => r.file), ...(selected ? [selected] : [])];
@@ -188,7 +192,8 @@ export async function selectRecording(sessionId: string) {
   try {
     let mode: SimilarityMode = "melodic";
     similarityMode.subscribe(m => mode = m)();
-    const results = await getSimilarSessions(sessionId, mode);
+    const n = get(resultCount);
+    const results = await getSimilarSessions(sessionId, mode, n);
     similarSessions.set(results);
   } catch (error) {
     console.error('Failed to get similar sessions:', error);

@@ -20,6 +20,7 @@
     similarSessions,
     selectedRecording,
     selectRecording,
+    resultCount,
   } from '$lib/stores/similarity';
   import type { SimilarityMode, SimilaritySourceMode } from '$lib/api';
   import { formatDuration } from '$lib/api';
@@ -63,6 +64,16 @@
       x: cx + Math.cos(currentAngle) * currentR,
       y: cy + Math.sin(currentAngle) * currentR,
     };
+  }
+
+  const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5)); // ≈ 2.3999 rad (137.5°)
+
+  /** Compute final angle & distance for node at index i out of n total */
+  function nodeLayout(i: number, n: number, maxR: number): { angle: number; dist: number } {
+    const angle = i * GOLDEN_ANGLE - Math.PI / 2;
+    const maxUsableR = maxR * (0.35 + 0.50 * Math.min(n / 30, 1));
+    const dist = Math.sqrt((i + 1) / (n + 1)) * maxUsableR;
+    return { angle, dist };
   }
 
   // Hover state
@@ -302,17 +313,20 @@
     }
   }
 
-  // Score to color: gold (high) -> muted (low)
+  // Score to color: cool steel-blue (low) → warm gold (high)
   function scoreColor(score: number): string {
+    const t = score * score; // push low scores further into cool tones
     if (isLightMode) {
-      const r = Math.round(140 + score * 40);
-      const g = Math.round(100 + score * 50);
-      const b = Math.round(30 + score * 10);
+      // Low: steel blue (100,115,140) → High: rich gold (170,135,35)
+      const r = Math.round(100 + t * 70);
+      const g = Math.round(115 + t * 20);
+      const b = Math.round(140 - t * 105);
       return `rgb(${r}, ${g}, ${b})`;
     }
-    const r = Math.round(120 + score * 100);
-    const g = Math.round(100 + score * 80);
-    const b = Math.round(50 + score * 50);
+    // Low: cool blue-grey (80,100,135) → High: bright gold (210,175,65)
+    const r = Math.round(80 + t * 130);
+    const g = Math.round(100 + t * 75);
+    const b = Math.round(135 - t * 70);
     return `rgb(${r}, ${g}, ${b})`;
   }
 
@@ -402,8 +416,7 @@
     // Draw satellite nodes
     for (let i = 0; i < n; i++) {
       const node = vizNodes[i];
-      const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
-      const dist = Math.min((node.rank / (n + 1)) * maxR, maxR * 0.75);
+      const { angle, dist } = nodeLayout(i, n, maxR);
       const delay = (i / n) * STAGGER;
       const pos = goldenSpiralPos(cx, cy, angle, dist, progress, delay);
 
@@ -486,8 +499,7 @@
     let found: number | null = null;
     for (let i = 0; i < n; i++) {
       const node = vizNodes[i];
-      const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
-      const dist = Math.min((node.rank / (n + 1)) * maxR, maxR * 0.75);
+      const { angle, dist } = nodeLayout(i, n, maxR);
       const delay = (i / n) * STAGGER;
       const pos = goldenSpiralPos(cx, cy, angle, dist, animationProgress, delay);
       const dx = mx - pos.x;
@@ -567,23 +579,21 @@
 
 <div class="similarity-tab">
   <div class="sidebar">
-    <div class="sidebar-header">
-      <h2>Similarity</h2>
-    </div>
-
     <div class="sidebar-actions-top">
-      <!-- Source mode toggle -->
-      <div class="source-toggle">
-        <button
-          class="source-btn"
-          class:active={$sourceMode === 'recordings'}
-          onclick={() => handleSourceModeChange('recordings')}
-        >Recordings</button>
-        <button
-          class="source-btn"
-          class:active={$sourceMode === 'import'}
-          onclick={() => handleSourceModeChange('import')}
-        >Import</button>
+      <div class="toggle-group">
+        <span class="toggle-label">Source</span>
+        <div class="source-toggle">
+          <button
+            class="source-btn"
+            class:active={$sourceMode === 'recordings'}
+            onclick={() => handleSourceModeChange('recordings')}
+          >Recordings</button>
+          <button
+            class="source-btn"
+            class:active={$sourceMode === 'import'}
+            onclick={() => handleSourceModeChange('import')}
+          >Imported</button>
+        </div>
       </div>
 
       {#if $sourceMode === 'import'}
@@ -615,17 +625,20 @@
         </div>
       {/if}
 
-      <div class="mode-toggle">
-        <button
-          class="mode-btn"
-          class:active={$similarityMode === 'melodic'}
-          onclick={() => switchMode('melodic')}
-        >Melodic</button>
-        <button
-          class="mode-btn"
-          class:active={$similarityMode === 'harmonic'}
-          onclick={() => switchMode('harmonic')}
-        >Harmonic</button>
+      <div class="toggle-group">
+        <span class="toggle-label">Algorithm</span>
+        <div class="mode-toggle">
+          <button
+            class="mode-btn"
+            class:active={$similarityMode === 'melodic'}
+            onclick={() => switchMode('melodic')}
+          >Melodic</button>
+          <button
+            class="mode-btn"
+            class:active={$similarityMode === 'harmonic'}
+            onclick={() => switchMode('harmonic')}
+          >Harmonic</button>
+        </div>
       </div>
     </div>
 
@@ -755,6 +768,28 @@
         onmouseleave={handleCanvasLeave}
       ></canvas>
 
+      <div class="result-count-control">
+        <label for="result-count">Results</label>
+        <input
+          id="result-count"
+          type="number"
+          min="1"
+          max="30"
+          value={$resultCount}
+          onchange={(e) => {
+            const v = Math.max(1, Math.min(30, parseInt((e.target as HTMLInputElement).value) || 20));
+            resultCount.set(v);
+            (e.target as HTMLInputElement).value = String(v);
+            // Re-fetch with new count
+            if ($sourceMode === 'recordings' && $selectedRecordingId) {
+              selectRecording($selectedRecordingId);
+            } else if ($sourceMode === 'import' && $selectedFileId) {
+              selectFile($selectedFileId);
+            }
+          }}
+        />
+      </div>
+
       {#if hoveredIndex !== null && vizNodes[hoveredIndex]}
         {@const node = vizNodes[hoveredIndex]}
         <div
@@ -819,23 +854,26 @@
     overflow: hidden;
   }
 
-  .sidebar-header {
-    padding: 0.875rem 1rem 0.5rem;
-  }
-
-  .sidebar-header h2 {
-    font-family: "Roboto", -apple-system, BlinkMacSystemFont, sans-serif;
-    font-size: 1.125rem;
-    font-weight: 500;
-    color: #e8e6e3;
-    letter-spacing: 0.02em;
-  }
-
   .sidebar-actions-top {
-    padding: 0 0.75rem 0.75rem;
+    padding: 0.75rem 0.75rem 0.75rem;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+  }
+
+  .toggle-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .toggle-label {
+    font-size: 0.5625rem;
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
+    color: #4a4a4a;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding-left: 0.125rem;
   }
 
   .source-toggle {
@@ -1117,6 +1155,59 @@
     font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
   }
 
+  /* ---- RESULT COUNT ---- */
+  .result-count-control {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    z-index: 5;
+    opacity: 0.4;
+    transition: opacity 0.2s ease;
+  }
+
+  .result-count-control:hover,
+  .result-count-control:focus-within {
+    opacity: 1;
+  }
+
+  .result-count-control label {
+    font-size: 0.625rem;
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
+    color: #6a6a6a;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    user-select: none;
+  }
+
+  .result-count-control input {
+    width: 36px;
+    padding: 0.1875rem 0.25rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.1875rem;
+    color: #8a8a8a;
+    font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
+    font-size: 0.6875rem;
+    text-align: center;
+    outline: none;
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+
+  .result-count-control input::-webkit-inner-spin-button,
+  .result-count-control input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .result-count-control input:focus {
+    border-color: rgba(201, 169, 98, 0.4);
+    color: #c9a962;
+  }
+
   /* ---- CANVAS ---- */
   .canvas-area {
     flex: 1;
@@ -1203,8 +1294,8 @@
     border-color: rgba(0, 0, 0, 0.1);
   }
 
-  :global(body.light-mode) .sidebar-header h2 {
-    color: #2a2a2a;
+  :global(body.light-mode) .toggle-label {
+    color: #8a8a8a;
   }
 
   :global(body.light-mode) .source-toggle {
@@ -1335,6 +1426,21 @@
 
   :global(body.light-mode) .sidebar-footer {
     border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global(body.light-mode) .result-count-control label {
+    color: #8a8a8a;
+  }
+
+  :global(body.light-mode) .result-count-control input {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.1);
+    color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .result-count-control input:focus {
+    border-color: rgba(160, 128, 48, 0.5);
+    color: #8a6a20;
   }
 
   :global(body.light-mode) .canvas-container {

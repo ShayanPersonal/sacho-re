@@ -263,18 +263,8 @@
 
 <div class="settings">
     <div class="settings-header">
-        <h2>Settings</h2>
-        <button class="about-btn" onclick={() => (showAbout = true)} title="About Sacho">
-            <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-            >
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 16v-4M12 8h.01" />
-            </svg>
-            About
+        <button class="about-link" onclick={() => (showAbout = true)}>
+            About Sacho &rarr;
         </button>
         <div class="header-right">
             {#if $saveStatus === "saving" || $saveStatus === "saved"}
@@ -448,7 +438,7 @@
                     <label for="storage-path">
                         <span class="setting-label">Recording Location</span>
                         <span class="setting-description"
-                            >Where to save and load recorded sessions</span
+                            >Where to load and save recordings</span
                         >
                     </label>
                     <div class="path-input">
@@ -463,8 +453,7 @@
                         >
                     </div>
                     <p class="setting-recommendation">
-                        Tip: You can sync this folder to cloud storage and
-                        open it on other instances of this app.
+                        Tip: You can sync this folder to your cloud storage and open it in other instances of the app.
                     </p>
                 </div>
                 <div class="setting-row">
@@ -484,7 +473,7 @@
                                     </button>
                                     {#if showAudioFormatHelp}
                                         <div class="help-tooltip" use:positionTooltip>
-                                            .flac and .wav give the same playback quality. .flac uses less disk space.
+                                            .flac and .wav have the same playback quality. .flac uses less disk space.
                                         </div>
                                     {/if}
                                 </span>
@@ -514,7 +503,7 @@
                                     </button>
                                     {#if showVideoContainerHelp}
                                         <div class="help-tooltip" use:positionTooltip>
-                                            Does not affect playback quality or disk usage. MP4 has wider compatibility with other programs.
+                                            Does not affect playback quality or file size. MP4 has wider compatibility with other programs.
                                         </div>
                                     {/if}
                                 </span>
@@ -681,16 +670,6 @@
                     <label class="checkbox-row">
                         <input
                             type="checkbox"
-                            bind:checked={localSettings.dark_mode}
-                            onchange={autoSave}
-                        />
-                        <span class="setting-label">Dark color scheme</span>
-                    </label>
-                </div>
-                <div class="setting-row">
-                    <label class="checkbox-row">
-                        <input
-                            type="checkbox"
                             checked={isAutostartEnabled()}
                             disabled={allUsersToggling}
                             onchange={handleAutostartToggle}
@@ -732,17 +711,18 @@
                         </span>
                     </div>
                     <p class="setting-recommendation">
-                        Ensures the application continues to run if the computer restarts (such as for system updates). You may have to
-                        log back in if your computer has a login screen.
+                        Helps ensure the application continues to run if the computer restarts (such as for system updates). Depending on your computer settings, you may have to log back into your computer first.
                     </p>
-                    <!--
-                    <button
-                        class="debug-crash-btn"
-                        onclick={() => invoke("simulate_crash")}
-                    >
-                        Simulate Crash (dev)
-                    </button>
-                    -->
+                </div>
+                <div class="setting-row">
+                    <label class="checkbox-row">
+                        <input
+                            type="checkbox"
+                            bind:checked={localSettings.dark_mode}
+                            onchange={autoSave}
+                        />
+                        <span class="setting-label">Dark color scheme</span>
+                    </label>
                 </div>
             </section>
             <section class="settings-section">
@@ -1030,16 +1010,8 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
-        position: relative;
     }
 
-    .settings-header h2 {
-        font-family: "Roboto", -apple-system, BlinkMacSystemFont, sans-serif;
-        font-size: 1.125rem;
-        font-weight: 500;
-        color: #e8e6e3;
-        letter-spacing: 0.02em;
-    }
 
     .save-status {
         display: flex;
@@ -1628,10 +1600,6 @@
     }
 
     /* Light mode overrides */
-    :global(body.light-mode) .settings-header h2 {
-        color: #2a2a2a;
-    }
-
     :global(body.light-mode) .section-header {
         border-bottom-color: rgba(0, 0, 0, 0.08);
     }
@@ -1758,46 +1726,29 @@
         color: #8a8a8a;
     }
 
-    /* About button */
-    .about-btn {
-        position: absolute;
-        left: 50%;
-        transform: translateX(-50%);
-        display: flex;
-        align-items: center;
-        gap: 0.4rem;
-        padding: 0.375rem 0.75rem;
-        background: transparent;
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 0.25rem;
-        color: #6b6b6b;
+    .about-link {
+        display: inline-block;
+        padding: 0;
+        background: none;
+        border: none;
+        color: #4a4a4a;
         font-family: inherit;
-        font-size: 0.75rem;
-        font-weight: 500;
-        letter-spacing: 0.03em;
+        font-size: 0.6875rem;
+        letter-spacing: 0.02em;
         cursor: pointer;
-        white-space: nowrap;
-        transition: all 0.2s ease;
+        transition: color 0.15s ease;
     }
 
-    .about-btn svg {
-        width: 14px;
-        height: 14px;
+    .about-link:hover {
+        color: #c9a962;
     }
 
-    .about-btn:hover {
-        color: #a8a8a8;
-        border-color: rgba(255, 255, 255, 0.1);
+    :global(body.light-mode) .about-link {
+        color: #9a9a9a;
     }
 
-    :global(body.light-mode) .about-btn {
-        border-color: rgba(0, 0, 0, 0.12);
-        color: #5a5a5a;
-    }
-
-    :global(body.light-mode) .about-btn:hover {
-        color: #3a3a3a;
-        border-color: rgba(0, 0, 0, 0.2);
+    :global(body.light-mode) .about-link:hover {
+        color: #8a6a20;
     }
 
 </style>

@@ -211,7 +211,6 @@
 
 <div class="device-panel">
     <div class="panel-header">
-        <h2>Devices</h2>
         <div class="header-actions">
             {#if $deviceSaveStatus === "saving" || $deviceSaveStatus === "saved" || $deviceSaveStatus === "error"}
                 <div
@@ -256,9 +255,6 @@
                     {/if}
                 </div>
             {/if}
-            <button class="action-btn" onclick={refreshDevices}>
-                Refresh
-            </button>
         </div>
     </div>
 
@@ -268,6 +264,9 @@
             placeholder="Filter devices..."
             bind:value={filterQuery}
         />
+        <button class="action-btn" onclick={refreshDevices}>
+            Refresh
+        </button>
     </div>
 
     <div class="device-sections">
@@ -702,13 +701,6 @@
         align-items: center;
     }
 
-    .panel-header h2 {
-        font-family: "Roboto", -apple-system, BlinkMacSystemFont, sans-serif;
-        font-size: 1.125rem;
-        font-weight: 500;
-        color: #e8e6e3;
-        letter-spacing: 0.02em;
-    }
 
     .header-actions {
         display: flex;
@@ -795,9 +787,16 @@
         border-color: rgba(255, 255, 255, 0.1);
     }
 
-    .search-bar input {
-        width: 100%;
+    .search-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
         max-width: 400px;
+    }
+
+    .search-bar input {
+        flex: 1;
+        min-width: 0;
         padding: 0.5rem 0.75rem;
         background: rgba(0, 0, 0, 0.25);
         border: 1px solid rgba(255, 255, 255, 0.06);
@@ -1346,10 +1345,6 @@
     }
 
     /* Light mode overrides */
-    :global(body.light-mode) .panel-header h2 {
-        color: #2a2a2a;
-    }
-
     :global(body.light-mode) .action-btn {
         border-color: rgba(0, 0, 0, 0.12);
         color: #5a5a5a;

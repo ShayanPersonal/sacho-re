@@ -796,8 +796,8 @@ export async function getMidiImports(): Promise<MidiImportInfo[]> {
   return invoke("get_midi_imports");
 }
 
-export async function getSimilarFiles(fileId: string, mode: SimilarityMode): Promise<SimilarityResult[]> {
-  return invoke("get_similar_files", { fileId, mode });
+export async function getSimilarFiles(fileId: string, mode: SimilarityMode, topN?: number): Promise<SimilarityResult[]> {
+  return invoke("get_similar_files", { fileId, mode, topN });
 }
 
 export async function clearMidiImports(): Promise<void> {
@@ -808,8 +808,8 @@ export async function getRecordingSimilarityFiles(): Promise<RecordingSimFile[]>
   return invoke("get_recording_similarity_files");
 }
 
-export async function getSimilarSessions(sessionId: string, mode: SimilarityMode): Promise<SessionSimilarityResult[]> {
-  return invoke("get_similar_sessions", { sessionId, mode });
+export async function getSimilarSessions(sessionId: string, mode: SimilarityMode, topN?: number): Promise<SessionSimilarityResult[]> {
+  return invoke("get_similar_sessions", { sessionId, mode, topN });
 }
 
 export async function getSessionSimilarPreview(sessionId: string): Promise<SessionSimilarPreview> {
