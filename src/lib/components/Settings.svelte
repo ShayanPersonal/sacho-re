@@ -1157,7 +1157,7 @@
     .format-fields {
         display: flex;
         flex-wrap: wrap;
-        gap: 1.5rem 4rem;
+        gap: 1.5rem 10rem;
         margin-left: 0rem;
     }
 
