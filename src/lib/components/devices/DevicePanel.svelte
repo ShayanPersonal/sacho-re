@@ -210,54 +210,6 @@
 </script>
 
 <div class="device-panel">
-    <div class="panel-header">
-        <div class="header-actions">
-            {#if $deviceSaveStatus === "saving" || $deviceSaveStatus === "saved" || $deviceSaveStatus === "error"}
-                <div
-                    class="save-status"
-                    class:saving={$deviceSaveStatus === "saving"}
-                    class:saved={$deviceSaveStatus === "saved"}
-                    class:error={$deviceSaveStatus === "error"}
-                >
-                    {#if $deviceSaveStatus === "saving"}
-                        <svg
-                            class="icon spinner"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                        >
-                            <circle
-                                cx="12"
-                                cy="12"
-                                r="10"
-                                stroke-opacity="0.25"
-                            />
-                            <path
-                                d="M12 2a10 10 0 0 1 10 10"
-                                stroke-linecap="round"
-                            />
-                        </svg>
-                        Saving...
-                    {:else if $deviceSaveStatus === "saved"}
-                        <svg
-                            class="icon check"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2.5"
-                        >
-                            <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                        Saved
-                    {:else if $deviceSaveStatus === "error"}
-                        Save failed
-                    {/if}
-                </div>
-            {/if}
-        </div>
-    </div>
-
     <div class="search-bar">
         <input
             type="text"
@@ -267,6 +219,49 @@
         <button class="action-btn" onclick={refreshDevices}>
             Refresh
         </button>
+        {#if $deviceSaveStatus === "saving" || $deviceSaveStatus === "saved" || $deviceSaveStatus === "error"}
+            <div
+                class="save-status"
+                class:saving={$deviceSaveStatus === "saving"}
+                class:saved={$deviceSaveStatus === "saved"}
+                class:error={$deviceSaveStatus === "error"}
+            >
+                {#if $deviceSaveStatus === "saving"}
+                    <svg
+                        class="icon spinner"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                    >
+                        <circle
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke-opacity="0.25"
+                        />
+                        <path
+                            d="M12 2a10 10 0 0 1 10 10"
+                            stroke-linecap="round"
+                        />
+                    </svg>
+                    Saving...
+                {:else if $deviceSaveStatus === "saved"}
+                    <svg
+                        class="icon check"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.5"
+                    >
+                        <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    Saved
+                {:else if $deviceSaveStatus === "error"}
+                    Save failed
+                {/if}
+            </div>
+        {/if}
     </div>
 
     <div class="device-sections">
@@ -695,19 +690,6 @@
         gap: 1rem;
     }
 
-    .panel-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-
-    .header-actions {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-
     .save-status {
         display: flex;
         align-items: center;
@@ -791,12 +773,12 @@
         display: flex;
         align-items: center;
         gap: 0.5rem;
-        max-width: 400px;
+        flex-wrap: nowrap;
     }
 
     .search-bar input {
-        flex: 1;
-        min-width: 0;
+        width: 180px;
+        flex-shrink: 0;
         padding: 0.5rem 0.75rem;
         background: rgba(0, 0, 0, 0.25);
         border: 1px solid rgba(255, 255, 255, 0.06);

@@ -266,46 +266,55 @@
         <button class="about-link" onclick={() => (showAbout = true)}>
             About Sacho &rarr;
         </button>
-        <div class="header-right">
-            {#if $saveStatus === "saving" || $saveStatus === "saved"}
-                <div
-                    class="save-status"
-                    class:saving={$saveStatus === "saving"}
-                    class:saved={$saveStatus === "saved"}
+        <div
+            class="save-status"
+            class:saving={$saveStatus === "saving"}
+            class:saved={$saveStatus === "saved"}
+            class:visible={$saveStatus === "saving" || $saveStatus === "saved"}
+        >
+            {#if $saveStatus === "saving"}
+                <svg
+                    class="icon spinner"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
                 >
-                    {#if $saveStatus === "saving"}
-                        <svg
-                            class="icon spinner"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                        >
-                            <circle
-                                cx="12"
-                                cy="12"
-                                r="10"
-                                stroke-opacity="0.25"
-                            />
-                            <path
-                                d="M12 2a10 10 0 0 1 10 10"
-                                stroke-linecap="round"
-                            />
-                        </svg>
-                        Saving...
-                    {:else if $saveStatus === "saved"}
-                        <svg
-                            class="icon check"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2.5"
-                        >
-                            <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                        Saved
-                    {/if}
-                </div>
+                    <circle
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke-opacity="0.25"
+                    />
+                    <path
+                        d="M12 2a10 10 0 0 1 10 10"
+                        stroke-linecap="round"
+                    />
+                </svg>
+                Saving...
+            {:else if $saveStatus === "saved"}
+                <svg
+                    class="icon check"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                >
+                    <polyline points="20 6 9 17 4 12" />
+                </svg>
+                Saved
+            {:else}
+                <!-- Invisible placeholder to reserve space -->
+                <svg
+                    class="icon"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                >
+                    <polyline points="20 6 9 17 4 12" />
+                </svg>
+                Saved
             {/if}
         </div>
     </div>
@@ -1008,8 +1017,8 @@
 
     .settings-header {
         display: flex;
-        justify-content: space-between;
         align-items: center;
+        gap: 0.75rem;
     }
 
 
@@ -1023,6 +1032,11 @@
         font-weight: 400;
         letter-spacing: 0.02em;
         transition: all 0.2s ease;
+        opacity: 0;
+    }
+
+    .save-status.visible {
+        opacity: 1;
     }
 
     .save-status .icon {
@@ -1043,14 +1057,6 @@
     .save-status.saved {
         background: rgba(201, 169, 98, 0.15);
         color: #c9a962;
-        animation: fadeOut 2s ease forwards;
-        animation-delay: 1s;
-    }
-
-    .header-right {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
     }
 
     .section-header {
@@ -1138,17 +1144,16 @@
     }
 
     .format-fields {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 5.5rem;
-        width: fit-content;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1.5rem 5.5rem;
     }
 
     .format-field {
         display: flex;
         flex-direction: column;
         gap: 0.25rem;
-        min-width: 215px;
+        min-width: 160px;
     }
 
     .inline-checkbox {
