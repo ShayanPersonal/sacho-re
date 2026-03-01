@@ -432,6 +432,7 @@ export interface SessionFilter {
   has_midi?: boolean;
   has_video?: boolean;
   has_notes?: boolean;
+  has_title?: boolean;
   limit?: number;
   offset?: number;
 }

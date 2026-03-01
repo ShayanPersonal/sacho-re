@@ -137,6 +137,7 @@ pub struct SessionFilterParams {
     pub has_midi: Option<bool>,
     pub has_video: Option<bool>,
     pub has_notes: Option<bool>,
+    pub has_title: Option<bool>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }
@@ -152,6 +153,7 @@ pub fn get_sessions(
         has_midi: filter.has_midi,
         has_video: filter.has_video,
         has_notes: filter.has_notes,
+        has_title: filter.has_title,
         limit: filter.limit,
         offset: filter.offset,
         ..Default::default()

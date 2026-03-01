@@ -330,7 +330,11 @@ impl SessionDatabase {
         if filter.has_notes == Some(true) {
             sql.push_str(" AND s.notes IS NOT NULL AND s.notes != ''");
         }
-        
+
+        if filter.has_title == Some(true) {
+            sql.push_str(" AND s.title IS NOT NULL AND s.title != ''");
+        }
+
         sql.push_str(" ORDER BY s.timestamp DESC");
         
         if let Some(limit) = filter.limit {
@@ -571,6 +575,7 @@ pub struct SessionFilter {
     pub has_midi: Option<bool>,
     pub has_video: Option<bool>,
     pub has_notes: Option<bool>,
+    pub has_title: Option<bool>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }

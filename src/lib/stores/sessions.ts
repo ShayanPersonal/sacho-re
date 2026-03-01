@@ -20,6 +20,7 @@ export const sessionFilter = writable<SessionFilter>({
   has_midi: undefined,
   has_video: undefined,
   has_notes: undefined,
+  has_title: undefined,
 });
 
 // Loading state

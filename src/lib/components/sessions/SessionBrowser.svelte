@@ -82,6 +82,7 @@
     if ($sessionFilter.has_midi) count++;
     if ($sessionFilter.has_video) count++;
     if ($sessionFilter.has_notes) count++;
+    if ($sessionFilter.has_title) count++;
     return count;
   });
   
@@ -208,8 +209,17 @@
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <div class="filter-menu" onclick={(e) => e.stopPropagation()}>
           <label class="filter-option">
-            <input 
-              type="checkbox" 
+            <input
+              type="checkbox"
+              checked={$sessionFilter.has_title === true}
+              onchange={() => updateFilter({ has_title: $sessionFilter.has_title ? undefined : true })}
+            />
+            <span class="filter-icon">✏️</span>
+            <span class="filter-label">Has Title</span>
+          </label>
+          <label class="filter-option">
+            <input
+              type="checkbox"
               checked={$sessionFilter.has_notes === true}
               onchange={() => updateFilter({ has_notes: $sessionFilter.has_notes ? undefined : true })}
             />
