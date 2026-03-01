@@ -495,9 +495,7 @@
     }
 
     :global(body.light-mode .version-badge) {
-        color: #5a5a5a;
-        background: rgba(0, 0, 0, 0.05);
-        border-color: rgba(0, 0, 0, 0.1);
+        color: #aaaaaa;
     }
 
     :global(body.light-mode .about-description) {

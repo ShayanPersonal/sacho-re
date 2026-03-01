@@ -123,21 +123,15 @@
 
                 <div class="about-description">
                     <p>The Songwriter's Notebook&trade;</p>
+                    <span class="version-badge">Version {appVersion}</span>
                 </div>
 
                 <div class="about-features">
                     <div class="feature">
                         <span class="feature-icon icon-red">
-                            <svg viewBox="0 0 24 24" fill="currentColor">
-                                <circle cx="12" cy="12" r="3" />
-                                <circle
-                                    cx="12"
-                                    cy="12"
-                                    r="9"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.5"
-                                />
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <circle cx="12" cy="12" r="10" />
+                                <circle cx="12" cy="12" r="3" fill="currentColor" />
                             </svg>
                         </span>
                         <span class="feature-label">Auto-Capture</span>
@@ -183,7 +177,7 @@
                                 <path d="M12 5.96A7 7 0 0 1 12 18.04A7 7 0 0 1 12 5.96Z" fill="currentColor" opacity="0.25" stroke="none" />
                             </svg>
                         </span>
-                        <span class="feature-label">Similarity Search</span>
+                        <span class="feature-label">Find Similar</span>
                         <span class="feature-desc"
                             >Quickly locate files with similar melodies and
                             harmonies - put your old recordings to use.</span
@@ -274,8 +268,6 @@
                         >Reset Settings</button>
                     </div>
                 </div>
-
-                <span class="version-badge">Version {appVersion}</span>
             </div>
 
         </div>
@@ -484,8 +476,12 @@
         color: #6b6b6b;
         line-height: 1.7;
         max-width: 360px;
-        margin: 0;
+        margin-top: -0.75rem;
         white-space: pre-line;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.125rem;
     }
 
     .about-features {
@@ -514,9 +510,9 @@
         flex-shrink: 0;
     }
 
-    .icon-red { color: #9e6060; }
-    .icon-blue { color: #607a9e; }
-    .icon-green { color: #609e6e; }
+    .icon-red { color: #7a5555; }
+    .icon-blue { color: #55697a; }
+    .icon-green { color: #557a5e; }
 
     .feature-icon svg {
         width: 100%;
@@ -648,9 +644,9 @@
         background: rgba(0, 0, 0, 0.03);
     }
 
-    :global(body.light-mode) .icon-red { color: #8a4a4a; }
-    :global(body.light-mode) .icon-blue { color: #4a6a8a; }
-    :global(body.light-mode) .icon-green { color: #4a7a52; }
+    :global(body.light-mode) .icon-red { color: #9a7a7a; }
+    :global(body.light-mode) .icon-blue { color: #7a8a9a; }
+    :global(body.light-mode) .icon-green { color: #7a9a80; }
 
     :global(body.light-mode) .feature-label {
         color: #3a3a3a;

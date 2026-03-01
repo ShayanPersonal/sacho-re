@@ -1262,7 +1262,7 @@
 
     <div class="detail-actions">
         <button class="action-btn" onclick={openFolder}>
-            <span>📂</span> Open Folder
+            <span>📂</span> View Folder
         </button>
         <div class="more-menu-container">
             <button
