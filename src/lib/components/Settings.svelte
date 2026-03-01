@@ -482,7 +482,7 @@
                                     </button>
                                     {#if showAudioFormatHelp}
                                         <div class="help-tooltip" use:positionTooltip>
-                                            .flac and .wav have the same playback quality. .flac uses less disk space.
+                                            .flac and .wav give the same playback quality. .flac uses less disk space.
                                         </div>
                                     {/if}
                                 </span>
@@ -550,7 +550,7 @@
                             <div class="advanced-audio-field">
                                 <div class="advanced-field-header">
                                     <span class="setting-label"
-                                        >Bit Depth ({localSettings.audio_format.toUpperCase()})</span
+                                        >Audio Bit Depth ({localSettings.audio_format.toUpperCase()})</span
                                     >
                                     <span class="advanced-field-value">
                                         {#if localSettings.audio_format === "wav"}

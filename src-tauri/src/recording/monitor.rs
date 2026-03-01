@@ -2120,6 +2120,18 @@ fn handle_trigger(
         }
     }
     
+    // Check that at least one device is selected for recording
+    {
+        let config = app_handle.state::<RwLock<Config>>();
+        let config_read = config.read();
+        if config_read.selected_audio_devices.is_empty()
+            && config_read.selected_midi_devices.is_empty()
+            && config_read.selected_video_devices.is_empty()
+        {
+            return;
+        }
+    }
+
     // Atomically check and set is_starting to prevent race conditions
     let should_start = {
         let mut state = capture_state.lock();

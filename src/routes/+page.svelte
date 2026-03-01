@@ -292,8 +292,8 @@
         border-radius: 0.25rem;
         color: #8a8a8a;
         font-family: "Roboto", -apple-system, BlinkMacSystemFont, sans-serif;
-        font-size: 0.8125rem;
-        font-weight: 500;
+        font-size: 0.875rem;
+        font-weight: 400;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         cursor: pointer;

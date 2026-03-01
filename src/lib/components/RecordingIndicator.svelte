@@ -35,6 +35,9 @@
         midiCount === 0 && audioCount === 0 && videoCount === 0,
     );
 
+    // Trigger set but nothing to record
+    let triggerNoRecord = $derived(hasTrigger && noDevices);
+
     // Button should be disabled during loading, stopping, initializing, or if no devices
     let buttonDisabled = $derived(
         isLoading ||
@@ -151,13 +154,18 @@
             </div>
             <div
                 class="trigger-status"
-                class:ready={hasTrigger}
+                class:ready={hasTrigger && !noDevices}
                 class:manual={!hasTrigger && !noDevices}
+                class:warning={triggerNoRecord}
             >
-                {#if hasTrigger}
+                {#if noDevices && !hasTrigger}
+                    ⚠ No device selected
+                {:else if triggerNoRecord}
+                    ⚠ Trigger set, but no devices to record
+                {:else if hasTrigger}
                     Waiting for trigger<span class="ellipsis"></span>
-                {:else if !noDevices}
-                    Manual recording ready
+                {:else}
+                    ⚠ No trigger set
                 {/if}
             </div>
         {/if}
@@ -269,6 +277,10 @@
     }
 
     .trigger-status.manual {
+        color: #5a5a5a;
+    }
+
+    .trigger-status.warning {
         color: #5a5a5a;
     }
 
@@ -441,6 +453,10 @@
     }
 
     :global(body.light-mode) .trigger-status.manual {
+        color: #7a7a7a;
+    }
+
+    :global(body.light-mode) .trigger-status.warning {
         color: #7a7a7a;
     }
 
