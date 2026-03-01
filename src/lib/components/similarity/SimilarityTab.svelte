@@ -275,6 +275,13 @@
     animate();
   });
 
+  // Auto-select first recording when tab opens for the first time
+  $effect(() => {
+    if ($sourceMode === 'recordings' && $selectedRecordingId === null && $recordingFiles.length > 0) {
+      selectRecording($recordingFiles[0].session_id);
+    }
+  });
+
   // Clear inspected result when the center file changes (sidebar click or double-click recenter)
   $effect(() => {
     const _ = $selectedFileId;

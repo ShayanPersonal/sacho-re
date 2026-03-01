@@ -1846,7 +1846,7 @@
         bottom: 100%;
         right: 0;
         margin-bottom: 0.25rem;
-        min-width: 160px;
+        white-space: nowrap;
         background: #1a1a1a;
         border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: 0.25rem;

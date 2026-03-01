@@ -52,6 +52,7 @@
     let showCombineHelp = $state(false);
     let showVideoContainerHelp = $state(false);
     let showAudioFormatHelp = $state(false);
+    let showStartMinimizedHelp = $state(false);
     let showAudioAdvanced = $state(false);
 
     // All-users autostart state
@@ -483,7 +484,7 @@
                                     </button>
                                     {#if showAudioFormatHelp}
                                         <div class="help-tooltip" use:positionTooltip>
-                                            .flac and .wav have the same playback quality. .flac uses less disk space.
+                                            .flac and .wav give the same playback quality. .flac uses less disk space.
                                         </div>
                                     {/if}
                                 </span>
@@ -700,28 +701,39 @@
                             >)</span
                         >
                     </label>
-                    <label
-                        class="checkbox-row checkbox-sub-option"
-                        class:checkbox-row-disabled={!isAutostartEnabled()}
-                    >
-                        <input
-                            type="checkbox"
-                            bind:checked={localSettings.start_minimized}
-                            disabled={!isAutostartEnabled()}
-                            onchange={autoSave}
-                        />
-                        <span class="setting-label"
-                            >Hide application window at startup</span
+                    <div class="label-with-help checkbox-sub-option">
+                        <label
+                            class="checkbox-row"
+                            class:checkbox-row-disabled={!isAutostartEnabled()}
                         >
-                    </label>
+                            <input
+                                type="checkbox"
+                                bind:checked={localSettings.start_minimized}
+                                disabled={!isAutostartEnabled()}
+                                onchange={autoSave}
+                            />
+                            <span class="setting-label"
+                                >Hide application window at startup</span
+                            >
+                        </label>
+                        <span class="setting-label-with-help">
+                            <button
+                                class="help-btn"
+                                onclick={() => showStartMinimizedHelp = !showStartMinimizedHelp}
+                                onblur={() => showStartMinimizedHelp = false}
+                            >
+                                ?
+                            </button>
+                            {#if showStartMinimizedHelp}
+                                <div class="help-tooltip" use:positionTooltip>
+                                    To open the application, click on the icon in the system tray. To stop the application from running in the background, right click the icon and select quit.
+                                </div>
+                            {/if}
+                        </span>
+                    </div>
                     <p class="setting-recommendation">
-                        Ensures the application will start back up if the system
-                        restarts (such as for system updates). You may have to
+                        Ensures the application continues to run if the computer restarts (such as for system updates). You may have to
                         log back in if your computer has a login screen.
-                    </p>
-                    <p class="setting-recommendation">
-                        To stop the application,
-                        right-click the tray icon and select Quit.
                     </p>
                     <!--
                     <button
@@ -934,7 +946,7 @@
                                 }}
                             />
                             <span class="setting-label"
-                                >Play warning sound if a device disconnects</span
+                                >Play warning sounds if a device disconnects</span
                             >
                         </label>
                         {#if localSettings.sound_device_disconnect}
@@ -1390,6 +1402,7 @@
         align-items: center;
         gap: 0.75rem;
         cursor: pointer;
+        width: fit-content;
     }
 
     .checkbox-sub-option {
