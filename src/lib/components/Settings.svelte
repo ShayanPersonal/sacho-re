@@ -550,7 +550,7 @@
                             <div class="advanced-audio-field">
                                 <div class="advanced-field-header">
                                     <span class="setting-label"
-                                        >Audio Bit Depth ({localSettings.audio_format.toUpperCase()})</span
+                                        >Audio Bit Depth ({localSettings.audio_format.toUpperCase() === "FLAC" ? ".flac" : ".wav"})</span
                                     >
                                     <span class="advanced-field-value">
                                         {#if localSettings.audio_format === "wav"}
