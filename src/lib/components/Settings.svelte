@@ -420,9 +420,9 @@
                             {#if showPrerollEncodeHelp}
                                 <div class="help-tooltip" use:positionTooltip>
                                     Increases the pre-roll limit from 5 to 30
-                                    seconds at the cost of background CPU usage. <br
-                                    /><br />Best combined with hardware
-                                    acceleration. If not sure, leave this off.
+                                    seconds at the cost of background CPU usage, 
+                                    which can be significant depending on your system. <br
+                                    /><br />If not sure, leave this off.
                                 </div>
                             {/if}
                         </span>
@@ -462,7 +462,7 @@
                         >
                     </div>
                     <p class="setting-recommendation">
-                        Tip: You can sync this folder to your cloud storage and open it in other instances of the app.
+                        Tip: You can sync this folder to cloud storage and open it in other instances of this app.
                     </p>
                 </div>
                 <div class="setting-row">
@@ -685,9 +685,7 @@
                                 onchange={handleAutostartToggle}
                             />
                             <span class="setting-label"
-                                >Start application at system startup (<i
-                                    >recommended</i
-                                >)</span
+                                >Start application at system startup </span
                             >
                         </label>
                         <span class="setting-label-with-help">

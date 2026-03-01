@@ -5,6 +5,7 @@
     import "@fontsource/dm-mono/400.css";
     import "@fontsource/dm-mono/500.css";
     import { onMount } from "svelte";
+    import { getVersion } from "@tauri-apps/api/app";
     import RecordingIndicator from "$lib/components/RecordingIndicator.svelte";
     import SessionBrowser from "$lib/components/sessions/SessionBrowser.svelte";
     import SimilarityTab from "$lib/components/similarity/SimilarityTab.svelte";
@@ -25,6 +26,8 @@
     // Devices and Settings tabs are locked while recording
     let recordingLocked = $derived($isRecording || $isStopping);
 
+    let appVersion = $state("");
+
     // Reactive dark mode from settings (default is light mode)
     let isDarkMode = $derived($settings?.dark_mode ?? false);
 
@@ -37,7 +40,8 @@
         }
     });
 
-    onMount(() => {
+    onMount(async () => {
+        appVersion = await getVersion();
         // Refresh recording state periodically
         const interval = setInterval(refreshRecordingState, 1000);
         return () => clearInterval(interval);
@@ -218,6 +222,9 @@
             </div>
         {/if}
     </main>
+    <footer class="app-footer">
+        <span class="footer-version">v{appVersion}</span>
+    </footer>
 </div>
 
 <style>
@@ -353,7 +360,26 @@
     .content {
         flex: 1;
         overflow: hidden;
-        padding: 1.5rem;
+        padding: 1.5rem 1.5rem 0 1.5rem;
+    }
+
+    .app-footer {
+        height: 1.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        padding: 0 1.5rem;
+        flex-shrink: 0;
+    }
+
+    .footer-version {
+        font-family: "DM Mono", "SF Mono", Menlo, monospace;
+        font-size: 0.5625rem;
+        color: #2a2a2a;
+    }
+
+    .app.light-mode .footer-version {
+        color: #c0c0c0;
     }
 
     /* Light mode overrides */

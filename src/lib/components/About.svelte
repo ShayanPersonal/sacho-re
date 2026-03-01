@@ -119,7 +119,6 @@
 
                 <div class="about-title">
                     <h3>Sacho<sup class="tm">&trade;</sup></h3>
-                    <span class="version-badge">Version {appVersion}</span>
                 </div>
 
                 <div class="about-description">
@@ -275,6 +274,8 @@
                         >Reset Settings</button>
                     </div>
                 </div>
+
+                <span class="version-badge">Version {appVersion}</span>
             </div>
 
         </div>
@@ -473,12 +474,9 @@
 
     .version-badge {
         font-family: "DM Mono", "SF Mono", Menlo, monospace;
-        font-size: 0.6875rem;
-        color: #5a5a5a;
-        padding: 0.25rem 0.75rem;
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 0.25rem;
+        font-size: 0.625rem;
+        color: #3a3a3a;
+        margin-top: 0.5rem;
     }
 
     .about-description {
@@ -635,9 +633,7 @@
     }
 
     :global(body.light-mode) .version-badge {
-        color: #6a6a6a;
-        background: rgba(0, 0, 0, 0.04);
-        border-color: rgba(0, 0, 0, 0.1);
+        color: #aaaaaa;
     }
 
     :global(body.light-mode) .about-description {
