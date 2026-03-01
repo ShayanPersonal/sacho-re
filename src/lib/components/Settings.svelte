@@ -676,20 +676,36 @@
             <section class="settings-section">
                 <h3>Application</h3>
                 <div class="setting-row">
-                    <label class="checkbox-row">
-                        <input
-                            type="checkbox"
-                            checked={isAutostartEnabled()}
-                            disabled={allUsersToggling}
-                            onchange={handleAutostartToggle}
-                        />
-                        <span class="setting-label"
-                            >Start application at system startup (<i
-                                >recommended</i
-                            >)</span
-                        >
-                    </label>
-                    <div class="label-with-help checkbox-sub-option">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <label class="checkbox-row">
+                            <input
+                                type="checkbox"
+                                checked={isAutostartEnabled()}
+                                disabled={allUsersToggling}
+                                onchange={handleAutostartToggle}
+                            />
+                            <span class="setting-label"
+                                >Start application at system startup (<i
+                                    >recommended</i
+                                >)</span
+                            >
+                        </label>
+                        <span class="setting-label-with-help">
+                            <button
+                                class="help-btn"
+                                onclick={() => showAutostartHelp = !showAutostartHelp}
+                                onblur={() => showAutostartHelp = false}
+                            >
+                                ?
+                            </button>
+                            {#if showAutostartHelp}
+                                <div class="help-tooltip" use:positionTooltip>
+                                    Helps ensure the application continues to run if the computer restarts (such as for system updates). Depending on your computer settings, you may have to log back into your computer first.
+                                </div>
+                            {/if}
+                        </span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;" class="checkbox-sub-option">
                         <label
                             class="checkbox-row"
                             class:checkbox-row-disabled={!isAutostartEnabled()}
@@ -719,9 +735,6 @@
                             {/if}
                         </span>
                     </div>
-                    <p class="setting-recommendation">
-                        Helps ensure the application continues to run if the computer restarts (such as for system updates). Depending on your computer settings, you may have to log back into your computer first.
-                    </p>
                 </div>
                 <div class="setting-row">
                     <label class="checkbox-row">
@@ -1146,7 +1159,8 @@
     .format-fields {
         display: flex;
         flex-wrap: wrap;
-        gap: 1.5rem 5.5rem;
+        gap: 1.5rem 4rem;
+        margin-left: 0rem;
     }
 
     .format-field {
@@ -1553,7 +1567,7 @@
     .label-with-help {
         display: flex;
         align-items: center;
-        gap: 0.25rem;
+        gap: 0.5rem;
     }
 
     .setting-label-with-help {
