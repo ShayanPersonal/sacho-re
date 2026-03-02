@@ -404,39 +404,39 @@
 
     @keyframes ray-pump-0 { /* top */
         0%, 100% { transform: translate(0, 0); }
-        50% { transform: translate(0, -3px); }
+        50% { transform: translate(0, -5px); }
     }
     @keyframes ray-pump-0-end { /* top — settling */
         0%, 100% { transform: translate(0, 0); }
-        50% { transform: translate(0, -1.5px); }
+        50% { transform: translate(0, -2px); }
     }
     @keyframes ray-pump-1 { /* top-right */
         0%, 100% { transform: translate(0, 0); }
-        50% { transform: translate(2px, -2px); }
+        50% { transform: translate(3.5px, -3.5px); }
     }
     @keyframes ray-pump-2 { /* right */
         0%, 100% { transform: translate(0, 0); }
-        50% { transform: translate(3px, 0); }
+        50% { transform: translate(5px, 0); }
     }
     @keyframes ray-pump-3 { /* bottom-right */
         0%, 100% { transform: translate(0, 0); }
-        50% { transform: translate(2px, 2px); }
+        50% { transform: translate(3.5px, 3.5px); }
     }
     @keyframes ray-pump-4 { /* bottom */
         0%, 100% { transform: translate(0, 0); }
-        50% { transform: translate(0, 3px); }
+        50% { transform: translate(0, 5px); }
     }
     @keyframes ray-pump-5 { /* bottom-left */
         0%, 100% { transform: translate(0, 0); }
-        50% { transform: translate(-2px, 2px); }
+        50% { transform: translate(-3.5px, 3.5px); }
     }
     @keyframes ray-pump-6 { /* left */
         0%, 100% { transform: translate(0, 0); }
-        50% { transform: translate(-3px, 0); }
+        50% { transform: translate(-5px, 0); }
     }
     @keyframes ray-pump-7 { /* top-left */
         0%, 100% { transform: translate(0, 0); }
-        50% { transform: translate(-2px, -2px); }
+        50% { transform: translate(-3.5px, -3.5px); }
     }
 
     .about-title {
