@@ -467,24 +467,6 @@
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // Center label
-    if (centerLabel) {
-      ctx.fillStyle = isLightMode ? '#2a2a2a' : '#e8e6e3';
-      ctx.font = '11px Roboto, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      const name = centerLabel.length > 24
-        ? centerLabel.slice(0, 22) + '...'
-        : centerLabel;
-      ctx.fillText(name, cx, cy + 18);
-
-      // Duration below name
-      if (centerDuration !== undefined) {
-        ctx.fillStyle = isLightMode ? 'rgba(120, 120, 120, 0.7)' : 'rgba(100, 100, 100, 0.6)';
-        ctx.font = '9px "DM Mono", monospace';
-        ctx.fillText(formatDuration(Math.floor(centerDuration)), cx, cy + 32);
-      }
-    }
   });
 
   function handleCanvasMove(e: MouseEvent) {
@@ -1174,23 +1156,23 @@
   }
 
   .result-count-control label {
-    font-size: 0.625rem;
+    font-size: 0.6875rem;
     font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
-    color: #6a6a6a;
+    color: #8a8a8a;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     user-select: none;
   }
 
   .result-count-control input {
-    width: 36px;
-    padding: 0.1875rem 0.25rem;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    width: 38px;
+    padding: 0.25rem 0.3rem;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 0.1875rem;
-    color: #8a8a8a;
+    color: #a8a8a8;
     font-family: 'DM Mono', 'SF Mono', Menlo, monospace;
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     text-align: center;
     outline: none;
     appearance: textfield;
@@ -1432,10 +1414,14 @@
     color: #8a8a8a;
   }
 
-  :global(body.light-mode) .result-count-control input {
-    background: rgba(0, 0, 0, 0.03);
-    border-color: rgba(0, 0, 0, 0.1);
+  :global(body.light-mode) .result-count-control label {
     color: #5a5a5a;
+  }
+
+  :global(body.light-mode) .result-count-control input {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.15);
+    color: #3a3a3a;
   }
 
   :global(body.light-mode) .result-count-control input:focus {

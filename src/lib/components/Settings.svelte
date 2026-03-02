@@ -512,7 +512,7 @@
                                     </button>
                                     {#if showVideoContainerHelp}
                                         <div class="help-tooltip" use:positionTooltip>
-                                            Does not affect playback quality or file size. MP4 has wider compatibility with other programs.
+                                            Does not affect playback quality or file size. .mp4 has wider compatibility with other programs.
                                         </div>
                                     {/if}
                                 </span>
@@ -676,6 +676,16 @@
             <section class="settings-section">
                 <h3>Application</h3>
                 <div class="setting-row">
+                    <label class="checkbox-row">
+                        <input
+                            type="checkbox"
+                            bind:checked={localSettings.dark_mode}
+                            onchange={autoSave}
+                        />
+                        <span class="setting-label">Dark color scheme</span>
+                    </label>
+                </div>
+                <div class="setting-row">
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
                         <label class="checkbox-row">
                             <input
@@ -733,16 +743,6 @@
                             {/if}
                         </span>
                     </div>
-                </div>
-                <div class="setting-row">
-                    <label class="checkbox-row">
-                        <input
-                            type="checkbox"
-                            bind:checked={localSettings.dark_mode}
-                            onchange={autoSave}
-                        />
-                        <span class="setting-label">Dark color scheme</span>
-                    </label>
                 </div>
             </section>
             <section class="settings-section">
